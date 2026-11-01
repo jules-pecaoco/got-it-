@@ -22,7 +22,7 @@ JSON responses have `{ok, data, requestId}` or `{ok:false, code, message, reques
 | GET/POST | `/api/instructor/assessments` | List versions / import `{public,private}` draft |
 | GET | `/api/instructor/ai/status` | Whether server-side Gemini drafting is configured |
 | POST | `/api/instructor/materials/extract` | Extract `{filename,base64}` from `.txt`, `.md`, `.pdf` or `.pptx` into labeled source text |
-| POST | `/api/instructor/ai/generate` | Draft from `{title,subject,kind,difficulty,durationMinutes,questionCount,missionCount?,source:{filename,content}}`; `kind` is `activity`, `quiz`, `test`, `exam`, or `ctf`; `difficulty` is `easy`, `medium`, or `hard` |
+| POST | `/api/instructor/ai/generate` | Draft from `{title,subject,kind,difficulty,durationMinutes,questionCount,missionCount?,customPrompt?,source:{filename,content}}`; optional `customPrompt` is faculty guidance up to 2,000 characters and cannot override source grounding or supported formats |
 | POST | `/api/instructor/ai/draft` | Save a generated `{public,private,evidence,source}` as a draft with a pending source review |
 | POST | `/api/instructor/ai/propose` | Preview generated sections or missions and questions with advisory source-match percentages and question-format checks; same input as `/generate` |
 | POST | `/api/instructor/ai/approved-draft` | Save faculty-selected questions and groups as a draft; missing quotes do not block faculty approval |

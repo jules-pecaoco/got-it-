@@ -1,5 +1,9 @@
 # Test evidence and remaining gates
 
+## Current working tree check (2026-11-01)
+
+`npm test` passed **64/64** tests, including a regression test that custom faculty AI guidance reaches the model, stays out of saved public and private packages, and is limited to 2,000 characters. In headless Chrome against an isolated in-memory server, the Faculty paper-backup flow rendered both questions and proportional point values, loaded the same-origin print stylesheet with an 8 × 13 inch portrait `@page` rule, and omitted the expected correct answer from the student copy. A visual screenshot showed the page fitting its content cleanly. A delayed Faculty refresh displayed the request indicator while pending. A physical printer check remains outstanding.
+
 ## Formatted programming questions (2026-11-01)
 
 `npm test` passed **59/59** tests. Prompt parsing tests confirm that fenced PHP, SQL, JavaScript, and Python snippets keep their original text and indentation. AI prompt tests confirm the generator requests fenced snippets. A browser check with fictional samples showed four syntax-colored code blocks, preserved Python indentation and PHP dollar signs, and verified `white-space: pre`. The temporary page was removed afterward. Existing published questions that describe code only in prose need an editable copy to show an actual snippet.

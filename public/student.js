@@ -1,6 +1,7 @@
 import { parseTableCode } from './table-code.js';
 import { normalizeSyntax, syntaxLanguages, tokenizeCode } from './code-highlight.js';
 import { renderPrompt } from './prompt-code.js';
+import { beginRequestStatus } from './request-status.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -54,15 +55,28 @@ const message = text => {
   if (text) window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
 };
 
-async function request(path, { method = 'GET', data, headers: extraHeaders = {} } = {}) {
+function requestLabel(path, method) {
+  if (path === '/api/auth/student/join') return 'Starting your session…';
+  if (path.endsWith('/submit')) return 'Saving your answer…';
+  if (path.endsWith('/draft')) return 'Saving your draft…';
+  if (path === '/api/me/finalize') return 'Finishing your attempt…';
+  if (path.includes('/missions/')) return 'Loading questions…';
+  if (path === '/api/me/session' || path === '/api/me/results') return 'Loading your attempt…';
+  return method === 'GET' ? 'Loading…' : 'Saving changes…';
+}
+
+async function request(path, { method = 'GET', data, headers: extraHeaders = {}, silent = false } = {}) {
+  const finishStatus = silent ? () => {} : beginRequestStatus(requestLabel(path, method));
   const headers = { ...extraHeaders };
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   if (state.candidateToken) headers.Authorization = `Bearer ${state.candidateToken}`;
-  const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
-  const result = await response.json();
-  if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`),
-    { status: response.status, code: result.code });
-  return result.data;
+  try {
+    const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
+    const result = await response.json();
+    if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`),
+      { status: response.status, code: result.code });
+    return result.data;
+  } finally { finishStatus(); }
 }
 
 const perform = async fn => {

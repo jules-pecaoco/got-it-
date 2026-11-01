@@ -14,6 +14,9 @@
     <div class="brand-lockup"><div class="brand" id="platform-label">Got It!</div><small class="brand-tagline" id="platform-tagline">Gotta Catch Ed All</small></div>
     <button type="button" id="instructor-logout" class="hidden text-button">Sign out</button>
   </header>
+  <div id="request-status" class="request-status hidden" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
+    <span class="request-spinner" aria-hidden="true"></span><span id="request-status-text">Loading…</span>
+  </div>
   <main>
     <div id="notice" role="status" aria-live="polite"></div>
 
@@ -66,11 +69,19 @@
                 <label>Teaching source<input id="ai-source" type="file" accept=".txt,.md,.pdf,.pptx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"></label>
               </div>
               <p id="ai-count-help" class="small">Questions are grouped into sections.</p>
+              <details class="json-collapse">
+                <summary>Custom AI prompt · optional</summary>
+                <div class="json-content stack">
+                  <label>Additional instructions<textarea id="ai-custom-prompt" rows="4" maxlength="2000" placeholder="Emphasize realistic scenarios, require two-step reasoning, or avoid a topic."></textarea></label>
+                  <p class="small">AI still has to follow the source, question limits, and supported answer formats.</p>
+                </div>
+              </details>
               <p id="ai-rules-summary" class="small"></p>
               <p class="small">PDF, PowerPoint (.pptx) or text, up to 10 MB. Source text goes to Google’s free API; do not upload student data or confidential material.</p>
               <div class="button-row">
                 <button type="button" id="ai-generate" class="primary" disabled>Generate preview</button>
               </div>
+              <p id="ai-generate-help" class="small" role="status" aria-live="polite"></p>
               <div id="ai-preview" class="ai-preview"></div>
               <p id="ai-selection" class="small" role="status"></p>
               <div class="button-row hidden" id="ai-save-row">
@@ -175,6 +186,16 @@
             <button type="button" id="validate-package">Recheck</button>
           </div>
           <div id="validation-output" class="report" role="status" aria-live="polite"></div>
+          <section class="paper-backup" aria-labelledby="paper-backup-title">
+            <h2 id="paper-backup-title">Paper backup</h2>
+            <p class="small">Print the student copy or answer key. Choose Save as PDF to keep an offline copy.</p>
+            <label class="paper-points-label" for="paper-total-points">Total points<input id="paper-total-points" type="number" min="1" max="10000" step="1" value="70"></label>
+            <p class="small">For paper copies only. Points are distributed across questions; online scoring is unchanged.</p>
+            <div class="button-row">
+              <button type="button" id="print-student-copy">Print student copy</button>
+              <button type="button" id="print-answer-key">Print faculty answer key</button>
+            </div>
+          </section>
           <div id="draft-preview" class="preview-container"></div>
           <details class="json-collapse" id="source-check-details">
             <summary>Source support check · optional</summary>

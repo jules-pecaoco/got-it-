@@ -1,0 +1,420 @@
+{
+  "rules": {
+    "rule-find-table": {
+      "type": "data_inspection",
+      "criteria": [
+        {
+          "id": "find-page_length",
+          "points": 2,
+          "answer": {
+            "kind": "page_length",
+            "value": 5
+          }
+        },
+        {
+          "id": "find-global_search",
+          "points": 2,
+          "answer": {
+            "kind": "global_search",
+            "value": "BSIT"
+          }
+        },
+        {
+          "id": "find-order",
+          "points": 2,
+          "answer": {
+            "kind": "order",
+            "value": [
+              {
+                "column": "name",
+                "direction": "asc"
+              }
+            ]
+          }
+        },
+        {
+          "id": "find-visible_ids",
+          "points": 2,
+          "answer": {
+            "kind": "visible_ids",
+            "value": [
+              "Q01",
+              "Q27",
+              "Q31",
+              "Q07",
+              "Q35"
+            ]
+          }
+        }
+      ]
+    },
+    "rule-find-flag": {
+      "type": "text_entry",
+      "criteria": [
+        {
+          "id": "find-flag-point",
+          "points": 2,
+          "answer": [
+            "Q31",
+            "FLAG{Q31}"
+          ]
+        }
+      ]
+    },
+    "rule-campus-table": {
+      "type": "data_inspection",
+      "criteria": [
+        {
+          "id": "campus-page_length",
+          "points": 2,
+          "answer": {
+            "kind": "page_length",
+            "value": 5
+          }
+        },
+        {
+          "id": "campus-global_search",
+          "points": 2,
+          "answer": {
+            "kind": "global_search",
+            "value": "BSBA"
+          }
+        },
+        {
+          "id": "campus-column_search",
+          "points": 3,
+          "answer": {
+            "kind": "column_search",
+            "value": {
+              "column": "campus",
+              "term": "North"
+            }
+          }
+        },
+        {
+          "id": "campus-order",
+          "points": 3,
+          "answer": {
+            "kind": "order",
+            "value": [
+              {
+                "column": "year",
+                "direction": "desc"
+              },
+              {
+                "column": "name",
+                "direction": "asc"
+              }
+            ]
+          }
+        },
+        {
+          "id": "campus-visible_ids",
+          "points": 2,
+          "answer": {
+            "kind": "visible_ids",
+            "value": [
+              "Q09",
+              "Q21",
+              "Q24",
+              "Q02",
+              "Q28"
+            ]
+          }
+        }
+      ]
+    },
+    "rule-campus-flag": {
+      "type": "text_entry",
+      "criteria": [
+        {
+          "id": "campus-flag-point",
+          "points": 3,
+          "answer": [
+            "Q28",
+            "FLAG{Q28}"
+          ]
+        }
+      ]
+    },
+    "rule-page-two-table": {
+      "type": "data_inspection",
+      "criteria": [
+        {
+          "id": "page-two-page_length",
+          "points": 2,
+          "answer": {
+            "kind": "page_length",
+            "value": 4
+          }
+        },
+        {
+          "id": "page-two-page_index",
+          "points": 2,
+          "answer": {
+            "kind": "page_index",
+            "value": 1
+          }
+        },
+        {
+          "id": "page-two-global_search",
+          "points": 2,
+          "answer": {
+            "kind": "global_search",
+            "value": "Hold"
+          }
+        },
+        {
+          "id": "page-two-column_search",
+          "points": 3,
+          "answer": {
+            "kind": "column_search",
+            "value": {
+              "column": "campus",
+              "term": "South"
+            }
+          }
+        },
+        {
+          "id": "page-two-order",
+          "points": 3,
+          "answer": {
+            "kind": "order",
+            "value": [
+              {
+                "column": "year",
+                "direction": "desc"
+              },
+              {
+                "column": "name",
+                "direction": "desc"
+              }
+            ]
+          }
+        },
+        {
+          "id": "page-two-visible_ids",
+          "points": 4,
+          "answer": {
+            "kind": "visible_ids",
+            "value": [
+              "Q01",
+              "Q35"
+            ]
+          }
+        }
+      ]
+    },
+    "rule-page-two-flag": {
+      "type": "text_entry",
+      "criteria": [
+        {
+          "id": "page-two-flag-point",
+          "points": 4,
+          "answer": [
+            "Q01",
+            "FLAG{Q01}"
+          ]
+        }
+      ]
+    },
+    "rule-code-table": {
+      "type": "datatable_code",
+      "criteria": [
+        {
+          "id": "code-flags",
+          "points": 2,
+          "answer": {
+            "kind": "flags",
+            "value": {
+              "paging": true,
+              "searching": true,
+              "ordering": true
+            }
+          }
+        },
+        {
+          "id": "code-page_length",
+          "points": 3,
+          "answer": {
+            "kind": "page_length",
+            "value": 4
+          }
+        },
+        {
+          "id": "code-length_menu",
+          "points": 2,
+          "answer": {
+            "kind": "length_menu",
+            "value": [
+              4,
+              8,
+              16
+            ]
+          }
+        },
+        {
+          "id": "code-global_search",
+          "points": 3,
+          "answer": {
+            "kind": "global_search",
+            "value": "BSCS"
+          }
+        },
+        {
+          "id": "code-column_search",
+          "points": 3,
+          "answer": {
+            "kind": "column_search",
+            "value": {
+              "column": "campus",
+              "term": "South"
+            }
+          }
+        },
+        {
+          "id": "code-order",
+          "points": 3,
+          "answer": {
+            "kind": "order",
+            "value": [
+              {
+                "column": "year",
+                "direction": "asc"
+              },
+              {
+                "column": "name",
+                "direction": "desc"
+              }
+            ]
+          }
+        },
+        {
+          "id": "code-visible_ids",
+          "points": 4,
+          "answer": {
+            "kind": "visible_ids",
+            "value": [
+              "Q20",
+              "Q16",
+              "Q32",
+              "Q34"
+            ]
+          }
+        }
+      ]
+    },
+    "rule-code-flag": {
+      "type": "text_entry",
+      "criteria": [
+        {
+          "id": "code-flag-point",
+          "points": 5,
+          "answer": [
+            "Q16",
+            "FLAG{Q16}"
+          ]
+        }
+      ]
+    },
+    "rule-final-table": {
+      "type": "datatable_code",
+      "criteria": [
+        {
+          "id": "final-flags",
+          "points": 3,
+          "answer": {
+            "kind": "flags",
+            "value": {
+              "paging": true,
+              "searching": true,
+              "ordering": true
+            }
+          }
+        },
+        {
+          "id": "final-page_length",
+          "points": 3,
+          "answer": {
+            "kind": "page_length",
+            "value": 4
+          }
+        },
+        {
+          "id": "final-length_menu",
+          "points": 3,
+          "answer": {
+            "kind": "length_menu",
+            "value": [
+              4,
+              8,
+              16
+            ]
+          }
+        },
+        {
+          "id": "final-global_search",
+          "points": 3,
+          "answer": {
+            "kind": "global_search",
+            "value": "BSIT"
+          }
+        },
+        {
+          "id": "final-column_search",
+          "points": 3,
+          "answer": {
+            "kind": "column_search",
+            "value": {
+              "column": "campus",
+              "term": "South"
+            }
+          }
+        },
+        {
+          "id": "final-order",
+          "points": 4,
+          "answer": {
+            "kind": "order",
+            "value": [
+              {
+                "column": "status",
+                "direction": "asc"
+              },
+              {
+                "column": "name",
+                "direction": "desc"
+              }
+            ]
+          }
+        },
+        {
+          "id": "final-visible_ids",
+          "points": 5,
+          "answer": {
+            "kind": "visible_ids",
+            "value": [
+              "Q35",
+              "Q01",
+              "Q15",
+              "Q14"
+            ]
+          }
+        }
+      ]
+    },
+    "rule-final-flag": {
+      "type": "text_entry",
+      "criteria": [
+        {
+          "id": "final-flag-point",
+          "points": 6,
+          "answer": [
+            "Q01-Q14",
+            "FLAG{Q01-Q14}"
+          ]
+        }
+      ]
+    }
+  }
+}

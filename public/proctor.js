@@ -1,3 +1,5 @@
+import { beginRequestStatus } from './request-status.js';
+
 const $ = id => document.getElementById(id);
 const state = { token: sessionStorage.getItem('proctorToken'), view: null, loading: false, timer: null };
 const labels = { registered: 'Not started', in_progress: 'In progress', submitted: 'Submitted', expired: 'Time ended' };
@@ -10,14 +12,24 @@ const node = (tag, className, content) => {
 const timeText = value => value ? new Date(value).toLocaleString() : '—';
 const message = value => { $('notice').textContent = value || ''; };
 
-async function request(path, { method = 'GET', data } = {}) {
+function requestLabel(path, method) {
+  if (path === '/api/auth/proctor/join') return 'Signing in…';
+  if (path === '/api/proctor/run') return 'Loading run monitor…';
+  if (path === '/api/proctor/logout') return 'Signing out…';
+  return method === 'GET' ? 'Loading…' : 'Saving changes…';
+}
+
+async function request(path, { method = 'GET', data, silent = false } = {}) {
+  const finishStatus = silent ? () => {} : beginRequestStatus(requestLabel(path, method));
   const headers = {};
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   if (data !== undefined) headers['Content-Type'] = 'application/json';
-  const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
-  const result = await response.json();
-  if (!response.ok) throw Object.assign(new Error(result.message), { status: response.status });
-  return result.data;
+  try {
+    const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
+    const result = await response.json();
+    if (!response.ok) throw Object.assign(new Error(result.message), { status: response.status });
+    return result.data;
+  } finally { finishStatus(); }
 }
 
 function showLogin() {
@@ -36,7 +48,7 @@ function showDashboard() {
   $('proctor-logout').classList.remove('hidden');
   if (!state.timer) state.timer = setInterval(() => {
     updateClocks();
-    if (!document.hidden && Date.now() - state.lastRefresh >= 15000) loadRun();
+    if (!document.hidden && Date.now() - state.lastRefresh >= 15000) loadRun({ background: true });
   }, 1000);
 }
 
@@ -95,13 +107,14 @@ function renderRun() {
   renderRows();
 }
 
-async function loadRun() {
+async function loadRun({ background = false } = {}) {
   if (state.loading || !state.token) return;
   state.loading = true;
   state.lastRefresh = Date.now();
   $('proctor-refresh').disabled = true;
+  if (background) $('proctor-update').textContent = 'Refreshing run status…';
   try {
-    state.view = await request('/api/proctor/run');
+    state.view = await request('/api/proctor/run', { silent: background });
     renderRun();
     showDashboard();
     message('');

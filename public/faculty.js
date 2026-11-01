@@ -2,6 +2,7 @@ import { parseTableCode } from './table-code.js';
 import { parseRoster } from './roster-import.js';
 import { answerText } from './answer-key.js';
 import { renderPrompt } from './prompt-code.js';
+import { beginRequestStatus } from './request-status.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -33,27 +34,52 @@ const message = text => {
   if (text) window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
 };
 
-async function request(path, { method = 'GET', data, raw = false } = {}) {
+function requestLabel(path, method) {
+  if (path.endsWith('/materials/extract')) return 'Extracting teaching material…';
+  if (path.endsWith('/ai/propose') || path.endsWith('/ai/generate')) return 'Generating questions…';
+  if (path.endsWith('/ai/approved-draft') || path.endsWith('/ai/draft')) return 'Saving activity draft…';
+  if (path.includes('/ai/check/')) return 'Checking source support…';
+  if (path.endsWith('/ai/inspect') || path.includes('/validate')) return 'Checking activity…';
+  if (path.endsWith('/publish')) return 'Publishing activity…';
+  if (path === '/api/instructor/runs' && method === 'POST') return 'Creating run…';
+  if (path.endsWith('/results')) return 'Loading results…';
+  if (path.endsWith('/export.csv')) return 'Preparing grade export…';
+  if (path.endsWith('/extend') || path.endsWith('/reopen')) return 'Updating student attempt…';
+  if (path.includes('/scores/')) return 'Saving score…';
+  if (path.includes('/proctor-access')) return method === 'GET' ? 'Loading proctor access…' : 'Updating proctor access…';
+  if (path.includes('/sources')) return method === 'GET' ? 'Loading teaching material…' : 'Saving source notes…';
+  if (path.includes('/classes')) return method === 'GET' ? 'Loading classes…' : 'Saving class…';
+  if (path.includes('/students/')) return 'Loading student answers…';
+  if (path === '/api/instructor/assessments' && method === 'GET') return 'Loading activities…';
+  if (path.includes('/assessments/')) return method === 'GET' ? 'Loading activity…' : 'Saving activity…';
+  return method === 'GET' ? 'Loading Faculty Studio…' : 'Saving changes…';
+}
+
+async function request(path, { method = 'GET', data, raw = false, silent = false } = {}) {
+  const finishStatus = silent ? () => {} : beginRequestStatus(requestLabel(path, method));
   const headers = {};
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   if (state.instructorToken) headers.Authorization = `Bearer ${state.instructorToken}`;
-  const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
-  if (raw && response.ok) return response.blob();
-  const result = await response.json();
-  if (!response.ok) throw new Error(`${result.message} (${result.code})`);
-  return result.data;
+  try {
+    const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
+    if (raw && response.ok) return await response.blob();
+    const result = await response.json();
+    if (!response.ok) throw new Error(`${result.message} (${result.code})`);
+    return result.data;
+  } finally { finishStatus(); }
 }
 
 async function extractFile(file) {
   if (!file || !/\.(txt|md|pdf|pptx)$/i.test(file.name))
     throw new Error('Choose a .txt, .md, .pdf or .pptx file. Older .ppt files need to be saved as .pptx.');
   if (file.size > 10_000_000) throw new Error('Source files must be 10 MB or smaller.');
+  const finishStatus = beginRequestStatus('Reading source file…');
   const base64 = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).split(',')[1]);
     reader.onerror = () => reject(new Error('Could not read the source file.'));
     reader.readAsDataURL(file);
-  });
+  }).finally(finishStatus);
   return request('/api/instructor/materials/extract', { method: 'POST', data: { filename: file.name, base64 } });
 }
 
@@ -75,6 +101,7 @@ const aiConfigMatches = () => state.aiInput && state.aiInput.title === $('ai-tit
   && state.aiInput.durationMinutes === Number($('ai-duration').value)
   && state.aiInput.questionCount === Number($('ai-questions').value)
   && state.aiInput.missionCount === aiGroupCount()
+  && (state.aiInput.customPrompt || '') === $('ai-custom-prompt').value.trim()
   && state.aiInput.source.filename === ($('ai-source').files[0]?.name || state.aiInput.source.filename);
 const titleChanged = () => state.selectedExam?.status === 'draft' &&
   $('exam-title-input').value.trim() !== (state.examDetail?.public.title || '');
@@ -236,12 +263,19 @@ function renderWorkflowState() {
     : Number.isInteger(aiQuestions) && aiQuestions >= 1 && aiQuestions <= 20
       ? `${Math.ceil(aiQuestions / 4)} section${aiQuestions > 4 ? 's' : ''} for ${aiQuestions} questions.` : 'Choose 1–20 questions.';
   $('ai-rules-summary').textContent = `${aiDuration || 40} minutes · Default: 2 retries, 1 point and 10 seconds off per retry. Edit rules before publishing if needed.`;
-  $('ai-generate').disabled = !state.aiReady || state.aiBusy || !$('ai-title').value.trim()
-    || !$('ai-subject').value.trim() || !materialFileReady($('ai-source').files[0])
-    || !Number.isInteger(aiDuration) || aiDuration < 5 || aiDuration > 180
-    || !Number.isInteger(aiQuestions) || aiQuestions < 1 || aiQuestions > 20
-    || !Number.isInteger(aiMissions) || aiMissions < 1 || aiMissions > 5
-    || (isCtf && (aiQuestions < aiMissions || aiQuestions > aiMissions * 4));
+  let generateHelp = '';
+  if (state.aiBusy) generateHelp = 'Generating your preview…';
+  else if (!state.aiReady) generateHelp = 'Preview is unavailable because the server AI key is missing or AI status could not be loaded.';
+  else if (!$('ai-title').value.trim()) generateHelp = 'Enter an activity name.';
+  else if (!$('ai-subject').value.trim()) generateHelp = 'Enter a subject.';
+  else if (!materialFileReady($('ai-source').files[0])) generateHelp = 'Choose a supported teaching source (PDF, PPTX, TXT, or MD, up to 10 MB).';
+  else if (!Number.isInteger(aiDuration) || aiDuration < 5 || aiDuration > 180) generateHelp = 'Set a duration from 5 to 180 minutes.';
+  else if (!Number.isInteger(aiQuestions) || aiQuestions < 1 || aiQuestions > 20) generateHelp = 'Set 1–20 questions.';
+  else if (!Number.isInteger(aiMissions) || aiMissions < 1 || aiMissions > 5) generateHelp = 'Set 1–5 missions.';
+  else if (isCtf && aiQuestions < aiMissions) generateHelp = `You set ${aiMissions} missions, so choose at least ${aiMissions} questions (one per mission).`;
+  else if (isCtf && aiQuestions > aiMissions * 4) generateHelp = `${aiMissions} missions can contain up to ${aiMissions * 4} questions total.`;
+  $('ai-generate').disabled = !!generateHelp;
+  $('ai-generate-help').textContent = generateHelp || 'Ready to generate preview.';
   if (state.aiProposal && !aiConfigMatches()) $('ai-save').disabled = true;
   if (state.aiBusy) $('ai-save').disabled = true;
   $('ai-save-row').classList.toggle('hidden', !state.aiProposal);
@@ -406,7 +440,7 @@ async function loadAiWork() {
     'ai-title': saved.input.title, 'ai-subject': saved.input.subject,
     'ai-kind': saved.input.kind, 'ai-difficulty': saved.input.difficulty,
     'ai-duration': saved.input.durationMinutes, 'ai-questions': saved.input.questionCount,
-    'ai-missions': saved.input.missionCount
+    'ai-missions': saved.input.missionCount, 'ai-custom-prompt': saved.input.customPrompt || ''
   })) $(id).value = String(value ?? '');
   $('ai-recovery-status').textContent = `Recovered preview · ${saved.input.source.filename}`;
   $('ai-status').textContent = 'Review answers and approve questions.';
@@ -514,7 +548,10 @@ function updateAiApprovals() {
   $('ai-selection').textContent = !state.aiProposal ? '' : overLimit ? `${count}. Limit: 4 questions per ${word}.`
     : approvedMissions > 5 ? `${count}. Limit: 5 ${word}s.`
       : count + average;
-  $('ai-save').disabled = !approvedQuestions || overLimit || approvedMissions > 5 || !aiConfigMatches();
+  const setupMatches = aiConfigMatches();
+  if (state.aiProposal && !setupMatches)
+    $('ai-selection').textContent = `Setup changed. Generate a new preview before saving. ${count}${average}.`;
+  $('ai-save').disabled = !approvedQuestions || overLimit || approvedMissions > 5 || !setupMatches;
 }
 
 function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
@@ -618,7 +655,7 @@ $('ai-generate').addEventListener('click', () => perform(async () => {
       title: $('ai-title').value.trim(), subject: $('ai-subject').value.trim(),
       kind: $('ai-kind').value, difficulty: $('ai-difficulty').value,
       durationMinutes: Number($('ai-duration').value), questionCount: Number($('ai-questions').value),
-      missionCount: aiGroupCount(), source
+      missionCount: aiGroupCount(), customPrompt: $('ai-custom-prompt').value.trim(), source
     };
     const proposal = await request('/api/instructor/ai/propose', { method: 'POST', data: input });
     state.aiInput = input;
@@ -947,7 +984,7 @@ $('results-run').addEventListener('change', () => {
 });
 
 for (const id of ['exam-title-input', 'results-run-name', 'package-json', 'new-package-json', 'run-name-field', 'run-pin-field', 'run-duration-days',
-  'ai-title', 'ai-subject', 'ai-duration', 'ai-questions', 'ai-missions'])
+  'ai-title', 'ai-subject', 'ai-duration', 'ai-questions', 'ai-missions', 'ai-custom-prompt'])
   $(id).addEventListener('input', () => { renderWorkflowState(); if (state.aiProposal) updateAiApprovals(); });
 $('source-file').addEventListener('change', renderWorkflowState);
 for (const id of ['ai-source', 'ai-kind', 'ai-difficulty'])
@@ -1343,6 +1380,14 @@ $('ai-check').addEventListener('click', () => perform(async () => {
 function renderReview() {
   if (!state.examDetail) return;
   const exam = state.examDetail.public, grading = state.examDetail.private;
+  const paperActivities = (exam.missions || []).flatMap(mission => mission.activities || []);
+  const pointsInput = $('paper-total-points');
+  const versionKey = examKey(state.selectedExam);
+  if (pointsInput.dataset.versionKey !== versionKey) {
+    pointsInput.dataset.versionKey = versionKey;
+    pointsInput.min = String(Math.max(1, paperActivities.length));
+    pointsInput.value = String(paperActivities.reduce((sum, activity) => sum + (Number(activity.maxPoints) || 0), 0));
+  }
   const target = $('draft-preview');
   clear(target);
   const rules = $('review-rules-summary');
@@ -1389,6 +1434,216 @@ function renderReview() {
     target.append(section);
   }
 }
+
+function openPrintCopy(includeAnswers) {
+  const detail = state.examDetail;
+  if (!detail?.public) { message('Select an activity first.'); return; }
+  const paperActivities = (detail.public.missions || []).flatMap(mission => mission.activities || []);
+  const totalPoints = Number($('paper-total-points').value);
+  if (!Number.isInteger(totalPoints) || totalPoints < Math.max(1, paperActivities.length) || totalPoints > 10000) {
+    message(`Enter a whole number from ${Math.max(1, paperActivities.length)} to 10,000 points.`);
+    $('paper-total-points').focus();
+    return;
+  }
+  const questionPoints = distributePaperPoints(paperActivities, totalPoints);
+  const pointsByActivity = new Map(paperActivities.map((activity, index) => [activity.id, questionPoints[index]]));
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) { message('Allow the print window, then try again.'); return; }
+  printWindow.opener = null;
+  const doc = printWindow.document;
+  doc.documentElement.lang = 'en';
+  const title = `${detail.public.title || detail.public.examId} · ${includeAnswers ? 'Faculty answer key' : 'Paper backup'}`;
+  doc.title = title;
+  doc.head.replaceChildren();
+  const charset = doc.createElement('meta'); charset.setAttribute('charset', 'utf-8');
+  const viewport = doc.createElement('meta'); viewport.name = 'viewport'; viewport.content = 'width=device-width, initial-scale=1';
+  const stylesheet = doc.createElement('link');
+  stylesheet.rel = 'stylesheet';
+  stylesheet.href = new URL('/print.css', window.location.href).href;
+  doc.head.append(charset, viewport, stylesheet);
+  const root = doc.createElement('main');
+  const preparing = doc.createElement('p'); preparing.className = 'print-preparing';
+  preparing.textContent = 'Preparing print layout…'; root.append(preparing);
+  const heading = doc.createElement('h1'); heading.textContent = title; root.append(heading);
+  const meta = doc.createElement('p');
+  meta.textContent = `${detail.public.subject || ''}${detail.public.settings?.durationMinutes ? ` · ${detail.public.settings.durationMinutes} minutes` : ''} · ${totalPoints} points`;
+  root.append(meta);
+  if (includeAnswers) {
+    const notice = doc.createElement('p'); notice.className = 'faculty-only'; notice.textContent = 'FACULTY COPY · Contains correct answers. Keep separate from student copies.'; root.append(notice);
+  } else {
+    const identity = doc.createElement('div'); identity.className = 'paper-meta';
+    for (const [labelText, iconName] of [['Student name', 'person'], ['School ID', 'id'], ['Section', 'group']]) {
+      const label = doc.createElement('span'); label.className = 'paper-meta-field';
+      label.append(printIcon(doc, iconName), doc.createTextNode(labelText));
+      const line = doc.createElement('span'); line.className = 'paper-line'; label.append(line); identity.append(label);
+    }
+    root.append(identity);
+  }
+  let questionNumber = 0;
+  for (const mission of detail.public.missions || []) {
+    const group = doc.createElement('section');
+    const groupTitle = doc.createElement('h2'); groupTitle.textContent = mission.title || mission.id; group.append(groupTitle);
+    if (mission.story) { const story = doc.createElement('p'); story.textContent = mission.story; group.append(story); }
+    for (const activity of mission.activities || []) {
+      questionNumber++;
+      const card = doc.createElement('article'); card.className = 'paper-question';
+      const questionHeading = doc.createElement('div'); questionHeading.className = 'question-title';
+      const number = doc.createElement('span'); number.textContent = `Question ${questionNumber}`;
+      const points = doc.createElement('span'); points.textContent = `${pointsByActivity.get(activity.id) ?? 0} pts`;
+      questionHeading.append(number, points); card.append(questionHeading);
+      card.append(renderPrompt(activity.prompt));
+      const config = activity.publicConfig || {};
+      if (!includeAnswers) appendPaperInput(doc, card, activity, config);
+      if (includeAnswers) {
+        const rule = detail.private?.rules?.[activity.gradingRuleId];
+        const answerLabel = doc.createElement('h3'); answerLabel.textContent = 'Correct answer'; card.append(answerLabel);
+        const answer = doc.createElement('pre'); answer.className = 'answer';
+        answer.textContent = rule ? answerText(activity, rule) : 'No grading rule found.'; card.append(answer);
+      }
+      group.append(card);
+    }
+    root.append(group);
+  }
+  doc.body.replaceChildren(root);
+  printWindow.focus();
+  const cssReady = new Promise(resolve => {
+    if (stylesheet.sheet) resolve();
+    else {
+      stylesheet.addEventListener('load', resolve, { once: true });
+      stylesheet.addEventListener('error', resolve, { once: true });
+    }
+  });
+  (async () => {
+    await cssReady;
+    if (doc.fonts?.ready) await doc.fonts.ready;
+    preparing.remove();
+    window.setTimeout(() => { try { printWindow.print(); } catch { /* print can be opened from this tab */ } }, 150);
+  })();
+}
+
+function distributePaperPoints(activities, totalPoints) {
+  if (!activities.length) return [];
+  const weights = activities.map(activity => Math.max(0, Number(activity.maxPoints) || 0));
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0) || activities.length;
+  const shares = weights.map((weight, index) => {
+    const exact = totalPoints * (weightTotal === activities.length && weights.every(value => value === 0) ? 1 : weight) / weightTotal;
+    return { points: Math.max(1, Math.floor(exact)), remainder: exact - Math.floor(exact), index };
+  });
+  let difference = totalPoints - shares.reduce((sum, share) => sum + share.points, 0);
+  if (difference > 0) {
+    const order = [...shares].sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+    for (let i = 0; i < difference; i++) order[i % order.length].points++;
+  } else if (difference < 0) {
+    const order = [...shares].sort((a, b) => a.remainder - b.remainder || b.index - a.index);
+    while (difference < 0) {
+      const share = order.find(item => item.points > 1);
+      if (!share) break;
+      share.points--;
+      difference++;
+    }
+  }
+  return shares.map(share => share.points);
+}
+
+function printIcon(doc, name) {
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const path = d => {
+    const shape = doc.createElementNS(svgNs, 'path');
+    shape.setAttribute('d', d);
+    svg.append(shape);
+  };
+  if (name === 'person') {
+    path('M10 10a3.25 3.25 0 1 0 0-6.5A3.25 3.25 0 0 0 10 10Z');
+    path('M3.5 17c.5-3.1 2.7-4.8 6.5-4.8s6 1.7 6.5 4.8');
+  } else if (name === 'id') {
+    path('M3 4.5h14v11H3z');
+    path('M6 8h3M6 11h3M12 8h2.5M12 11h2.5');
+  } else if (name === 'group') {
+    path('M7 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM13.5 8.5a2 2 0 1 0 0-4');
+    path('M2.5 16c.4-2.8 1.9-4.2 4.5-4.2s4.1 1.4 4.5 4.2M12 12c2.8-.4 4.6.9 5.2 3.5');
+  } else if (name === 'code') {
+    path('m7 5-5 5 5 5M13 5l5 5-5 5M11.5 3l-3 14');
+  } else if (name === 'write') {
+    path('M3 14.5V17h2.5L16.8 5.7a1.8 1.8 0 0 0-2.5-2.5L3 14.5Z');
+    path('m12.8 4.7 2.5 2.5');
+  }
+  return svg;
+}
+
+function appendPaperInput(doc, card, activity, config) {
+  const paragraph = (text, className = '') => {
+    const p = doc.createElement('p'); p.className = className; p.textContent = text; card.append(p); return p;
+  };
+  const table = (columns, rows, className = 'paper-dataset') => {
+    const wrap = doc.createElement('div'); wrap.className = className;
+    const tableEl = doc.createElement('table');
+    const head = doc.createElement('thead'), headRow = doc.createElement('tr');
+    for (const column of columns) { const th = doc.createElement('th'); th.textContent = column.label; headRow.append(th); }
+    head.append(headRow); tableEl.append(head);
+    const body = doc.createElement('tbody');
+    for (const row of rows) {
+      const tr = doc.createElement('tr');
+      for (const column of columns) { const td = doc.createElement('td'); td.textContent = String(row[column.id] ?? ''); tr.append(td); }
+      body.append(tr);
+    }
+    tableEl.append(body); wrap.append(tableEl); card.append(wrap);
+  };
+  const lines = count => {
+    const area = doc.createElement('div'); area.className = 'paper-response';
+    for (let i = 0; i < count; i++) { const line = doc.createElement('div'); line.className = 'write-line'; area.append(line); }
+    card.append(area);
+  };
+  if (activity.type === 'single_choice' || activity.type === 'multiple_choice' || activity.type === 'true_false') {
+    const choices = activity.type === 'true_false' ? [{ label: 'True' }, { label: 'False' }] : config.options || [];
+    const list = doc.createElement('ol'); list.className = 'paper-options';
+    for (const choice of choices) { const item = doc.createElement('li'); item.textContent = `☐ ${choice.label}`; list.append(item); }
+    card.append(list);
+  } else if (activity.type === 'matching') {
+    paragraph(`Match each item to one choice: ${(config.right || []).map(item => item.label).join(' · ')}`);
+    for (const item of config.left || []) paragraph(`${item.label}  __________________________________________`);
+  } else if (activity.type === 'sequencing') {
+    paragraph(`Put these steps in order: ${(config.items || []).map(item => item.label).join(' · ')}`);
+    for (let i = 0; i < (config.items || []).length; i++) paragraph(`Step ${i + 1}: __________________________________________`);
+  } else if (activity.type === 'data_inspection' || activity.type === 'datatable_code') {
+    if (config.columns?.length && config.rows?.length) {
+      if (activity.type === 'datatable_code') {
+        table([{ id: 'index', label: 'Column index' }, { id: 'label', label: 'Field' }],
+          config.columns.map((column, index) => ({ index, label: column.label })), 'paper-dataset');
+      }
+      table(config.columns, config.rows);
+    }
+    if (activity.type === 'datatable_code') {
+      if (config.scaffold) {
+        const scaffoldLabel = paragraph('Code scaffold', 'paper-icon-label');
+        scaffoldLabel.prepend(printIcon(doc, 'code'));
+        const scaffold = doc.createElement('pre'); scaffold.textContent = config.scaffold; card.append(scaffold);
+      }
+      if (config.apiReference?.length) paragraph(`Reference: ${config.apiReference.map(item => `${item.api} — ${item.use}`).join(' · ')}`);
+      const responseLabel = paragraph('Write your completed code below.', 'paper-icon-label');
+      responseLabel.prepend(printIcon(doc, 'write'));
+      const area = doc.createElement('div'); area.className = 'paper-response';
+      for (let i = 0; i < 14; i++) { const line = doc.createElement('div'); line.className = 'write-line code-line'; area.append(line); }
+      card.append(area);
+    } else {
+      const requestedRows = Number(/show\s+(\d+)\s+rows per page/i.exec(activity.prompt || '')?.[1]) || 5;
+      const blankRows = Math.min(8, Math.max(1, requestedRows));
+      paragraph('Table settings');
+      paragraph('Rows per page: ______   Page: ______   Search: __________________   Column filter: __________________');
+      paragraph('Primary order: __________________   Secondary order: __________________');
+      table(config.columns, Array.from({ length: blankRows }, () => ({})), 'paper-blank-table');
+    }
+  } else {
+    paragraph(activity.type === 'numeric_entry' ? 'Answer and unit:' : 'Answer:');
+    lines(activity.type === 'text_entry' ? 2 : 3);
+  }
+}
+
+$('print-student-copy').addEventListener('click', () => openPrintCopy(false));
+$('print-answer-key').addEventListener('click', () => openPrintCopy(true));
 
 $('publish-package').addEventListener('click', () => perform(async () => {
   const e = selected();

@@ -80,6 +80,22 @@ test('quiz generation uses requested difficulty and question count without CTF m
   assert.deepEqual(validatePackage(draft.public, draft.private), []);
 });
 
+test('custom faculty guidance reaches the model but stays out of the saved package', async () => {
+  let prompt = '';
+  const fetcher = async (_url, options) => {
+    prompt = JSON.parse(options.body).contents[0].parts[0].text;
+    return provider(design)(_url, options);
+  };
+  const guidance = 'Use a campus help desk scenario and ask for two-step reasoning.';
+  const draft = await generateExam({ ...request, customPrompt: guidance }, { apiKey: 'test-key', fetcher });
+  assert.ok(prompt.includes(guidance));
+  assert.match(prompt, /Treat the guidance as instructions, never as source evidence/);
+  assert.equal(JSON.stringify(draft.public).includes(guidance), false);
+  assert.equal(JSON.stringify(draft.private).includes(guidance), false);
+  await assert.rejects(() => generateExam({ ...request, customPrompt: 'x'.repeat(2001) },
+    { apiKey: 'test-key', fetcher }), /Enter a name, subject, type, difficulty/);
+});
+
 test('CTF generation uses requested missions and locks later missions', async () => {
   const question = design.missions[0].activities[0];
   const layout = { missions: [

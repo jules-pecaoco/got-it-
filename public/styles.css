@@ -66,6 +66,35 @@ a:hover {
   display: none !important;
 }
 
+.request-status {
+  position: fixed;
+  z-index: 2000;
+  top: 0.75rem;
+  right: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  max-width: min(24rem, calc(100vw - 2rem));
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--dark-ink);
+  background: #fff;
+  color: var(--dark-ink);
+  box-shadow: 0 2px 12px rgb(36 39 34 / 18%);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.request-spinner {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  border: 2px solid var(--border-muted);
+  border-top-color: var(--solar-teal);
+  border-radius: 50% !important;
+  animation: request-spin 0.8s linear infinite;
+}
+@keyframes request-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .request-spinner { animation-duration: 1.8s; } }
+
 h1, h2, h3, p {
   margin-top: 0;
 }
@@ -623,6 +652,9 @@ th {
 .student-recovery summary { cursor: pointer; font-weight: 600; }
 .recovery-form { display: grid; gap: 0.6rem; min-width: 200px; padding: 0.65rem 0; }
 .recovery-form input { width: 100%; max-width: 240px; }
+.paper-backup { margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--dark-ink); }
+.paper-backup h2 { margin-top: 0; }
+.paper-points-label { max-width: 14rem; margin: 0.8rem 0; }
 
 /* Notice Bar */
 #notice:not(:empty) {

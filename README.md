@@ -71,6 +71,6 @@ This exercises package validation, two unrelated subjects, the Week 13 table act
 
 ## Design notes
 
-The browser UI uses the Solar Ledger palette and square components. It requests the Poppins family with a sans-serif fallback; this repository does not distribute font binaries. Keyboard controls are available for the activities, including matching and sequencing.
+The browser UI uses the Solar Ledger palette and square components. Paper backups bundle the OFL Poppins regular font for consistent printing; the browser UI uses a sans-serif fallback. Keyboard controls are available for the activities, including matching and sequencing.
 
 The server is a single-process Node application. It stores drafts and published content in SQLite, with private rules in a protected table column. Demo seed files live outside the static `public/` directory. Answers are evaluated only in the server process. See [security limits](docs/SECURITY.md) and [test evidence](docs/TEST_PLAN.md).

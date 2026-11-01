@@ -1,0 +1,2042 @@
+{
+  "schemaVersion": "1.0",
+  "examId": "itp255-week13-table-rescue",
+  "version": 7,
+  "title": "Campus Queue CTF",
+  "subject": "ITP255 · DataTables",
+  "description": "Find tickets, build two table views and capture the final key.",
+  "settings": {
+    "durationMinutes": 40,
+    "coreMaxPoints": 100,
+    "bonusMaxPoints": 0,
+    "shuffleOrderOnly": false
+  },
+  "missions": [
+    {
+      "id": "find",
+      "title": "Find a ticket",
+      "dependsOn": [],
+      "maxPoints": 10,
+      "activities": [
+        {
+          "id": "find-table",
+          "type": "data_inspection",
+          "prompt": "Find BSIT tickets. Show five rows per page, sort student names A–Z, and submit page 1.",
+          "maxPoints": 8,
+          "gradingRuleId": "rule-find-table",
+          "publicConfig": {
+            "selector": "#studentTable",
+            "columns": [
+              {
+                "id": "id",
+                "label": "Ticket"
+              },
+              {
+                "id": "name",
+                "label": "Student"
+              },
+              {
+                "id": "course",
+                "label": "Course"
+              },
+              {
+                "id": "year",
+                "label": "Year"
+              },
+              {
+                "id": "campus",
+                "label": "Campus"
+              },
+              {
+                "id": "status",
+                "label": "Status"
+              }
+            ],
+            "rows": [
+              {
+                "id": "Q01",
+                "name": "Aira Cruz",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q02",
+                "name": "Ben Ramos",
+                "course": "BSBA",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q03",
+                "name": "Cleo Dizon",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q04",
+                "name": "Dane Uy",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q05",
+                "name": "Eli Santos",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q06",
+                "name": "Faye Lim",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q07",
+                "name": "Gio Tan",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q08",
+                "name": "Hana Reyes",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q09",
+                "name": "Ivo Garcia",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q10",
+                "name": "Jade Ong",
+                "course": "BSIT",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q11",
+                "name": "Kai Flores",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q12",
+                "name": "Lara Chan",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q13",
+                "name": "Mara Valdez",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q14",
+                "name": "Noel Sy",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q15",
+                "name": "Olive Perez",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q16",
+                "name": "Pia Yu",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q17",
+                "name": "Quin Bautista",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q18",
+                "name": "Rae Mendoza",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q19",
+                "name": "Seth Navarro",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q20",
+                "name": "Tala Co",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q21",
+                "name": "Uma Rivas",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q22",
+                "name": "Vera Chua",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q23",
+                "name": "Wes Aquino",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q24",
+                "name": "Xena Abad",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q25",
+                "name": "Yana Robles",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q26",
+                "name": "Zed Castillo",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q27",
+                "name": "Ami Go",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q28",
+                "name": "Bryn Lopez",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q29",
+                "name": "Cian Torres",
+                "course": "BSBA",
+                "year": "4",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q30",
+                "name": "Drew Lee",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q31",
+                "name": "Enzo Rivera",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q32",
+                "name": "Fran Yao",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q33",
+                "name": "Gail Salazar",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q34",
+                "name": "Hugo Villanueva",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q35",
+                "name": "Ina Dominguez",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q36",
+                "name": "Jiro Pineda",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              }
+            ],
+            "pageLengths": [
+              4,
+              5,
+              8,
+              10,
+              16
+            ],
+            "apiReference": [
+              {
+                "api": "new DataTable('#studentTable', options)",
+                "use": "Create the table"
+              },
+              {
+                "api": "paging, searching, ordering",
+                "use": "Boolean options"
+              },
+              {
+                "api": "pageLength, lengthMenu",
+                "use": "Page size and available sizes"
+              },
+              {
+                "api": "order: [[index, 'asc'|'desc'], …]",
+                "use": "Sort priority, left to right"
+              },
+              {
+                "api": "table.search('text').draw()",
+                "use": "Search all columns"
+              },
+              {
+                "api": "table.column(index).search('text').draw()",
+                "use": "Search one column"
+              },
+              {
+                "api": "table.order([[index, 'asc'|'desc'], …]).draw()",
+                "use": "Change sort after creation"
+              }
+            ]
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 10, 16, 18"
+            }
+          ]
+        },
+        {
+          "id": "find-flag",
+          "type": "text_entry",
+          "prompt": "Enter the ticket on row 3.",
+          "maxPoints": 2,
+          "gradingRuleId": "rule-find-flag",
+          "publicConfig": {
+            "placeholder": "Ticket ID or FLAG{…}"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 10, 16, 18"
+            }
+          ],
+          "retryPolicy": {
+            "maxRetries": 2,
+            "pointPenalty": 1,
+            "timePenaltySeconds": 10
+          }
+        }
+      ],
+      "retryPolicy": {
+        "maxRetries": 2,
+        "pointPenalty": 1,
+        "timePenaltySeconds": 10
+      }
+    },
+    {
+      "id": "campus",
+      "title": "Campus filter",
+      "dependsOn": [
+        "find"
+      ],
+      "maxPoints": 15,
+      "activities": [
+        {
+          "id": "campus-table",
+          "type": "data_inspection",
+          "prompt": "Find North campus business students. Use global search for the program and a column filter for campus. Put higher years first, then names A–Z. Show five rows and submit page 1.",
+          "maxPoints": 12,
+          "gradingRuleId": "rule-campus-table",
+          "publicConfig": {
+            "selector": "#studentTable",
+            "columns": [
+              {
+                "id": "id",
+                "label": "Ticket"
+              },
+              {
+                "id": "name",
+                "label": "Student"
+              },
+              {
+                "id": "course",
+                "label": "Course"
+              },
+              {
+                "id": "year",
+                "label": "Year"
+              },
+              {
+                "id": "campus",
+                "label": "Campus"
+              },
+              {
+                "id": "status",
+                "label": "Status"
+              }
+            ],
+            "rows": [
+              {
+                "id": "Q01",
+                "name": "Aira Cruz",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q02",
+                "name": "Ben Ramos",
+                "course": "BSBA",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q03",
+                "name": "Cleo Dizon",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q04",
+                "name": "Dane Uy",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q05",
+                "name": "Eli Santos",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q06",
+                "name": "Faye Lim",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q07",
+                "name": "Gio Tan",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q08",
+                "name": "Hana Reyes",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q09",
+                "name": "Ivo Garcia",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q10",
+                "name": "Jade Ong",
+                "course": "BSIT",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q11",
+                "name": "Kai Flores",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q12",
+                "name": "Lara Chan",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q13",
+                "name": "Mara Valdez",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q14",
+                "name": "Noel Sy",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q15",
+                "name": "Olive Perez",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q16",
+                "name": "Pia Yu",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q17",
+                "name": "Quin Bautista",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q18",
+                "name": "Rae Mendoza",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q19",
+                "name": "Seth Navarro",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q20",
+                "name": "Tala Co",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q21",
+                "name": "Uma Rivas",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q22",
+                "name": "Vera Chua",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q23",
+                "name": "Wes Aquino",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q24",
+                "name": "Xena Abad",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q25",
+                "name": "Yana Robles",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q26",
+                "name": "Zed Castillo",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q27",
+                "name": "Ami Go",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q28",
+                "name": "Bryn Lopez",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q29",
+                "name": "Cian Torres",
+                "course": "BSBA",
+                "year": "4",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q30",
+                "name": "Drew Lee",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q31",
+                "name": "Enzo Rivera",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q32",
+                "name": "Fran Yao",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q33",
+                "name": "Gail Salazar",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q34",
+                "name": "Hugo Villanueva",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q35",
+                "name": "Ina Dominguez",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q36",
+                "name": "Jiro Pineda",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              }
+            ],
+            "pageLengths": [
+              4,
+              5,
+              8,
+              10,
+              16
+            ],
+            "apiReference": [
+              {
+                "api": "new DataTable('#studentTable', options)",
+                "use": "Create the table"
+              },
+              {
+                "api": "paging, searching, ordering",
+                "use": "Boolean options"
+              },
+              {
+                "api": "pageLength, lengthMenu",
+                "use": "Page size and available sizes"
+              },
+              {
+                "api": "order: [[index, 'asc'|'desc'], …]",
+                "use": "Sort priority, left to right"
+              },
+              {
+                "api": "table.search('text').draw()",
+                "use": "Search all columns"
+              },
+              {
+                "api": "table.column(index).search('text').draw()",
+                "use": "Search one column"
+              },
+              {
+                "api": "table.order([[index, 'asc'|'desc'], …]).draw()",
+                "use": "Change sort after creation"
+              }
+            ]
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 10, 13, 14, 17, 18"
+            }
+          ]
+        },
+        {
+          "id": "campus-flag",
+          "type": "text_entry",
+          "prompt": "Enter the last ticket on that page.",
+          "maxPoints": 3,
+          "gradingRuleId": "rule-campus-flag",
+          "publicConfig": {
+            "placeholder": "Ticket ID or FLAG{…}"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 10, 13, 14, 17, 18"
+            }
+          ],
+          "retryPolicy": {
+            "maxRetries": 2,
+            "pointPenalty": 1,
+            "timePenaltySeconds": 10
+          }
+        }
+      ],
+      "retryPolicy": {
+        "maxRetries": 2,
+        "pointPenalty": 1,
+        "timePenaltySeconds": 15
+      }
+    },
+    {
+      "id": "page-two",
+      "title": "Second page",
+      "dependsOn": [
+        "campus"
+      ],
+      "maxPoints": 20,
+      "activities": [
+        {
+          "id": "page-two-table",
+          "type": "data_inspection",
+          "prompt": "Find South campus Hold tickets. Put higher years first, then names Z–A. Show four rows per page and submit page 2.",
+          "maxPoints": 16,
+          "gradingRuleId": "rule-page-two-table",
+          "publicConfig": {
+            "selector": "#studentTable",
+            "columns": [
+              {
+                "id": "id",
+                "label": "Ticket"
+              },
+              {
+                "id": "name",
+                "label": "Student"
+              },
+              {
+                "id": "course",
+                "label": "Course"
+              },
+              {
+                "id": "year",
+                "label": "Year"
+              },
+              {
+                "id": "campus",
+                "label": "Campus"
+              },
+              {
+                "id": "status",
+                "label": "Status"
+              }
+            ],
+            "rows": [
+              {
+                "id": "Q01",
+                "name": "Aira Cruz",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q02",
+                "name": "Ben Ramos",
+                "course": "BSBA",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q03",
+                "name": "Cleo Dizon",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q04",
+                "name": "Dane Uy",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q05",
+                "name": "Eli Santos",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q06",
+                "name": "Faye Lim",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q07",
+                "name": "Gio Tan",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q08",
+                "name": "Hana Reyes",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q09",
+                "name": "Ivo Garcia",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q10",
+                "name": "Jade Ong",
+                "course": "BSIT",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q11",
+                "name": "Kai Flores",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q12",
+                "name": "Lara Chan",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q13",
+                "name": "Mara Valdez",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q14",
+                "name": "Noel Sy",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q15",
+                "name": "Olive Perez",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q16",
+                "name": "Pia Yu",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q17",
+                "name": "Quin Bautista",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q18",
+                "name": "Rae Mendoza",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q19",
+                "name": "Seth Navarro",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q20",
+                "name": "Tala Co",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q21",
+                "name": "Uma Rivas",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q22",
+                "name": "Vera Chua",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q23",
+                "name": "Wes Aquino",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q24",
+                "name": "Xena Abad",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q25",
+                "name": "Yana Robles",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q26",
+                "name": "Zed Castillo",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q27",
+                "name": "Ami Go",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q28",
+                "name": "Bryn Lopez",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q29",
+                "name": "Cian Torres",
+                "course": "BSBA",
+                "year": "4",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q30",
+                "name": "Drew Lee",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q31",
+                "name": "Enzo Rivera",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q32",
+                "name": "Fran Yao",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q33",
+                "name": "Gail Salazar",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q34",
+                "name": "Hugo Villanueva",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q35",
+                "name": "Ina Dominguez",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q36",
+                "name": "Jiro Pineda",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              }
+            ],
+            "pageLengths": [
+              4,
+              5,
+              8,
+              10,
+              16
+            ],
+            "apiReference": [
+              {
+                "api": "new DataTable('#studentTable', options)",
+                "use": "Create the table"
+              },
+              {
+                "api": "paging, searching, ordering",
+                "use": "Boolean options"
+              },
+              {
+                "api": "pageLength, lengthMenu",
+                "use": "Page size and available sizes"
+              },
+              {
+                "api": "order: [[index, 'asc'|'desc'], …]",
+                "use": "Sort priority, left to right"
+              },
+              {
+                "api": "table.search('text').draw()",
+                "use": "Search all columns"
+              },
+              {
+                "api": "table.column(index).search('text').draw()",
+                "use": "Search one column"
+              },
+              {
+                "api": "table.order([[index, 'asc'|'desc'], …]).draw()",
+                "use": "Change sort after creation"
+              }
+            ]
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 9, 10, 13, 14, 17, 18"
+            }
+          ]
+        },
+        {
+          "id": "page-two-flag",
+          "type": "text_entry",
+          "prompt": "Enter the first ticket on page 2.",
+          "maxPoints": 4,
+          "gradingRuleId": "rule-page-two-flag",
+          "publicConfig": {
+            "placeholder": "Ticket ID or FLAG{…}"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 9, 10, 13, 14, 17, 18"
+            }
+          ],
+          "retryPolicy": {
+            "maxRetries": 2,
+            "pointPenalty": 1,
+            "timePenaltySeconds": 10
+          }
+        }
+      ],
+      "retryPolicy": {
+        "maxRetries": 2,
+        "pointPenalty": 2,
+        "timePenaltySeconds": 20
+      }
+    },
+    {
+      "id": "code",
+      "title": "Build the view",
+      "dependsOn": [
+        "page-two"
+      ],
+      "maxPoints": 25,
+      "activities": [
+        {
+          "id": "code-table",
+          "type": "datatable_code",
+          "prompt": "Complete the scaffold for South campus BSCS tickets. Enable paging, searching and ordering. Show four rows; offer 4, 8 and 16. Search globally for the program, filter campus by column, then sort year ascending and name Z–A. Preview page 1.",
+          "maxPoints": 20,
+          "gradingRuleId": "rule-code-table",
+          "publicConfig": {
+            "selector": "#studentTable",
+            "columns": [
+              {
+                "id": "id",
+                "label": "Ticket"
+              },
+              {
+                "id": "name",
+                "label": "Student"
+              },
+              {
+                "id": "course",
+                "label": "Course"
+              },
+              {
+                "id": "year",
+                "label": "Year"
+              },
+              {
+                "id": "campus",
+                "label": "Campus"
+              },
+              {
+                "id": "status",
+                "label": "Status"
+              }
+            ],
+            "rows": [
+              {
+                "id": "Q01",
+                "name": "Aira Cruz",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q02",
+                "name": "Ben Ramos",
+                "course": "BSBA",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q03",
+                "name": "Cleo Dizon",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q04",
+                "name": "Dane Uy",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q05",
+                "name": "Eli Santos",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q06",
+                "name": "Faye Lim",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q07",
+                "name": "Gio Tan",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q08",
+                "name": "Hana Reyes",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q09",
+                "name": "Ivo Garcia",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q10",
+                "name": "Jade Ong",
+                "course": "BSIT",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q11",
+                "name": "Kai Flores",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q12",
+                "name": "Lara Chan",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q13",
+                "name": "Mara Valdez",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q14",
+                "name": "Noel Sy",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q15",
+                "name": "Olive Perez",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q16",
+                "name": "Pia Yu",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q17",
+                "name": "Quin Bautista",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q18",
+                "name": "Rae Mendoza",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q19",
+                "name": "Seth Navarro",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q20",
+                "name": "Tala Co",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q21",
+                "name": "Uma Rivas",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q22",
+                "name": "Vera Chua",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q23",
+                "name": "Wes Aquino",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q24",
+                "name": "Xena Abad",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q25",
+                "name": "Yana Robles",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q26",
+                "name": "Zed Castillo",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q27",
+                "name": "Ami Go",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q28",
+                "name": "Bryn Lopez",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q29",
+                "name": "Cian Torres",
+                "course": "BSBA",
+                "year": "4",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q30",
+                "name": "Drew Lee",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q31",
+                "name": "Enzo Rivera",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q32",
+                "name": "Fran Yao",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q33",
+                "name": "Gail Salazar",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q34",
+                "name": "Hugo Villanueva",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q35",
+                "name": "Ina Dominguez",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q36",
+                "name": "Jiro Pineda",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              }
+            ],
+            "pageLengths": [
+              4,
+              5,
+              8,
+              10,
+              16
+            ],
+            "apiReference": [
+              {
+                "api": "new DataTable('#studentTable', options)",
+                "use": "Create the table"
+              },
+              {
+                "api": "paging, searching, ordering",
+                "use": "Boolean options"
+              },
+              {
+                "api": "pageLength, lengthMenu",
+                "use": "Page size and available sizes"
+              },
+              {
+                "api": "order: [[index, 'asc'|'desc'], …]",
+                "use": "Sort priority, left to right"
+              },
+              {
+                "api": "table.search('text').draw()",
+                "use": "Search all columns"
+              },
+              {
+                "api": "table.column(index).search('text').draw()",
+                "use": "Search one column"
+              },
+              {
+                "api": "table.order([[index, 'asc'|'desc'], …]).draw()",
+                "use": "Change sort after creation"
+              }
+            ],
+            "scaffold": "const table = new DataTable('#studentTable', {\n  // TODO: enable the three table features used in the brief.\n  // TODO: set the page size and page-size choices.\n  // TODO: sort by year, then student, using column indexes.\n});\n\n// TODO: search all columns for the requested program, then draw.\n// TODO: filter the campus column for the requested campus, then draw.\n"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 7, 11, 13, 14, 17, 23"
+            }
+          ]
+        },
+        {
+          "id": "code-flag",
+          "type": "text_entry",
+          "prompt": "Enter the ticket on row 2 of your preview.",
+          "maxPoints": 5,
+          "gradingRuleId": "rule-code-flag",
+          "publicConfig": {
+            "placeholder": "Ticket ID or FLAG{…}"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 7, 11, 13, 14, 17, 23"
+            }
+          ],
+          "retryPolicy": {
+            "maxRetries": 2,
+            "pointPenalty": 1,
+            "timePenaltySeconds": 10
+          }
+        }
+      ],
+      "retryPolicy": {
+        "maxRetries": 2,
+        "pointPenalty": 2,
+        "timePenaltySeconds": 30
+      }
+    },
+    {
+      "id": "final",
+      "title": "Final key",
+      "dependsOn": [
+        "code"
+      ],
+      "fixedLast": true,
+      "maxPoints": 30,
+      "activities": [
+        {
+          "id": "final-table",
+          "type": "datatable_code",
+          "prompt": "Build the South campus BSIT view from the scaffold. Enable paging, searching and ordering. Show four rows; offer 4, 8 and 16. Search globally for the program, filter campus by column, and sort status A–Z then name Z–A. Preview page 1.",
+          "maxPoints": 24,
+          "gradingRuleId": "rule-final-table",
+          "publicConfig": {
+            "selector": "#studentTable",
+            "columns": [
+              {
+                "id": "id",
+                "label": "Ticket"
+              },
+              {
+                "id": "name",
+                "label": "Student"
+              },
+              {
+                "id": "course",
+                "label": "Course"
+              },
+              {
+                "id": "year",
+                "label": "Year"
+              },
+              {
+                "id": "campus",
+                "label": "Campus"
+              },
+              {
+                "id": "status",
+                "label": "Status"
+              }
+            ],
+            "rows": [
+              {
+                "id": "Q01",
+                "name": "Aira Cruz",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q02",
+                "name": "Ben Ramos",
+                "course": "BSBA",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q03",
+                "name": "Cleo Dizon",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q04",
+                "name": "Dane Uy",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q05",
+                "name": "Eli Santos",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q06",
+                "name": "Faye Lim",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q07",
+                "name": "Gio Tan",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q08",
+                "name": "Hana Reyes",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q09",
+                "name": "Ivo Garcia",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q10",
+                "name": "Jade Ong",
+                "course": "BSIT",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q11",
+                "name": "Kai Flores",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q12",
+                "name": "Lara Chan",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q13",
+                "name": "Mara Valdez",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q14",
+                "name": "Noel Sy",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q15",
+                "name": "Olive Perez",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q16",
+                "name": "Pia Yu",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q17",
+                "name": "Quin Bautista",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q18",
+                "name": "Rae Mendoza",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q19",
+                "name": "Seth Navarro",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q20",
+                "name": "Tala Co",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "South",
+                "status": "Ready"
+              },
+              {
+                "id": "Q21",
+                "name": "Uma Rivas",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q22",
+                "name": "Vera Chua",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q23",
+                "name": "Wes Aquino",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q24",
+                "name": "Xena Abad",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q25",
+                "name": "Yana Robles",
+                "course": "BSCS",
+                "year": "1",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q26",
+                "name": "Zed Castillo",
+                "course": "BSIT",
+                "year": "4",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q27",
+                "name": "Ami Go",
+                "course": "BSIT",
+                "year": "2",
+                "campus": "North",
+                "status": "Ready"
+              },
+              {
+                "id": "Q28",
+                "name": "Bryn Lopez",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Hold"
+              },
+              {
+                "id": "Q29",
+                "name": "Cian Torres",
+                "course": "BSBA",
+                "year": "4",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q30",
+                "name": "Drew Lee",
+                "course": "BSCS",
+                "year": "2",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q31",
+                "name": "Enzo Rivera",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              },
+              {
+                "id": "Q32",
+                "name": "Fran Yao",
+                "course": "BSCS",
+                "year": "3",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q33",
+                "name": "Gail Salazar",
+                "course": "BSBA",
+                "year": "3",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q34",
+                "name": "Hugo Villanueva",
+                "course": "BSCS",
+                "year": "4",
+                "campus": "South",
+                "status": "Queued"
+              },
+              {
+                "id": "Q35",
+                "name": "Ina Dominguez",
+                "course": "BSIT",
+                "year": "1",
+                "campus": "South",
+                "status": "Hold"
+              },
+              {
+                "id": "Q36",
+                "name": "Jiro Pineda",
+                "course": "BSBA",
+                "year": "1",
+                "campus": "North",
+                "status": "Queued"
+              }
+            ],
+            "pageLengths": [
+              4,
+              5,
+              8,
+              10,
+              16
+            ],
+            "apiReference": [
+              {
+                "api": "new DataTable('#studentTable', options)",
+                "use": "Create the table"
+              },
+              {
+                "api": "paging, searching, ordering",
+                "use": "Boolean options"
+              },
+              {
+                "api": "pageLength, lengthMenu",
+                "use": "Page size and available sizes"
+              },
+              {
+                "api": "order: [[index, 'asc'|'desc'], …]",
+                "use": "Sort priority, left to right"
+              },
+              {
+                "api": "table.search('text').draw()",
+                "use": "Search all columns"
+              },
+              {
+                "api": "table.column(index).search('text').draw()",
+                "use": "Search one column"
+              },
+              {
+                "api": "table.order([[index, 'asc'|'desc'], …]).draw()",
+                "use": "Change sort after creation"
+              }
+            ],
+            "scaffold": "const table = new DataTable('#studentTable', {\n  // TODO: enable the three table features used in the brief.\n  // TODO: set the page size and page-size choices.\n  // TODO: sort by status, then student, using column indexes.\n});\n\n// TODO: search all columns for the requested program, then draw.\n// TODO: filter the campus column for the requested campus, then draw.\n"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 7, 9, 11, 13, 14, 17, 18, 23"
+            }
+          ]
+        },
+        {
+          "id": "final-flag",
+          "type": "text_entry",
+          "prompt": "Join the first ticket from mission 3 page 2 with the last ticket on this preview. Enter FLAG{Q##-Q##}.",
+          "maxPoints": 6,
+          "gradingRuleId": "rule-final-flag",
+          "publicConfig": {
+            "placeholder": "Ticket ID or FLAG{…}"
+          },
+          "sourceRefs": [
+            {
+              "file": "Week_13-2_extracted.md",
+              "pageOrSlide": "Slides 5, 7, 9, 11, 13, 14, 17, 18, 23"
+            }
+          ],
+          "retryPolicy": {
+            "maxRetries": 2,
+            "pointPenalty": 1,
+            "timePenaltySeconds": 10
+          }
+        }
+      ],
+      "retryPolicy": {
+        "maxRetries": 2,
+        "pointPenalty": 3,
+        "timePenaltySeconds": 45
+      }
+    }
+  ]
+}
