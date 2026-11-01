@@ -3,8 +3,11 @@ import { parseRoster } from './roster-import.js';
 import { answerText } from './answer-key.js';
 import { renderPrompt } from './prompt-code.js';
 import { beginRequestStatus } from './request-status.js';
+import { icon } from './icons.js';
 
 const $ = id => document.getElementById(id);
+const workflowIcons = { exams: 'activity', rules: 'rules', sources: 'source', review: 'review', classes: 'people', run: 'run', results: 'results' };
+for (const button of document.querySelectorAll('[data-step-link]')) button.prepend(icon(workflowIcons[button.dataset.stepLink]));
 const state = {
   instructorToken: sessionStorage.getItem('instructorToken'),
   step: sessionStorage.getItem('facultyStep') || 'exams',
@@ -1472,10 +1475,12 @@ function openPrintCopy(includeAnswers) {
     const notice = doc.createElement('p'); notice.className = 'faculty-only'; notice.textContent = 'FACULTY COPY · Contains correct answers. Keep separate from student copies.'; root.append(notice);
   } else {
     const identity = doc.createElement('div'); identity.className = 'paper-meta';
-    for (const [labelText, iconName] of [['Student name', 'person'], ['School ID', 'id'], ['Section', 'group']]) {
-      const label = doc.createElement('span'); label.className = 'paper-meta-field';
-      label.append(printIcon(doc, iconName), doc.createTextNode(labelText));
-      const line = doc.createElement('span'); line.className = 'paper-line'; label.append(line); identity.append(label);
+    for (const labelText of ['Student name', 'School ID', 'Section']) {
+      const field = doc.createElement('div'); field.className = 'paper-meta-field';
+      const caption = doc.createElement('span'); caption.className = 'paper-meta-label';
+      caption.textContent = labelText;
+      const line = doc.createElement('span'); line.className = 'paper-line';
+      field.append(caption, line); identity.append(field);
     }
     root.append(identity);
   }
@@ -1545,35 +1550,6 @@ function distributePaperPoints(activities, totalPoints) {
   return shares.map(share => share.points);
 }
 
-function printIcon(doc, name) {
-  const svgNs = 'http://www.w3.org/2000/svg';
-  const svg = doc.createElementNS(svgNs, 'svg');
-  svg.setAttribute('viewBox', '0 0 20 20');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  const path = d => {
-    const shape = doc.createElementNS(svgNs, 'path');
-    shape.setAttribute('d', d);
-    svg.append(shape);
-  };
-  if (name === 'person') {
-    path('M10 10a3.25 3.25 0 1 0 0-6.5A3.25 3.25 0 0 0 10 10Z');
-    path('M3.5 17c.5-3.1 2.7-4.8 6.5-4.8s6 1.7 6.5 4.8');
-  } else if (name === 'id') {
-    path('M3 4.5h14v11H3z');
-    path('M6 8h3M6 11h3M12 8h2.5M12 11h2.5');
-  } else if (name === 'group') {
-    path('M7 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM13.5 8.5a2 2 0 1 0 0-4');
-    path('M2.5 16c.4-2.8 1.9-4.2 4.5-4.2s4.1 1.4 4.5 4.2M12 12c2.8-.4 4.6.9 5.2 3.5');
-  } else if (name === 'code') {
-    path('m7 5-5 5 5 5M13 5l5 5-5 5M11.5 3l-3 14');
-  } else if (name === 'write') {
-    path('M3 14.5V17h2.5L16.8 5.7a1.8 1.8 0 0 0-2.5-2.5L3 14.5Z');
-    path('m12.8 4.7 2.5 2.5');
-  }
-  return svg;
-}
-
 function appendPaperInput(doc, card, activity, config) {
   const paragraph = (text, className = '') => {
     const p = doc.createElement('p'); p.className = className; p.textContent = text; card.append(p); return p;
@@ -1618,13 +1594,11 @@ function appendPaperInput(doc, card, activity, config) {
     }
     if (activity.type === 'datatable_code') {
       if (config.scaffold) {
-        const scaffoldLabel = paragraph('Code scaffold', 'paper-icon-label');
-        scaffoldLabel.prepend(printIcon(doc, 'code'));
+        paragraph('Code scaffold');
         const scaffold = doc.createElement('pre'); scaffold.textContent = config.scaffold; card.append(scaffold);
       }
       if (config.apiReference?.length) paragraph(`Reference: ${config.apiReference.map(item => `${item.api} — ${item.use}`).join(' · ')}`);
-      const responseLabel = paragraph('Write your completed code below.', 'paper-icon-label');
-      responseLabel.prepend(printIcon(doc, 'write'));
+      paragraph('Write your completed code below.');
       const area = doc.createElement('div'); area.className = 'paper-response';
       for (let i = 0; i < 14; i++) { const line = doc.createElement('div'); line.className = 'write-line code-line'; area.append(line); }
       card.append(area);

@@ -313,6 +313,9 @@ input[type="checkbox"], input[type="radio"] {
 }
 
 .faculty-nav button {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   width: 100%;
   border: 0;
   background: transparent;
@@ -602,12 +605,19 @@ th {
 }
 .proctor-count {
   display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.65rem;
+  align-items: center;
   gap: 0.1rem;
   border: 1px solid var(--border-muted);
   padding: 0.8rem 1rem;
 }
 .proctor-count strong { font-size: 1.6rem; line-height: 1.1; }
 .proctor-count span { font-size: 0.8rem; }
+.ui-icon { width: 1em; height: 1em; flex: 0 0 1em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.faculty-nav button .ui-icon { width: 1rem; height: 1rem; }
+.proctor-count > .ui-icon { grid-column: 1; grid-row: 1 / span 2; width: 1.1rem; height: 1.1rem; }
+.proctor-count strong, .proctor-count span { grid-column: 2; }
 .proctor-toolbar {
   display: flex;
   gap: 0.75rem;
@@ -620,7 +630,9 @@ th {
 .proctor-table td strong, .proctor-table td small { display: block; }
 .proctor-table td small { color: #555; }
 .proctor-status {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   border: 1px solid var(--border-muted);
   padding: 0.15rem 0.45rem;
   white-space: nowrap;
@@ -782,7 +794,9 @@ th {
 }
 
 .mission-button small {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.72rem;
   color: #666;
   margin-top: 0.2rem;

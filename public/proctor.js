@@ -1,8 +1,10 @@
 import { beginRequestStatus } from './request-status.js';
+import { icon } from './icons.js';
 
 const $ = id => document.getElementById(id);
 const state = { token: sessionStorage.getItem('proctorToken'), view: null, loading: false, timer: null };
 const labels = { registered: 'Not started', in_progress: 'In progress', submitted: 'Submitted', expired: 'Time ended' };
+const statusIcons = { registered: 'registered', in_progress: 'progress', submitted: 'submitted', expired: 'expired' };
 const node = (tag, className, content) => {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -75,7 +77,9 @@ function renderRows() {
     student.append(node('strong', '', row.displayName), node('small', '', row.candidateId));
     tr.append(student, node('td', '', row.section));
     const status = node('td');
-    status.append(node('span', `proctor-status proctor-status-${row.status}`, labels[row.status] || row.status));
+    const statusLabel = node('span', `proctor-status proctor-status-${row.status}`);
+    statusLabel.append(icon(statusIcons[row.status] || 'registered'), document.createTextNode(labels[row.status] || row.status));
+    status.append(statusLabel);
     tr.append(status, node('td', '', `${row.answeredCount} / ${view.questionCount}`),
       node('td', '', timeText(row.lastSubmissionAt)));
     const remaining = node('td', '', '—');
@@ -101,7 +105,7 @@ function renderRun() {
   counts.replaceChildren();
   for (const key of ['registered', 'in_progress', 'submitted', 'expired']) {
     const card = node('div', 'proctor-count');
-    card.append(node('strong', '', view.counts[key]), node('span', '', labels[key]));
+    card.append(icon(statusIcons[key]), node('strong', '', view.counts[key]), node('span', '', labels[key]));
     counts.append(card);
   }
   renderRows();

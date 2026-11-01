@@ -33,10 +33,9 @@ p { margin: 1.5mm 0; }
   gap: 10mm;
   margin: 5mm 0 7mm;
 }
-.paper-meta-field { display: flex; align-items: center; gap: 1.5mm; min-height: 8mm; border-bottom: 1px solid #333; }
-.paper-meta-field svg, .paper-icon-label svg { width: 4mm; height: 4mm; flex: 0 0 4mm; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.paper-icon-label { display: flex; align-items: center; gap: 1.5mm; font-weight: 600; }
-.paper-line { display: inline-block; min-width: 45mm; }
+.paper-meta-field { display: grid; grid-template-rows: auto 7mm; gap: 1mm; min-width: 0; }
+.paper-meta-label { font-weight: 600; }
+.paper-line { display: block; width: 100%; min-width: 0; height: 7mm; border-bottom: 1px solid #333; }
 .paper-question { margin: 4mm 0 5mm; padding-bottom: 3mm; border-bottom: 0.6pt solid #bbb; }
 .question-title {
   display: flex;

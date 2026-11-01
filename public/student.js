@@ -2,6 +2,7 @@ import { parseTableCode } from './table-code.js';
 import { normalizeSyntax, syntaxLanguages, tokenizeCode } from './code-highlight.js';
 import { renderPrompt } from './prompt-code.js';
 import { beginRequestStatus } from './request-status.js';
+import { icon } from './icons.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -233,7 +234,10 @@ function renderMissionList() {
     button.disabled = !m.unlocked || active;
     button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'step');
-    button.append(node('small', '', m.completed ? 'Completed' : active ? 'Current' : m.unlocked ? 'Available' : 'Locked'));
+    const status = m.completed ? 'Completed' : active ? 'Current' : m.unlocked ? 'Available' : 'Locked';
+    const stateLabel = node('small', 'mission-state');
+    stateLabel.append(icon(m.completed ? 'complete' : active ? 'current' : m.unlocked ? 'available' : 'locked'), document.createTextNode(status));
+    button.append(stateLabel);
     button.addEventListener('click', () => perform(() => loadMission(m.id)));
     $('mission-list').append(button);
   });
