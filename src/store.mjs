@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { assignedOrder, evaluate, hash, resolveRetryPolicy, validatePackage } from './engine.mjs';
 import { answerText } from '../public/answer-key.js';
+import { initializeStoreSchema } from './store-schema.mjs';
 
 const parse = value => JSON.parse(value);
 const shuffled = values => {
@@ -30,119 +31,7 @@ export class Store {
   constructor(filename = ':memory:') {
     if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
-    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS exams (
-        exam_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
-        public_json TEXT NOT NULL, private_json TEXT NOT NULL, content_hash TEXT,
-        published_at TEXT, PRIMARY KEY (exam_id, version)
-      );
-      CREATE TABLE IF NOT EXISTS runs (
-        id TEXT PRIMARY KEY, exam_id TEXT NOT NULL, version INTEGER NOT NULL,
-        pin_hash TEXT NOT NULL, opens_at TEXT NOT NULL, closes_at TEXT NOT NULL,
-        status TEXT NOT NULL, name TEXT, class_id TEXT, class_name TEXT,
-        feedback_mode TEXT NOT NULL DEFAULT 'practice', shuffle_questions INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (exam_id,version) REFERENCES exams(exam_id,version)
-      );
-      CREATE TABLE IF NOT EXISTS classes (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, section TEXT NOT NULL,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS class_students (
-        class_id TEXT NOT NULL, candidate_id TEXT NOT NULL, display_name TEXT NOT NULL,
-        gender TEXT, year_level TEXT, program_short_name TEXT,
-        PRIMARY KEY (class_id,candidate_id), FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS roster (
-        run_id TEXT NOT NULL, candidate_id TEXT NOT NULL, display_name TEXT NOT NULL,
-        section TEXT NOT NULL,
-        PRIMARY KEY (run_id,candidate_id), FOREIGN KEY (run_id) REFERENCES runs(id)
-      );
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE, order_json TEXT NOT NULL,
-        question_order_json TEXT NOT NULL DEFAULT '{}',
-        started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, status TEXT NOT NULL,
-        UNIQUE (run_id,candidate_id), FOREIGN KEY (run_id,candidate_id) REFERENCES roster(run_id,candidate_id)
-      );
-      CREATE TABLE IF NOT EXISTS submissions (
-        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, activity_id TEXT NOT NULL,
-        response_json TEXT NOT NULL, result TEXT NOT NULL, at TEXT NOT NULL,
-        idempotency_key TEXT, request_hash TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-      CREATE TABLE IF NOT EXISTS answer_drafts (
-        session_id TEXT NOT NULL, activity_id TEXT NOT NULL, response_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL, PRIMARY KEY(session_id,activity_id),
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS score_events (
-        session_id TEXT NOT NULL, activity_id TEXT NOT NULL, criterion_id TEXT NOT NULL,
-        points INTEGER NOT NULL, at TEXT NOT NULL,
-        PRIMARY KEY (session_id,activity_id,criterion_id), FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-      CREATE TABLE IF NOT EXISTS penalty_events (
-        submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, activity_id TEXT NOT NULL,
-        points INTEGER NOT NULL, seconds INTEGER NOT NULL, at TEXT NOT NULL,
-        FOREIGN KEY (submission_id) REFERENCES submissions(id),
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-      CREATE TABLE IF NOT EXISTS score_overrides (
-        session_id TEXT NOT NULL, activity_id TEXT NOT NULL, points INTEGER NOT NULL,
-        reason TEXT NOT NULL, updated_at TEXT NOT NULL,
-        PRIMARY KEY (session_id,activity_id), FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-      CREATE TABLE IF NOT EXISTS instructor_tokens (
-        token_hash TEXT PRIMARY KEY, expires_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS proctor_tokens (
-        token_hash TEXT PRIMARY KEY, run_id TEXT NOT NULL, expires_at TEXT NOT NULL,
-        FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS ai_proposals (
-        token_hash TEXT PRIMARY KEY, data_json TEXT NOT NULL, updated_at TEXT NOT NULL,
-        FOREIGN KEY (token_hash) REFERENCES instructor_tokens(token_hash) ON DELETE CASCADE
-      );
-      CREATE TABLE IF NOT EXISTS audit_events (
-        id TEXT PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL,
-        target TEXT NOT NULL, detail_json TEXT NOT NULL, at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS source_documents (
-        id TEXT PRIMARY KEY, exam_id TEXT NOT NULL, version INTEGER NOT NULL,
-        filename TEXT NOT NULL, content_text TEXT NOT NULL, coverage_json TEXT,
-        review_status TEXT NOT NULL, uploaded_at TEXT NOT NULL,
-        FOREIGN KEY (exam_id,version) REFERENCES exams(exam_id,version)
-      );
-    `);
-    if (this.db.prepare('PRAGMA table_info(roster)').all().some(column => column.name === 'secret_hash'))
-      this.db.exec('ALTER TABLE roster DROP COLUMN secret_hash');
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'name'))
-      this.db.exec('ALTER TABLE runs ADD COLUMN name TEXT');
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'class_id'))
-      this.db.exec('ALTER TABLE runs ADD COLUMN class_id TEXT');
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'class_name'))
-      this.db.exec('ALTER TABLE runs ADD COLUMN class_name TEXT');
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'feedback_mode'))
-      this.db.exec("ALTER TABLE runs ADD COLUMN feedback_mode TEXT NOT NULL DEFAULT 'practice'");
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'shuffle_questions'))
-      this.db.exec('ALTER TABLE runs ADD COLUMN shuffle_questions INTEGER NOT NULL DEFAULT 0');
-    if (!this.db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'question_order_json'))
-      this.db.exec("ALTER TABLE sessions ADD COLUMN question_order_json TEXT NOT NULL DEFAULT '{}'");
-    if (!this.db.prepare('PRAGMA table_info(submissions)').all().some(column => column.name === 'idempotency_key'))
-      this.db.exec('ALTER TABLE submissions ADD COLUMN idempotency_key TEXT');
-    if (!this.db.prepare('PRAGMA table_info(submissions)').all().some(column => column.name === 'request_hash'))
-      this.db.exec('ALTER TABLE submissions ADD COLUMN request_hash TEXT');
-    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS submissions_idempotency
-      ON submissions(session_id,activity_id,idempotency_key)`);
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'proctor_code_hash'))
-      this.db.exec('ALTER TABLE runs ADD COLUMN proctor_code_hash TEXT');
-    if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'proctor_code_issued_at'))
-      this.db.exec('ALTER TABLE runs ADD COLUMN proctor_code_issued_at TEXT');
-    if (!this.db.prepare('PRAGMA table_info(exams)').all().some(column => column.name === 'archived_at'))
-      this.db.exec('ALTER TABLE exams ADD COLUMN archived_at TEXT');
-    for (const [column, type] of [['gender', 'TEXT'], ['year_level', 'TEXT'], ['program_short_name', 'TEXT']])
-      if (!this.db.prepare('PRAGMA table_info(class_students)').all().some(item => item.name === column))
-        this.db.exec(`ALTER TABLE class_students ADD COLUMN ${column} ${type}`);
+    initializeStoreSchema(this.db);
   }
   close() { this.db.close(); }
   tx(fn) {

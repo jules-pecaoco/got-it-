@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node --experimental-sqlite src/server.mjs",
     "test": "node --experimental-sqlite --test",
-    "import:week13": "node --experimental-sqlite scripts/import-week13.mjs"
+    "import:week13": "node --experimental-sqlite scripts/import-week13.mjs",
+    "format": "prettier --write public/paper-copy.js src/store-schema.mjs",
+    "format:check": "prettier --check public/paper-copy.js src/store-schema.mjs"
   },
   "engines": {
     "node": ">=22.13.0"
@@ -14,5 +16,8 @@
   "dependencies": {
     "fflate": "^0.8.3",
     "pdfjs-dist": "^6.4.299"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
   }
 }
