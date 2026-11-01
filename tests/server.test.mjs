@@ -9,9 +9,9 @@ process.env.DEMO_MODE = '1';
 const { server, store } = await import('../src/server.mjs');
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
-const call = async (path, { method = 'GET', data, token } = {}) => {
+const call = async (path, { method = 'GET', data, token, headers: extraHeaders = {} } = {}) => {
   const response = await fetch(base + path, { method, headers: {
-    ...(data ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {})
+    ...(data ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders
   }, body: data ? JSON.stringify(data) : undefined });
   return { response, payload: response.headers.get('content-type')?.includes('json') ? await response.json() : await response.text() };
 };
@@ -38,6 +38,45 @@ test('candidate API protects private rules, persists score and finalizes', async
   assert.equal(finish.payload.data.status, 'submitted');
   assert.equal((await call(`/api/me/activities/${activity.id}/submit`, { method: 'POST', data: submission, token })).response.status, 403);
   assert.equal((await call('/api/instructor/exams')).response.status, 401);
+});
+
+test('candidate API restores drafts and retries submissions safely; faculty recovery is authorized', async () => {
+  const instructor = store.loginInstructor('demo-instructor', 'demo-instructor').token;
+  const run = (await call('/api/instructor/runs', { method: 'POST', token: instructor, data: {
+    examId: 'garden-demo', version: 1, name: 'Reliability API verification', pin: '7291', feedbackMode: 'graded',
+    opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 4 * 60 * 60_000).toISOString(),
+    roster: [{ candidateId: 'QA-001', displayName: 'Fictional QA Student', section: 'QA' }]
+  } })).payload.data;
+  const candidate = (await call('/api/auth/student/join', { method: 'POST', data: {
+    runId: run.id, candidateId: 'QA-001', pin: '7291'
+  } })).payload.data;
+  const missionId = candidate.session.order[0].id;
+  const missionPath = `/api/me/missions/${missionId}`;
+  const mission = (await call(missionPath, { token: candidate.token })).payload.data;
+  const activity = mission.activities[0];
+  const submission = activity.id === 'garden-area' ? { value: 12, unit: 'm2' } : { value: 'b' };
+  const draft = activity.id === 'garden-area' ? { value: 9, unit: 'm2' } : { value: 'a' };
+  assert.equal((await call(`/api/me/activities/${activity.id}/draft`, { method: 'PUT', token: candidate.token, data: draft })).response.status, 200);
+  const restored = await call(missionPath, { token: candidate.token });
+  assert.deepEqual(restored.payload.data.activities[0].lastDraft.value, draft.value);
+  const idem = { 'Idempotency-Key': 'http-test-idempotency-0001' };
+  const first = await call(`/api/me/activities/${activity.id}/submit`, { method: 'POST', token: candidate.token, data: submission, headers: idem });
+  const retry = await call(`/api/me/activities/${activity.id}/submit`, { method: 'POST', token: candidate.token, data: submission, headers: idem });
+  assert.equal(first.payload.data.attemptNumber, 1);
+  assert.equal(retry.payload.data.duplicate, true);
+  assert.equal(retry.payload.data.attemptNumber, 1);
+  assert.equal((await call(missionPath, { token: candidate.token })).payload.data.activities[0].lastDraft, null);
+  const recoveryPath = `/api/instructor/runs/${run.id}/students/QA-001/extend`;
+  assert.equal((await call(recoveryPath, { method: 'POST', token: candidate.token, data: { minutes: 5, reason: 'Unauthorized check' } })).response.status, 401);
+  const extended = await call(recoveryPath, { method: 'POST', token: instructor, data: { minutes: 5, reason: 'Loopback recovery verification' } });
+  assert.equal(extended.response.status, 200);
+  assert.equal(extended.payload.data.status, 'in_progress');
+  await call('/api/me/finalize', { method: 'POST', token: candidate.token, data: {} });
+  const reopened = await call(`/api/instructor/runs/${run.id}/students/QA-001/reopen`, {
+    method: 'POST', token: instructor, data: { minutes: 5, reason: 'Verify attempt reopening' }
+  });
+  assert.equal(reopened.response.status, 200);
+  assert.equal(reopened.payload.data.status, 'in_progress');
 });
 
 test('graded runs save answers without revealing results until the run closes', async () => {

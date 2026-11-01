@@ -2,6 +2,7 @@
 
 ## 2026-11-01
 
+- Added safe answer retries using a stable per-answer idempotency key. If a request reaches the server but its response is lost, retrying the same answer returns the original attempt and does not charge another retry or time penalty. Added private, server-saved answer drafts that restore after reload and clear on submission. Faculty Results now offers audited time extension and attempt reopening with a required reason, limited to 1–120 minutes before the run closes. Added Store and HTTP integration coverage for these paths. The supervised pilot remains skipped. Full suite: 63/63 passed; legacy SQLite migration and integrity were verified on a temporary copy of the baseline backup.
 - Programming questions now render fenced PHP, SQL, JavaScript, and Python snippets as code blocks in student questions and faculty review, preserving indentation and syntax colors. Inline backticks also render as code. AI draft instructions request real fenced snippets rather than code flattened into paragraphs; the question editor accepts the same format. Older published prompts remain unchanged until revised in an editable copy.
 - Extended the lightweight student code coloring to PHP, SQL, JavaScript, and Python, with a display-only syntax selector. DataTables questions continue to parse and grade JavaScript. Added token tests for all four languages.
 
@@ -59,3 +60,4 @@
 - Faculty AI drafting is enabled from the local `.env` key and uses the working `gemini-3.5-flash` default. Faculty approves generated questions; the saved draft validates automatically before publishing. Source-match percentages and coverage notes are advisory.
 - Proctor monitoring is available at `/app/proctor` after Faculty issues a code for a run. It is read-only and run-scoped; the app does not yet identify individual proctors.
 - The local database currently has no saved classes. Upload a class roster in Faculty Studio, then select that class when creating a run. A PIN and reachable student link are still needed for class use; `127.0.0.1` works only on this computer.
+- A verified SQLite baseline backup is stored at `data/backups/studio-baseline-2026-11-01.sqlite`; integrity and restore-to-temporary-copy checks passed. A code baseline commit was also created before reliability changes. Neither local student data nor `.env` was included in the commit.

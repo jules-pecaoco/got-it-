@@ -8,6 +8,6 @@ Do not deploy this MVP for real grades. It lacks institution authentication and 
 
 ### Local recovery
 
-On refresh, the browser keeps its candidate bearer token in session storage and requests the server's saved session. If browser session storage is lost, the candidate can rejoin with the same school ID and PIN while the run is open. Rejoin rotates the access token but preserves the original mission order, score and deadline. The app does not extend the clock.
+On refresh, the browser keeps its candidate bearer token in session storage and requests the server's saved session. If browser session storage is lost, the candidate can rejoin with the same school ID and PIN while the run is open. Rejoin rotates the access token but preserves the original mission order, score and deadline. Answer drafts are saved on the server and restored on refresh. Faculty can extend time for an active or expired attempt, or reopen a submitted or expired attempt, before the run closes. Each recovery needs a reason and appears in the audit log.
 
-SQLite data persists in `data/studio.sqlite` by default. Back up this file with a SQLite-consistent backup procedure before maintenance; copying a live WAL database without its journal files is unsafe. The app does not currently offer a restore UI, instructor time override, or incident adjustment workflow.
+SQLite data persists in `data/studio.sqlite` by default. Back up this file with a SQLite-consistent backup procedure before maintenance; copying a live WAL database without its journal files is unsafe. A verified baseline backup is stored at `data/backups/studio-baseline-2026-11-01.sqlite`. Restore remains an operator procedure; the app has no restore UI.

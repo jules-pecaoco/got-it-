@@ -54,8 +54,8 @@ const message = text => {
   if (text) window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
 };
 
-async function request(path, { method = 'GET', data } = {}) {
-  const headers = {};
+async function request(path, { method = 'GET', data, headers: extraHeaders = {} } = {}) {
+  const headers = { ...extraHeaders };
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   if (state.candidateToken) headers.Authorization = `Bearer ${state.candidateToken}`;
   const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
@@ -279,7 +279,7 @@ function renderMission() {
 
 function renderInspection(form, activity) {
   const config = activity.publicConfig;
-  const saved = activity.lastSubmission?.value;
+  const saved = activity.lastSubmission?.value ?? activity.lastDraft?.value;
   const controls = node('div', 'inspection-controls');
   const field = (labelText, control) => {
     const label = node('label', '', labelText);
@@ -415,7 +415,7 @@ function renderCode(form, activity) {
   editor.spellcheck = false;
   editor.setAttribute('aria-label', 'DataTables JavaScript');
   editor.placeholder = 'Write DataTables JavaScript code here.';
-  editor.value = activity.lastSubmission?.value ?? config.scaffold ?? '';
+  editor.value = activity.lastSubmission?.value ?? activity.lastDraft?.value ?? config.scaffold ?? '';
   const paintCode = () => {
     const value = editor.value;
     const fragment = document.createDocumentFragment();
@@ -509,7 +509,7 @@ function renderActivity(a, preview = false) {
   if (showPolicy) { updateAttemptInfo(); card.append(attemptInfo); }
   const form = node('form', 'activity-form');
   const cfg = a.publicConfig || {};
-  const saved = a.lastSubmission?.value;
+  const saved = a.lastSubmission?.value ?? a.lastDraft?.value;
   let readValue;
 
   if (a.type === 'single_choice' || a.type === 'multiple_choice' || a.type === 'true_false') {
@@ -548,7 +548,7 @@ function renderActivity(a, preview = false) {
     input.setAttribute('aria-label', 'Numeric answer');
     if (typeof saved === 'number') input.value = String(saved);
     const unit = node('input');
-    unit.value = a.lastSubmission?.unit ?? cfg.unitLabel ?? '';
+    unit.value = a.lastSubmission?.unit ?? a.lastDraft?.unit ?? cfg.unitLabel ?? '';
     unit.setAttribute('aria-label', 'Unit');
     row.append(input, unit);
     form.append(row);
@@ -619,6 +619,37 @@ function renderActivity(a, preview = false) {
   const feedback = node('div', 'activity-feedback');
   feedback.setAttribute('role', 'status');
 
+  let draftTimer;
+  let draftRequest = Promise.resolve();
+  const readDraftSubmission = () => {
+    try {
+      const read = readValue();
+      return a.type === 'numeric_entry' ? { value: read.number, unit: read.unit } : { value: read };
+    } catch {
+      if (a.type === 'datatable_code') return { value: form.querySelector('textarea')?.value ?? '' };
+      if (a.type === 'sequencing') return { value: [...form.querySelectorAll('select')].map(select => select.value) };
+      if (a.type === 'single_choice' || a.type === 'multiple_choice' || a.type === 'true_false') {
+        const selected = [...form.querySelectorAll('input:checked')].map(input => input.value);
+        return { value: a.type === 'multiple_choice' ? selected : a.type === 'true_false'
+          ? selected[0] === 'true' : selected[0] ?? '' };
+      }
+      return { value: form.querySelector('input,textarea')?.value ?? '' };
+    }
+  };
+  if (!preview) {
+    form.addEventListener('input', scheduleDraft);
+    form.addEventListener('change', scheduleDraft);
+  }
+  function scheduleDraft() {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+      const snapshot = readDraftSubmission();
+      draftRequest = request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: snapshot })
+        .then(() => { $('save-status').textContent = 'Draft saved'; })
+        .catch(error => { $('save-status').textContent = error.message; });
+    }, 600);
+  }
+
   form.addEventListener('submit', event => {
     event.preventDefault();
     (async () => {
@@ -629,18 +660,33 @@ function renderActivity(a, preview = false) {
         feedback.textContent = 'Preview response captured.';
         return;
       }
+      clearTimeout(draftTimer);
+      await draftRequest;
       const value = a.type === 'numeric_entry' ? read.number : read;
       const submission = a.type === 'numeric_entry' ? { value, unit: read.unit } : { value };
+      draftRequest = request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: submission }).catch(() => {});
+      await draftRequest;
+      const retryStorageKey = `gotit:submission:${state.session.id}:${a.id}`;
+      let retryRecord;
+      try { retryRecord = JSON.parse(sessionStorage.getItem(retryStorageKey) || 'null'); } catch { retryRecord = null; }
+      if (!retryRecord || retryRecord.payload !== JSON.stringify(submission)) {
+        retryRecord = { key: crypto.randomUUID(), payload: JSON.stringify(submission) };
+        sessionStorage.setItem(retryStorageKey, JSON.stringify(retryRecord));
+      }
       submit.disabled = true;
       feedback.textContent = 'Checking…';
       try {
-        const result = await request(`/api/me/activities/${encodeURIComponent(a.id)}/submit`, { method: 'POST', data: submission });
+        const result = await request(`/api/me/activities/${encodeURIComponent(a.id)}/submit`, {
+          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key }
+        });
+        sessionStorage.removeItem(retryStorageKey);
         a.attemptsUsed = result.attemptNumber;
         a.attemptsRemaining = result.attemptsRemaining;
         updateAttemptInfo();
-        const outcome = state.session.feedbackMode === 'graded' ? 'Answer saved.'
+        const outcome = result.duplicate ? 'Answer was already saved.'
+          : state.session.feedbackMode === 'graded' ? 'Answer saved.'
           : result.result === 'correct' ? 'Correct.' : result.result === 'partially_correct' ? 'Partially correct.' : 'Incorrect.';
-        const cost = result.penaltyApplied
+        const cost = result.penaltyApplied && !result.duplicate
           ? ` Retry cost: ${result.penaltyApplied.points} points and ${result.penaltyApplied.seconds} seconds.` : '';
         feedback.textContent = `${outcome}${cost}${result.attemptsRemaining === 0 ? ' No attempts left.' : ''}`;
         state.session = await request('/api/me/session');

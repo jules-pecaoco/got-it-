@@ -68,7 +68,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS submissions (
         id TEXT PRIMARY KEY, session_id TEXT NOT NULL, activity_id TEXT NOT NULL,
         response_json TEXT NOT NULL, result TEXT NOT NULL, at TEXT NOT NULL,
+        idempotency_key TEXT, request_hash TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id)
+      );
+      CREATE TABLE IF NOT EXISTS answer_drafts (
+        session_id TEXT NOT NULL, activity_id TEXT NOT NULL, response_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL, PRIMARY KEY(session_id,activity_id),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
       CREATE TABLE IF NOT EXISTS score_events (
         session_id TEXT NOT NULL, activity_id TEXT NOT NULL, criterion_id TEXT NOT NULL,
@@ -122,6 +128,12 @@ export class Store {
       this.db.exec('ALTER TABLE runs ADD COLUMN shuffle_questions INTEGER NOT NULL DEFAULT 0');
     if (!this.db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'question_order_json'))
       this.db.exec("ALTER TABLE sessions ADD COLUMN question_order_json TEXT NOT NULL DEFAULT '{}'");
+    if (!this.db.prepare('PRAGMA table_info(submissions)').all().some(column => column.name === 'idempotency_key'))
+      this.db.exec('ALTER TABLE submissions ADD COLUMN idempotency_key TEXT');
+    if (!this.db.prepare('PRAGMA table_info(submissions)').all().some(column => column.name === 'request_hash'))
+      this.db.exec('ALTER TABLE submissions ADD COLUMN request_hash TEXT');
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS submissions_idempotency
+      ON submissions(session_id,activity_id,idempotency_key)`);
     if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'proctor_code_hash'))
       this.db.exec('ALTER TABLE runs ADD COLUMN proctor_code_hash TEXT');
     if (!this.db.prepare('PRAGMA table_info(runs)').all().some(column => column.name === 'proctor_code_issued_at'))
@@ -659,16 +671,37 @@ export class Store {
     const ordered = activityOrder.map(id => mission.activities.find(a => a.id === id)).filter(Boolean);
     return { ...mission, activities: ordered.map(({ gradingRuleId, ...publicActivity }) => {
       const last = this.db.prepare('SELECT response_json FROM submissions WHERE session_id=? AND activity_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId, publicActivity.id);
+      const draft = this.db.prepare('SELECT response_json,updated_at FROM answer_drafts WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id);
       const attemptsUsed = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id).count;
       const policy = resolveRetryPolicy(mission, publicActivity);
       return { ...publicActivity, lastSubmission: last ? parse(last.response_json) : null,
+        lastDraft: !last && draft ? { ...parse(draft.response_json), updatedAt: draft.updated_at } : null,
         attemptsUsed, attemptPolicy: policy,
         attemptsRemaining: policy.maxRetries === null ? null : Math.max(0, policy.maxRetries + 1 - attemptsUsed) };
     }), version: exam.public.version };
   }
-  submit(sessionId, activityId, submission) {
-    const { session, run, exam } = this.context(sessionId);
+  saveDraft(sessionId, activityId, response) {
+    const { session, exam } = this.context(sessionId);
     invariant(session.status === 'in_progress' && Date.now() < Date.parse(session.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
+    const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
+    invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
+    this.missionView(sessionId, mission.id);
+    invariant(response && typeof response === 'object' && !Array.isArray(response), 'INVALID_DRAFT', 'Draft must be an answer object.');
+    const encoded = JSON.stringify(response);
+    invariant(encoded.length <= 100_000, 'DRAFT_TOO_LARGE', 'Draft is too large.', 413);
+    this.tx(() => {
+      const live = this.db.prepare('SELECT status,deadline_at FROM sessions WHERE id=?').get(sessionId);
+      invariant(live.status === 'in_progress' && Date.now() < Date.parse(live.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
+      if (!this.db.prepare('SELECT 1 FROM submissions WHERE session_id=? AND activity_id=? LIMIT 1').get(sessionId, activityId)) {
+        this.db.prepare(`INSERT INTO answer_drafts(session_id,activity_id,response_json,updated_at) VALUES(?,?,?,?)
+          ON CONFLICT(session_id,activity_id) DO UPDATE SET response_json=excluded.response_json,updated_at=excluded.updated_at`)
+          .run(sessionId, activityId, encoded, stamp());
+      }
+    });
+    return { saved: true, updatedAt: stamp() };
+  }
+  submit(sessionId, activityId, submission, idempotencyKey = null) {
+    const { run, exam } = this.context(sessionId);
     const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
     invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
     this.missionView(sessionId, mission.id);
@@ -677,8 +710,24 @@ export class Store {
     const evaluation = evaluate(activity, rule, submission);
     const before = this.score(sessionId);
     const policy = resolveRetryPolicy(mission, activity);
+    invariant(idempotencyKey === null || (typeof idempotencyKey === 'string' && /^[A-Za-z0-9-]{16,80}$/.test(idempotencyKey)),
+      'INVALID_IDEMPOTENCY_KEY', 'Submission retry key is invalid.');
+    const requestHash = hash(JSON.stringify(submission));
+    let duplicate = null;
     let attemptNumber, deadlineAt;
     this.tx(() => {
+      if (idempotencyKey) {
+        duplicate = this.db.prepare(`SELECT id,result,at,request_hash FROM submissions
+          WHERE session_id=? AND activity_id=? AND idempotency_key=?`).get(sessionId, activityId, idempotencyKey);
+        if (duplicate) {
+          invariant(duplicate.request_hash === requestHash, 'IDEMPOTENCY_CONFLICT', 'This retry key was already used for a different answer.', 409);
+          attemptNumber = this.db.prepare(`SELECT COUNT(*) AS count FROM submissions
+            WHERE session_id=? AND activity_id=? AND rowid <= (SELECT rowid FROM submissions WHERE id=?)`)
+            .get(sessionId, activityId, duplicate.id).count;
+          deadlineAt = this.db.prepare('SELECT deadline_at FROM sessions WHERE id=?').get(sessionId).deadline_at;
+          return;
+        }
+      }
       const live = this.db.prepare('SELECT status,deadline_at FROM sessions WHERE id=?').get(sessionId);
       invariant(live.status === 'in_progress' && Date.now() < Date.parse(live.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
       const previous = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).count;
@@ -686,8 +735,10 @@ export class Store {
         'ATTEMPT_LIMIT', 'No attempts remain for this question.', 403);
       attemptNumber = previous + 1;
       const submissionId = randomUUID();
-      this.db.prepare('INSERT INTO submissions VALUES (?,?,?,?,?,?)')
-        .run(submissionId, sessionId, activityId, JSON.stringify(submission), evaluation.result, stamp());
+      this.db.prepare(`INSERT INTO submissions(id,session_id,activity_id,response_json,result,at,idempotency_key,request_hash)
+        VALUES(?,?,?,?,?,?,?,?)`).run(submissionId, sessionId, activityId, JSON.stringify(submission), evaluation.result,
+          stamp(), idempotencyKey, idempotencyKey ? requestHash : null);
+      this.db.prepare('DELETE FROM answer_drafts WHERE session_id=? AND activity_id=?').run(sessionId, activityId);
       const insert = this.db.prepare('INSERT OR IGNORE INTO score_events VALUES (?,?,?,?,?)');
       for (const c of evaluation.awarded) insert.run(sessionId, activityId, c.id, c.points, stamp());
       if (previous > 0) {
@@ -697,6 +748,14 @@ export class Store {
         this.db.prepare('UPDATE sessions SET deadline_at=? WHERE id=?').run(deadlineAt, sessionId);
       } else deadlineAt = live.deadline_at;
     });
+    if (duplicate) {
+      const penalty = this.db.prepare('SELECT points,seconds FROM penalty_events WHERE submission_id=?').get(duplicate.id);
+      return { ...(run.feedback_mode === 'practice' ? {
+        result: duplicate.result, feedbackCode: 'DUPLICATE_RETRY', awardedNow: 0, score: this.score(sessionId)
+      } : { saved: true }), progress: this.progress(sessionId), attemptNumber, deadlineAt,
+        duplicate: true, penaltyApplied: penalty ? { points: penalty.points, seconds: penalty.seconds } : null,
+        attemptsRemaining: policy.maxRetries === null ? null : Math.max(0, policy.maxRetries + 1 - attemptNumber) };
+    }
     return { ...(run.feedback_mode === 'practice' ? {
       result: evaluation.result, feedbackCode: evaluation.feedbackCode,
       awardedNow: this.score(sessionId) - before, score: this.score(sessionId)
@@ -725,6 +784,7 @@ export class Store {
     return { runId, examId: run.exam_id, version: run.version, title: exam.public.title,
       classId: run.class_id, className: run.class_name,
       name: run.name || exam.public.title,
+      opensAt: run.opens_at, closesAt: run.closes_at,
       maxPoints: exam.public.settings.coreMaxPoints,
       rows: rows.map(r => ({ candidateId: r.candidate_id, displayName: r.display_name, section: r.section,
         sessionId: r.session_id, status: r.session_id && r.status === 'in_progress' && Date.now() >= Date.parse(r.deadline_at)
@@ -810,6 +870,39 @@ export class Store {
       this.db.prepare('DELETE FROM score_overrides WHERE session_id=? AND activity_id=?').run(review.sessionId, activityId);
       this.audit(actor, 'clear_question_score_override', review.sessionId,
         { runId, candidateId, activityId, previousPoints: question.override.points });
+    });
+    return this.reviewStudent(runId, candidateId);
+  }
+  recoverStudent(runId, candidateId, input, action, actor = 'instructor') {
+    const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
+    invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
+    invariant(Date.now() < Date.parse(run.closes_at), 'RUN_CLOSED', 'This run has closed; recovery is no longer available.', 409);
+    const session = this.db.prepare(`SELECT s.* FROM sessions s
+      JOIN roster r ON r.run_id=s.run_id AND r.candidate_id=s.candidate_id
+      WHERE s.run_id=? AND s.candidate_id=?`).get(runId, candidateId);
+    invariant(session, 'SESSION_NOT_FOUND', 'This student has not started an attempt.', 404);
+    const minutes = Number(input?.minutes);
+    invariant(Number.isInteger(minutes) && minutes >= 1 && minutes <= 120,
+      'INVALID_RECOVERY', 'Enter a whole number of minutes from 1 to 120.');
+    const reason = typeof input?.reason === 'string' ? input.reason.trim() : '';
+    invariant(reason.length >= 3 && reason.length <= 300, 'INVALID_RECOVERY', 'Give a reason of 3–300 characters.');
+    const now = Date.now();
+    let deadline;
+    if (action === 'extend') {
+      invariant(session.status === 'in_progress', 'ATTEMPT_NOT_ACTIVE', 'Only an active attempt can receive extra time.', 409);
+      deadline = Math.min(Math.max(now, Date.parse(session.deadline_at)) + minutes * 60_000, Date.parse(run.closes_at));
+      invariant(deadline > Date.parse(session.deadline_at), 'RUN_CLOSED', 'The run closing time leaves no room to extend this attempt.', 409);
+    } else {
+      const effectiveStatus = session.status === 'in_progress' && now >= Date.parse(session.deadline_at) ? 'expired' : session.status;
+      invariant(['submitted', 'expired'].includes(effectiveStatus), 'ATTEMPT_NOT_RECOVERABLE', 'Only submitted or expired attempts can be reopened.', 409);
+      deadline = Math.min(now + minutes * 60_000, Date.parse(run.closes_at));
+      invariant(deadline > now, 'RUN_CLOSED', 'The run closing time leaves no room to reopen this attempt.', 409);
+    }
+    this.tx(() => {
+      this.db.prepare("UPDATE sessions SET status='in_progress',deadline_at=? WHERE id=?")
+        .run(new Date(deadline).toISOString(), session.id);
+      this.audit(actor, action === 'extend' ? 'extend_student_time' : 'reopen_student_attempt', session.id,
+        { runId, candidateId, minutes, reason, previousDeadlineAt: session.deadline_at, deadlineAt: new Date(deadline).toISOString() });
     });
     return this.reviewStudent(runId, candidateId);
   }

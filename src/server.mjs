@@ -219,6 +219,9 @@ async function api(req, res, url, requestId) {
     }
     if (method === 'GET' && path === '/api/instructor/runs') return send(res, requestId, store.listRuns());
     if (method === 'POST' && path === '/api/instructor/runs') return send(res, requestId, store.createRun(await body(req)), 201);
+    const recoveryPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/(extend|reopen)$/.exec(path);
+    if (method === 'POST' && recoveryPath) return send(res, requestId,
+      store.recoverStudent(recoveryPath[1], recoveryPath[2], await body(req), recoveryPath[3]));
     const studentReviewPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})(?:\/scores\/([A-Za-z0-9-]+))?$/.exec(path);
     if (studentReviewPath) {
       const [, runId, candidateId, activityId] = studentReviewPath;
@@ -261,8 +264,10 @@ async function api(req, res, url, requestId) {
     const activityPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/submit$/.exec(path);
     if (method === 'POST' && activityPath) {
       limit(`submit:${sessionId}:${activityPath[1]}`, 6);
-      return send(res, requestId, store.submit(sessionId, activityPath[1], await body(req)));
+      return send(res, requestId, store.submit(sessionId, activityPath[1], await body(req), req.headers['idempotency-key'] ?? null));
     }
+    const draftPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/draft$/.exec(path);
+    if (method === 'PUT' && draftPath) return send(res, requestId, store.saveDraft(sessionId, draftPath[1], await body(req, 110_000)));
     if (method === 'POST' && path === '/api/me/finalize') return send(res, requestId, store.finalize(sessionId));
   }
   throw Object.assign(new Error('Route not found.'), { code: 'NOT_FOUND', status: 404 });

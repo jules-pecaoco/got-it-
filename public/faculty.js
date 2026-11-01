@@ -1624,7 +1624,7 @@ async function loadResults() {
   target.append(node('p', 'small', `${label}${result.className ? ` · ${result.className}` : ''} · Maximum ${result.maxPoints} pts`));
   const wrap = node('div', 'table-wrap'), table = node('table');
   const head = node('thead'), tr = node('tr');
-  for (const label of ['Candidate', 'Section', 'Status', 'Score', 'Answers']) tr.append(node('th', '', label));
+  for (const label of ['Candidate', 'Section', 'Status', 'Score', 'Answers', 'Recovery']) tr.append(node('th', '', label));
   head.append(tr);
   table.append(head);
   const tbody = node('tbody');
@@ -1642,6 +1642,45 @@ async function loadResults() {
       $('student-review').scrollIntoView({ block: 'start' });
     }));
     answerCell.append(reviewButton); line.append(answerCell);
+    const recoveryCell = node('td');
+    const runOpen = Date.now() < Date.parse(result.closesAt);
+    const canExtend = row.sessionId && runOpen && ['in_progress', 'expired'].includes(row.status);
+    const canReopen = row.sessionId && runOpen && ['submitted', 'expired'].includes(row.status);
+    if (canExtend || canReopen) {
+      const details = node('details', 'student-recovery');
+      details.append(node('summary', '', 'Recovery'));
+      const addForm = (action, label) => {
+        const form = node('form', 'recovery-form');
+        const minutesLabel = node('label', '', 'Minutes');
+        const minutes = node('input'); minutes.type = 'number'; minutes.min = '1'; minutes.max = '120';
+        minutes.value = '5'; minutes.required = true; minutesLabel.append(minutes);
+        const reasonLabel = node('label', '', 'Reason');
+        const reason = node('input'); reason.type = 'text'; reason.minLength = 3; reason.maxLength = 300;
+        reason.placeholder = 'Brief incident note'; reason.required = true; reasonLabel.append(reason);
+        const button = node('button', '', label); button.type = 'submit';
+        form.append(minutesLabel, reasonLabel, button);
+        form.addEventListener('submit', event => {
+          event.preventDefault();
+          perform(async () => {
+            button.disabled = true;
+            try {
+              const updated = await request(`/api/instructor/runs/${runId}/students/${encodeURIComponent(row.candidateId)}/${action}`, {
+                method: 'POST', data: { minutes: Number(minutes.value), reason: reason.value.trim() }
+              });
+              details.open = false;
+              renderStudentReview(updated);
+              $('student-review').scrollIntoView({ block: 'start' });
+              await loadResults(); message(`${label} complete.`);
+            } finally { button.disabled = false; }
+          });
+        });
+        details.append(form);
+      };
+      if (canExtend) addForm('extend', 'Add time');
+      if (canReopen) addForm('reopen', 'Reopen attempt');
+      recoveryCell.append(details);
+    } else recoveryCell.append(node('span', 'small', '—'));
+    line.append(recoveryCell);
     tbody.append(line);
   }
   table.append(tbody);

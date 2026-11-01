@@ -619,6 +619,10 @@ th {
 .score-adjust summary, .answer-history summary { cursor: pointer; font-weight: 600; }
 .score-adjust-form { display: grid; gap: 0.75rem; max-width: 560px; padding: 0.8rem 0; }
 .score-adjust-form input { max-width: 120px; }
+.student-recovery { min-width: 180px; }
+.student-recovery summary { cursor: pointer; font-weight: 600; }
+.recovery-form { display: grid; gap: 0.6rem; min-width: 200px; padding: 0.65rem 0; }
+.recovery-form input { width: 100%; max-width: 240px; }
 
 /* Notice Bar */
 #notice:not(:empty) {

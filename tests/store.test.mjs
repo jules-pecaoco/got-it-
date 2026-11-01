@@ -216,6 +216,74 @@ test('retry, partial credit and duplicate submissions cannot award a criterion t
   store.close();
 });
 
+test('idempotent retries return the original attempt without a second penalty', () => {
+  const { store, run } = setup('garden');
+  try {
+    const joined = store.join({ runId: run.id, candidateId: 'A', pin: '4242' });
+    const missionId = joined.session.order[0].id;
+    const activityId = store.missionView(joined.session.id, missionId).activities[0].id;
+    const answer = activityId === 'garden-area' ? { value: 12, unit: 'm2' } : { value: 'b' };
+    const key = 'stable-test-key-0001';
+    const first = store.submit(joined.session.id, activityId, answer, key);
+    const retry = store.submit(joined.session.id, activityId, answer, key);
+    assert.equal(first.attemptNumber, 1);
+    assert.equal(retry.duplicate, true);
+    assert.equal(retry.attemptNumber, 1);
+    assert.equal(retry.penaltyApplied, null);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?')
+      .get(joined.session.id, activityId).count, 1);
+    const differentAnswer = activityId === 'garden-area' ? { value: 11, unit: 'm2' } : { value: 'a' };
+    assert.throws(() => store.submit(joined.session.id, activityId, differentAnswer, key),
+      error => error.code === 'IDEMPOTENCY_CONFLICT');
+    const laterAttempt = store.submit(joined.session.id, activityId, answer, 'stable-test-key-0002');
+    assert.equal(laterAttempt.attemptNumber, 2);
+    assert.ok(laterAttempt.penaltyApplied);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?')
+      .get(joined.session.id, activityId).count, 2);
+  } finally { store.close(); }
+});
+
+test('candidate drafts restore through mission view and clear after submission', () => {
+  const { store, run } = setup('garden');
+  try {
+    const joined = store.join({ runId: run.id, candidateId: 'A', pin: '4242' });
+    const missionId = joined.session.order[0].id;
+    const activityId = store.missionView(joined.session.id, missionId).activities[0].id;
+    const draft = activityId === 'garden-area' ? { value: 9, unit: 'm2' } : { value: 'a' };
+    assert.equal(store.saveDraft(joined.session.id, activityId, draft).saved, true);
+    assert.deepEqual(store.missionView(joined.session.id, missionId).activities[0].lastDraft.value, draft.value);
+    const answer = activityId === 'garden-area' ? { value: 12, unit: 'm2' } : { value: 'b' };
+    store.submit(joined.session.id, activityId, answer, 'draft-submit-key-01');
+    assert.equal(store.missionView(joined.session.id, missionId).activities[0].lastDraft, null);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM answer_drafts WHERE session_id=?').get(joined.session.id).count, 0);
+  } finally { store.close(); }
+});
+
+test('faculty can extend and reopen attempts with an audited reason before run close', () => {
+  const { store, run } = setup('garden');
+  try {
+    store.db.prepare('UPDATE runs SET closes_at=? WHERE id=?')
+      .run(new Date(Date.now() + 4 * 60 * 60_000).toISOString(), run.id);
+    const joined = store.join({ runId: run.id, candidateId: 'A', pin: '4242' });
+    const before = Date.parse(joined.session.deadlineAt);
+    const extended = store.recoverStudent(run.id, 'A', { minutes: 5, reason: 'Approved accommodation' }, 'extend');
+    assert.equal(extended.status, 'in_progress');
+    assert.ok(Date.parse(extended.deadlineAt) > before);
+    assert.throws(() => store.recoverStudent(run.id, 'B', { minutes: 5, reason: 'No active attempt' }, 'extend'),
+      error => error.code === 'SESSION_NOT_FOUND');
+    store.finalize(joined.session.id);
+    const reopened = store.recoverStudent(run.id, 'A', { minutes: 3, reason: 'Connectivity interruption' }, 'reopen');
+    assert.equal(reopened.status, 'in_progress');
+    assert.ok(Date.parse(reopened.deadlineAt) > Date.now());
+    const actions = store.auditLog().map(event => event.action);
+    assert.ok(actions.includes('extend_student_time'));
+    assert.ok(actions.includes('reopen_student_attempt'));
+    store.db.prepare('UPDATE runs SET closes_at=? WHERE id=?').run(new Date(Date.now() - 1000).toISOString(), run.id);
+    assert.throws(() => store.recoverStudent(run.id, 'A', { minutes: 5, reason: 'After closure' }, 'extend'),
+      error => error.code === 'RUN_CLOSED');
+  } finally { store.close(); }
+});
+
 test('new published version does not alter a candidate pinned to version one', () => {
   const { store, run, pub, priv } = setup('garden');
   const joined = store.join({ runId: run.id, candidateId: 'A', secret: 'passA', pin: '4242' });
