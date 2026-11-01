@@ -1,0 +1,6 @@
+{
+  "rules": {
+    "r-area": {"type":"numeric_entry","criteria":[{"id":"c-area","points":50,"answer":{"value":12,"tolerance":0,"unit":"m2"}}]},
+    "r-observation": {"type":"single_choice","criteria":[{"id":"c-observation","points":50,"answer":"b"}]}
+  }
+}

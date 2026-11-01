@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "examId": "garden-demo",
+  "version": 1,
+  "title": "The Garden Survey",
+  "subject": "Fictional field science",
+  "description": "A second simulated subject using the same examination engine.",
+  "settings": { "durationMinutes": 90, "coreMaxPoints": 100, "bonusMaxPoints": 0, "shuffleOrderOnly": true },
+  "missions": [
+    {
+      "id": "measure", "title": "Measure plots", "story": "A fictional garden has equal rectangular plots.",
+      "shuffleGroup": "survey", "dependsOn": [], "maxPoints": 50,
+      "activities": [
+        { "id": "garden-area", "type": "numeric_entry", "prompt": "A plot is 4 m long and 3 m wide. Enter its area in m2.", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 50, "gradingRuleId": "r-area", "publicConfig": { "unitLabel": "m2" } }
+      ]
+    },
+    {
+      "id": "observe", "title": "Record observations", "story": "Read a fictional observation note.",
+      "shuffleGroup": "survey", "dependsOn": [], "maxPoints": 50,
+      "activities": [
+        { "id": "garden-observation", "type": "single_choice", "prompt": "The note says 'Plot B has six seedlings.' Which plot has six?", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 50, "gradingRuleId": "r-observation", "publicConfig": { "options": [{"id":"a","label":"Plot A"},{"id":"b","label":"Plot B"},{"id":"c","label":"Plot C"}] } }
+      ]
+    }
+  ]
+}

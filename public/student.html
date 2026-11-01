@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Got It! · Student</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/vendor/datatables.min.css">
+  <script src="/vendor/datatables.min.js" defer></script>
+  <script type="module" src="/student.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-lockup"><div class="brand" id="platform-label">Got It!</div><small class="brand-tagline" id="platform-tagline">Gotta Catch Ed All</small></div>
+  </header>
+  <main>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <section id="join-panel" class="page-width">
+      <form id="join-form" class="card stack join-form">
+        <h1>Join activity</h1>
+        <label>Run ID<input id="join-run" required></label>
+        <label>School ID<input id="candidate-id" autocomplete="username" required></label>
+        <label>Run PIN<input id="run-pin" type="password" required></label>
+        <button class="primary" type="submit">Start or resume</button>
+      </form>
+    </section>
+
+    <section id="exam-panel" class="hidden">
+      <div id="fullscreen-gate" class="fullscreen-gate hidden" role="dialog" aria-modal="true" aria-labelledby="fullscreen-title">
+        <div class="fullscreen-card card stack">
+          <h2 id="fullscreen-title">Enter fullscreen to continue</h2>
+          <p>Your timer continues while this page is open.</p>
+          <button type="button" id="enter-fullscreen" class="primary">Enter fullscreen</button>
+          <button type="button" id="fullscreen-fallback" class="hidden">Continue without fullscreen</button>
+          <button type="button" id="fullscreen-exit" class="text-button">Leave session</button>
+        </div>
+      </div>
+      <div class="exam-head">
+        <div>
+          <h1 id="exam-title"></h1>
+          <p id="exam-description"></p>
+        </div>
+        <div class="exam-meta">
+          <div id="candidate-name"></div>
+          <strong id="timer" aria-live="off">--:--</strong>
+          <div id="score"></div>
+        </div>
+      </div>
+      <div class="progress-strip">
+        <span id="exam-progress"></span>
+        <button type="button" id="candidate-exit" class="text-button">Leave session</button>
+      </div>
+      <div class="exam-grid" id="exam-grid">
+        <aside class="mission-index">
+          <h2 id="group-heading">Sections</h2>
+          <div id="mission-list"></div>
+        </aside>
+        <section class="activity-area">
+          <div id="mission-content"></div>
+          <details class="collapsible-reference" id="collapsible-reference">
+            <summary id="reference-summary">Table reference</summary>
+            <div id="context-content" class="reference-body"></div>
+          </details>
+        </section>
+      </div>
+      <div class="exam-footer" id="exam-footer">
+        <span id="save-status">Answers save when submitted</span>
+        <div class="exam-footer-actions">
+          <button type="button" id="continue-mission" class="primary hidden">Next section</button>
+          <button type="button" id="finalize" class="primary hidden">Finish attempt</button>
+          <details id="finish-early" class="finish-early">
+            <summary>Finish early</summary>
+            <p>Unanswered questions receive no points.</p>
+            <button type="button" id="finalize-early">Finish now</button>
+          </details>
+        </div>
+      </div>
+      <section id="completion-panel" class="page-width hidden" aria-live="polite">
+        <div class="card compact">
+          <h2 id="completion-title"></h2>
+          <p id="completion-summary"></p>
+          <button type="button" id="check-results" class="hidden">Check results</button>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

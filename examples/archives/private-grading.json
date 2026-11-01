@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "r-location": {"type":"single_choice","criteria":[{"id":"c-location","points":10,"answer":"b"}]},
+    "r-fields": {"type":"multiple_choice","criteria":[{"id":"c-fields","points":10,"answer":["accession","date"]}]},
+    "r-claim": {"type":"true_false","criteria":[{"id":"c-claim","points":10,"answer":true}]},
+    "r-code": {"type":"text_entry","criteria":[{"id":"c-code","points":10,"answer":["conservation"]}]},
+    "r-total": {"type":"numeric_entry","criteria":[{"id":"c-total","points":10,"answer":{"value":12,"tolerance":0,"unit":"records"}}]},
+    "r-match": {"type":"matching","criteria":[{"id":"c-match-a","points":10,"answer":{"left":"a","right":"1998"}},{"id":"c-match-b","points":10,"answer":{"left":"b","right":"2006"}}]},
+    "r-sequence": {"type":"sequencing","criteria":[{"id":"c-sequence","points":30,"answer":["intake","verify","file"]}]}
+  }
+}

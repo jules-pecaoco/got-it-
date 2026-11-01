@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0",
+  "examId": "archives-demo",
+  "version": 1,
+  "title": "The Archive Ledger",
+  "subject": "Fictional records analysis",
+  "description": "A simulated exercise about cataloging a fictional archive. All identities and grading are for demonstration.",
+  "settings": { "durationMinutes": 90, "coreMaxPoints": 100, "bonusMaxPoints": 0, "shuffleOrderOnly": true },
+  "missions": [
+    {
+      "id": "catalog", "title": "Catalog clues", "story": "Inspect the fictional accession record.",
+      "shuffleGroup": "independent", "dependsOn": [], "maxPoints": 30,
+      "activities": [
+        { "id": "archive-location", "type": "single_choice", "prompt": "Which shelf is labeled for the oldest accession?", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 10, "gradingRuleId": "r-location", "publicConfig": { "options": [{"id":"a","label":"Shelf A: 2012"},{"id":"b","label":"Shelf B: 1998"},{"id":"c","label":"Shelf C: 2006"}] } },
+        { "id": "archive-fields", "type": "multiple_choice", "prompt": "Select both fields that identify an accession in this simulated ledger.", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 10, "gradingRuleId": "r-fields", "publicConfig": { "options": [{"id":"accession","label":"Accession number"},{"id":"date","label":"Acquisition date"},{"id":"color","label":"Cabinet paint color"}] } },
+        { "id": "archive-claim", "type": "true_false", "prompt": "A record dated 1998 precedes a record dated 2006.", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 10, "gradingRuleId": "r-claim", "publicConfig": {} }
+      ]
+    },
+    {
+      "id": "reconcile", "title": "Reconcile entries", "story": "Check labels and values in a fictional inventory.",
+      "shuffleGroup": "independent", "dependsOn": [], "maxPoints": 40,
+      "activities": [
+        { "id": "archive-code", "type": "text_entry", "prompt": "Enter the category word shown here: CONSERVATION.", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 10, "gradingRuleId": "r-code", "publicConfig": { "placeholder": "Category word" } },
+        { "id": "archive-total", "type": "numeric_entry", "prompt": "Three boxes contain four records each. How many records are there?", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 10, "gradingRuleId": "r-total", "publicConfig": { "unitLabel": "records" } },
+        { "id": "archive-match", "type": "matching", "prompt": "Match each invented record to its year.", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 20, "gradingRuleId": "r-match", "publicConfig": { "left": [{"id":"a","label":"Record A"},{"id":"b","label":"Record B"}], "right": [{"id":"1998","label":"1998"},{"id":"2006","label":"2006"}] } }
+      ]
+    },
+    {
+      "id": "report", "title": "Close the ledger", "story": "Put the archive workflow in order.",
+      "dependsOn": ["catalog", "reconcile"], "fixedLast": true, "maxPoints": 30,
+      "activities": [
+        { "id": "archive-sequence", "type": "sequencing", "prompt": "Order these steps from intake to final record.", "manualRationale": "Fictional demonstration item; no source file.", "maxPoints": 30, "gradingRuleId": "r-sequence", "publicConfig": { "items": [{"id":"intake","label":"Intake"},{"id":"verify","label":"Verify"},{"id":"file","label":"File"}] } }
+      ]
+    }
+  ]
+}

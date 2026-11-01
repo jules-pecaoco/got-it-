@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ctf-examination-studio/private.schema.json",
+  "title": "CTF Examination Studio private grading rules",
+  "type": "object",
+  "required": ["rules"],
+  "properties": {
+    "rules": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "criteria"],
+        "properties": {
+          "type": { "enum": ["single_choice", "multiple_choice", "true_false", "text_entry", "numeric_entry", "matching", "sequencing", "data_inspection", "datatable_code"] },
+          "criteria": {
+            "type": "array", "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "points", "answer"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "points": { "type": "integer", "minimum": 1 },
+                "answer": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

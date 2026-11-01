@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Got It! · Faculty Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/vendor/datatables.min.css">
+  <script src="/vendor/datatables.min.js" defer></script>
+  <script type="module" src="/faculty.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-lockup"><div class="brand" id="platform-label">Got It!</div><small class="brand-tagline" id="platform-tagline">Gotta Catch Ed All</small></div>
+    <button type="button" id="instructor-logout" class="hidden text-button">Sign out</button>
+  </header>
+  <main>
+    <div id="notice" role="status" aria-live="polite"></div>
+
+    <section id="instructor-login-panel" class="page-width">
+      <div class="card compact">
+        <h1>Faculty Studio</h1>
+        <form id="instructor-login" class="inline-form">
+          <label>Password<input id="instructor-password" type="password" required autocomplete="current-password"></label>
+          <button class="primary" type="submit">Sign in</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="instructor-workspace" class="hidden faculty-layout">
+      <nav class="faculty-nav" aria-label="Faculty workflow">
+        <strong class="faculty-workspace-name">Faculty Studio</strong>
+        <button type="button" data-step-link="exams">1 · Activity</button>
+        <button type="button" data-step-link="rules">Rules · optional</button>
+        <button type="button" data-step-link="sources">Sources · optional</button>
+        <button type="button" data-step-link="review">2 · Review</button>
+        <button type="button" data-step-link="classes">3 · Classes</button>
+        <button type="button" data-step-link="run">4 · Run</button>
+        <button type="button" data-step-link="results">5 · Results</button>
+      </nav>
+
+      <div class="faculty-main">
+        <div class="faculty-selection">
+          <div class="faculty-context">
+            <div><strong id="selected-exam-title">Select an activity</strong> <span id="selected-exam-meta"></span></div>
+            <p id="workflow-guidance" class="small" role="status"></p>
+          </div>
+          <button type="button" id="refresh-library" class="text-button">Refresh</button>
+        </div>
+
+        <section class="faculty-step" data-step="exams" aria-labelledby="step-exams-title">
+          <h1 id="step-exams-title">Activities</h1>
+          <div id="activity-create-view" class="hidden">
+            <div class="button-row"><button type="button" id="manage-activities">Back to activities</button></div>
+            <div id="ai-create" class="stack">
+              <p id="ai-status" class="small"></p>
+              <p id="ai-recovery-status" class="small" role="status"></p>
+              <div class="ai-form-grid">
+                <label>Name<input id="ai-title" type="text" maxlength="120" placeholder="Campus Queue Challenge"></label>
+                <label>Subject<input id="ai-subject" type="text" maxlength="120" placeholder="DataTables"></label>
+                <label>Type<select id="ai-kind"><option value="activity">Activity</option><option value="quiz">Quiz</option><option value="test">Test</option><option value="exam">Exam</option><option value="ctf">CTF</option></select></label>
+                <label>Difficulty<select id="ai-difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label>
+                <label>Duration (minutes)<input id="ai-duration" type="number" min="5" max="180" value="40"></label>
+                <label>Questions<input id="ai-questions" type="number" min="1" max="20" value="8"></label>
+                <label id="ai-missions-wrap" class="hidden">Missions<input id="ai-missions" type="number" min="1" max="5" value="4"></label>
+                <label>Teaching source<input id="ai-source" type="file" accept=".txt,.md,.pdf,.pptx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"></label>
+              </div>
+              <p id="ai-count-help" class="small">Questions are grouped into sections.</p>
+              <p id="ai-rules-summary" class="small"></p>
+              <p class="small">PDF, PowerPoint (.pptx) or text, up to 10 MB. Source text goes to Google’s free API; do not upload student data or confidential material.</p>
+              <div class="button-row">
+                <button type="button" id="ai-generate" class="primary" disabled>Generate preview</button>
+              </div>
+              <div id="ai-preview" class="ai-preview"></div>
+              <p id="ai-selection" class="small" role="status"></p>
+              <div class="button-row hidden" id="ai-save-row">
+                <button type="button" id="ai-save" class="primary" disabled>Save and review</button>
+                <button type="button" id="ai-discard" class="hidden">Discard preview</button>
+              </div>
+            </div>
+            <details class="json-collapse">
+              <summary>Import a package · advanced</summary>
+              <div class="json-content stack">
+                <label>Package JSON<textarea id="new-package-json" rows="14" spellcheck="false" placeholder='{"public": { ... }, "private": { ... }}'></textarea></label>
+                <div><button type="button" id="import-package" disabled>Import new draft</button></div>
+              </div>
+            </details>
+          </div>
+          <div id="activity-library-view">
+          <p>Select a draft to continue, or create an activity.</p>
+          <div class="step-actions"><button type="button" id="new-activity" class="primary">Create activity</button></div>
+          <div id="exam-library" class="exam-library"></div>
+          <details id="exam-history" class="json-collapse" hidden>
+            <summary>Older and archived versions</summary>
+            <div id="exam-history-list" class="exam-library"></div>
+          </details>
+          <div class="stack exam-title-editor">
+            <label>Name<input id="exam-title-input" type="text" maxlength="120"></label>
+            <p id="exam-title-help" class="small"></p>
+            <div><button type="button" id="save-exam-title">Save name</button></div>
+          </div>
+          <div class="step-actions">
+            <button type="button" id="clone-package">Create editable copy</button>
+            <button type="button" data-go-step="review" class="primary">Review draft</button>
+            <button type="button" data-go-step="run" class="primary">Create run</button>
+          </div>
+          <details class="json-collapse" id="package-json-details">
+            <summary>Advanced package editing</summary>
+            <div class="json-content stack">
+              <p class="small">Import a public activity and private grading package as a draft.</p>
+              <label>Package JSON
+                <textarea id="package-json" rows="14" spellcheck="false" placeholder='{"public": { ... }, "private": { ... }}'></textarea>
+              </label>
+              <div class="button-row">
+                <button type="button" id="update-package">Save selected draft</button>
+              </div>
+            </div>
+          </details>
+          </div>
+        </section>
+
+        <section class="faculty-step hidden" data-step="rules" aria-labelledby="step-rules-title">
+          <h1 id="step-rules-title">Rules</h1>
+          <p>Set the timer and retry cost for each section or mission and question.</p>
+          <div id="policy-editor"></div>
+          <div class="step-actions">
+            <button type="button" id="save-policies">Save changes</button>
+            <button type="button" data-go-step="review" class="primary">Continue to review</button>
+            <button type="button" data-go-step="sources">Inspect sources</button>
+          </div>
+        </section>
+
+        <section class="faculty-step hidden" data-step="sources" aria-labelledby="step-sources-title">
+          <h1 id="step-sources-title">Sources</h1>
+          <p>Inspect teaching material and record optional coverage notes.</p>
+          <p id="source-upload-help" class="small"></p>
+          <div class="stack">
+            <label>Source file (.txt, .md, .pdf or .pptx)
+              <input id="source-file" type="file" accept=".txt,.md,.pdf,.pptx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+            </label>
+            <div class="button-row">
+              <button type="button" id="upload-source">Add source</button>
+              <button type="button" id="load-sources">Refresh sources</button>
+            </div>
+            <label>Document<select id="source-select"></select></label>
+            <details class="json-collapse">
+              <summary>Document text</summary>
+              <pre id="source-preview" class="source-preview"></pre>
+            </details>
+            <h2>Coverage review</h2>
+            <div class="stack" id="coverage-form-ui">
+              <label>Topic<input id="cov-topic" type="text"></label>
+              <label>Learning outcome<input id="cov-outcome" type="text"></label>
+              <label>Activity type<input id="cov-type" type="text"></label>
+              <label>Teaching evidence<input id="cov-evidence" type="text"></label>
+            </div>
+            <details class="json-collapse">
+              <summary>Advanced: coverage JSON</summary>
+              <div class="json-content"><textarea id="coverage-json" rows="6" spellcheck="false"></textarea></div>
+            </details>
+          </div>
+          <div class="step-actions">
+            <button type="button" id="save-coverage">Save notes</button>
+            <button type="button" data-go-step="review" class="primary">Continue to review</button>
+          </div>
+        </section>
+
+        <section class="faculty-step hidden" data-step="review" aria-labelledby="step-review-title">
+          <h1 id="step-review-title">Review and publish</h1>
+          <p id="review-intro">Check each question, answer, and source before publishing.</p>
+          <div id="review-rules-summary" class="review-rules-summary"></div>
+          <div class="step-actions">
+            <button type="button" id="publish-package" class="primary" disabled>Publish version</button>
+            <button type="button" id="review-edit-rules">Edit rules</button>
+            <button type="button" id="validate-package">Recheck</button>
+          </div>
+          <div id="validation-output" class="report" role="status" aria-live="polite"></div>
+          <div id="draft-preview" class="preview-container"></div>
+          <details class="json-collapse" id="source-check-details">
+            <summary>Source support check · optional</summary>
+            <div class="json-content">
+              <button type="button" id="ai-check">Check source support</button>
+              <div id="ai-check-results" class="ai-preview" aria-live="polite"></div>
+            </div>
+          </details>
+          <details class="json-collapse" id="answer-key-details">
+            <summary>Answer key (faculty only)</summary>
+            <div id="answer-key" class="json-content"></div>
+          </details>
+        </section>
+
+        <section class="faculty-step hidden" data-step="classes" aria-labelledby="step-classes-title">
+          <h1 id="step-classes-title">Classes</h1>
+          <p>Upload each roster once. Runs keep the student list they started with.</p>
+          <div id="class-library" class="exam-library"></div>
+          <div id="class-detail"></div>
+          <form id="class-form" class="stack class-form">
+            <h2 id="class-form-title">Add class</h2>
+            <label>Class name<input id="class-name" type="text" maxlength="80" placeholder="ITP25533Z · K32" required></label>
+            <label>Section<input id="class-section" type="text" maxlength="40" placeholder="K32" required></label>
+            <label>Student roster (.csv or .xls)<input id="class-file" type="file" accept=".csv,.xls,.htm,.html"></label>
+            <p class="small">CSV columns: StudentName, Gender, YearLevel, ProgramShortName, SchoolID.</p>
+            <p id="class-roster-status" class="small" role="status">Choose a roster file.</p>
+            <div class="button-row">
+              <button id="class-save" type="submit" class="primary" disabled>Save class</button>
+              <button id="class-cancel" type="button" class="hidden">Cancel edit</button>
+            </div>
+          </form>
+          <div class="step-actions"><button type="button" data-go-step="run" class="primary">Continue to run</button></div>
+        </section>
+
+        <section class="faculty-step hidden" data-step="run" aria-labelledby="step-run-title">
+          <h1 id="step-run-title">Create a run</h1>
+          <p id="run-exam-label" class="small"></p>
+          <div class="stack" id="run-form-ui">
+            <label>Run name<input id="run-name-field" type="text" maxlength="80" placeholder="Week 13 · K32"></label>
+            <label>Class<select id="run-class"><option value="">Choose a class</option></select></label>
+            <p id="run-class-status" class="small" role="status">Choose a saved class.</p>
+            <label>Admission PIN<input id="run-pin-field" type="text" placeholder="At least 4 characters"></label>
+            <label>Admission window (days)<input id="run-duration-days" type="number" value="7" min="1"></label>
+            <label>Student feedback<select id="run-feedback-mode">
+              <option value="graded">Graded · results after run closes</option>
+              <option value="practice">Practice · immediate results</option>
+            </select></label>
+            <label class="check-row"><input id="run-shuffle-questions" type="checkbox"> Shuffle questions within each section or mission</label>
+          </div>
+          <p id="run-setup-status" class="small" role="status">Choose a class to continue.</p>
+          <div class="step-actions">
+            <button type="button" id="create-run" class="primary" disabled>Create run</button>
+            <button type="button" data-go-step="classes">Manage classes</button>
+            <button type="button" data-go-step="results">View results</button>
+          </div>
+          <p id="created-run" class="small" role="status"></p>
+          <div id="run-access" class="hidden stack">
+            <label>Student access details<textarea id="run-access-text" rows="5" readonly></textarea></label>
+            <div class="button-row"><button type="button" id="copy-run-access">Copy details</button></div>
+          </div>
+        </section>
+
+        <section class="faculty-step hidden" data-step="results" aria-labelledby="step-results-title">
+          <h1 id="step-results-title">Results</h1>
+          <label>Run<select id="results-run"></select></label>
+          <p id="results-feedback-mode" class="small"></p>
+          <div class="run-name-editor">
+            <label>Run name<input id="results-run-name" type="text" maxlength="80"></label>
+            <button type="button" id="save-run-name">Save name</button>
+          </div>
+          <div class="step-actions">
+            <button type="button" id="load-results" class="primary">Load results</button>
+            <button type="button" id="export-results">Export CSV</button>
+          </div>
+          <div id="results-table"></div>
+          <section id="student-review" class="student-review hidden" aria-labelledby="student-review-title">
+            <div class="review-header"><h2 id="student-review-title">Student answers</h2><button type="button" id="close-student-review">Close</button></div>
+            <p id="student-review-summary" class="small"></p>
+            <div id="student-review-questions"></div>
+          </section>
+          <section id="proctor-access" class="proctor-access hidden" aria-labelledby="proctor-access-title">
+            <h2 id="proctor-access-title">Proctor access</h2>
+            <p id="proctor-access-status" class="small" role="status"></p>
+            <div class="button-row">
+              <button type="button" id="issue-proctor">Create access code</button>
+              <button type="button" id="revoke-proctor" class="hidden">Revoke access</button>
+            </div>
+            <div id="proctor-share" class="hidden stack">
+              <label>Share with the proctor<textarea id="proctor-share-text" rows="5" readonly></textarea></label>
+              <div><button type="button" id="copy-proctor">Copy details</button></div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
