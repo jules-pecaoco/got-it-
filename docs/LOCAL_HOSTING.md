@@ -36,4 +36,3 @@ Assets now use ETag revalidation and a process cache; assessment APIs remain no-
 ## Runtime storage
 
 This checkout uses D: for project temporary files (`data/tmp`) and npm cache (`data/npm-cache`). Docker Desktop's images and container disks are already stored at `D:\docker\DockerDesktopWSL`. Disk readiness checks use the configured runtime temp drive, alongside the project and database drives. The 10 GB free-space requirement remains enabled.
-
