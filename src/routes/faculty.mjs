@@ -30,10 +30,13 @@ export async function facultyApi({
 }) {
   const method = req.method,
     path = url.pathname;
-
   const instructorToken = accessToken(req, 'instructor');
   const owner = store.requireInstructor(instructorToken);
   return asFaculty(owner, async () => {
+    if (method === 'POST' && path.startsWith('/api/instructor/ai/')) {
+      // A proposal may use two 90-second attempts; generation can also repair it.
+      res.setTimeout(path.endsWith('/generate') ? 370000 : 190000);
+    }
     if (method === 'POST' && path === '/api/instructor/web-template') {
       const value = webTemplate(`php-${randomUUID()}`);
       return send(res, requestId, store.importDraft(value.public, value.private), 201);

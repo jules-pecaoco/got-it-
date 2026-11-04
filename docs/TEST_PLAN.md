@@ -18,3 +18,5 @@ Remaining release gates:
 - Complete accessibility and security reviews on the intended deployment.
 
 Rollback instructions and the preserved baseline tag are in [MIGRATION.md](MIGRATION.md). Older audit logs and one-off samples remain available in Git history.
+
+AI response checks cover thought-part filtering, JSON fences, truncated output, bounded retries, quota/safety responses and safe diagnostics. A live synthetic request returned four Python coding questions, all ready for faculty review; no assessment records were created.

@@ -47,6 +47,64 @@ test('AI generation retries one temporary provider outage', async () => {
   assert.equal(draft.public.missions.length, 1);
 });
 
+test('AI proposals ignore thought parts and accept a complete JSON code fence', async () => {
+  const preview = await proposeExam(request, { apiKey: 'test-key', fetcher: async () => ({ ok: true, json: async () => ({
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ thought: true, text: 'Internal reasoning is not the answer.' },
+      { text: '\ufeff```json\n' + JSON.stringify(design) + '\n```' }] } }]
+  }) }) });
+  assert.equal(preview.design.missions[0].activities.length, 1);
+});
+
+test('AI proposals retry truncated output with a larger budget and a fresh timeout', async () => {
+  const attempts = [];
+  const preview = await proposeExam(request, { apiKey: 'test-key', fetcher: async (_url, options) => {
+    attempts.push(options);
+    if (attempts.length === 1) return { ok: true, json: async () => ({ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"missions":[' }] } }] }) };
+    return provider(design)(_url, options);
+  } });
+  assert.equal(preview.design.missions.length, 1);
+  assert.equal(attempts.length, 2);
+  assert.ok(JSON.parse(attempts[1].body).generationConfig.maxOutputTokens > JSON.parse(attempts[0].body).generationConfig.maxOutputTokens);
+  assert.notEqual(attempts[0].signal, attempts[1].signal);
+  assert.ok(JSON.parse(attempts[0].body).generationConfig.responseJsonSchema);
+});
+
+test('AI malformed output gets one retry, then returns safe provider diagnostics', async () => {
+  let calls = 0;
+  await assert.rejects(() => proposeExam(request, { apiKey: 'test-key', fetcher: async () => {
+    calls++;
+    return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'not JSON; confidential provider text' }] } }],
+      usageMetadata: { candidatesTokenCount: 8 } }) };
+  } }), error => {
+    assert.equal(error.code, 'AI_INVALID_JSON');
+    assert.equal(error.provider.finishReason, 'STOP');
+    assert.equal(error.provider.outputTokens, 8);
+    assert.doesNotMatch(JSON.stringify(error.provider), /confidential|test-key/);
+    return true;
+  });
+  assert.equal(calls, 2);
+});
+
+test('persistent token exhaustion is distinct from bad JSON and never returns a partial draft', async () => {
+  let calls = 0;
+  await assert.rejects(() => proposeExam(request, { apiKey: 'test-key', fetcher: async () => {
+    calls++; return { ok: true, json: async () => ({ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: JSON.stringify(design) }] } }] }) };
+  } }), error => error.code === 'AI_OUTPUT_TRUNCATED' && error.status === 502);
+  assert.equal(calls, 2);
+});
+
+test('AI safety blocks and quota exhaustion do not trigger generation retries', async () => {
+  let calls = 0;
+  await assert.rejects(() => proposeExam(request, { apiKey: 'test-key', fetcher: async () => {
+    calls++; return { ok: true, json: async () => ({ promptFeedback: { blockReason: 'SAFETY' } }) };
+  } }), error => error.code === 'AI_BLOCKED');
+  assert.equal(calls, 1);
+  await assert.rejects(() => proposeExam(request, { apiKey: 'test-key', fetcher: async () => {
+    calls++; return { ok: false, status: 429 };
+  } }), error => error.code === 'AI_RATE_LIMITED');
+  assert.equal(calls, 2);
+});
+
 test('AI design becomes a valid public/private draft with verified source evidence', async () => {
   const draft = await generateExam(request, { apiKey: 'test-key', fetcher: provider(design) });
   assert.deepEqual(validatePackage(draft.public, draft.private), []);

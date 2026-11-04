@@ -190,7 +190,7 @@ const { app, server, ready } = createHttpServer(async (req, res) => {
     res.writeHead(200, headers);
     res.end(req.method === 'HEAD' ? undefined : asset.bytes);
   } catch (err) {
-    if (!err.status || err.status >= 500) console.error(JSON.stringify({ level: 'error', requestId, method: req.method, path: req.url?.split('?')[0], code: err.code || 'INTERNAL_ERROR', message: err.message }));
+    if (!err.status || err.status >= 500) console.error(JSON.stringify({ level: 'error', requestId, method: req.method, path: req.url?.split('?')[0], code: err.code || 'INTERNAL_ERROR', message: err.message, ...(err.provider ? { provider: err.provider } : {}) }));
     error(res, requestId, err);
   }
 });

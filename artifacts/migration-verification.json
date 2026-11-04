@@ -4,7 +4,7 @@
   "rollbackTag": "codex/pre-migration-2026-11-04",
   "originalDataPreserved": true,
   "automatedTests": {
-    "passed": 117,
+    "passed": 122,
     "failed": 0
   },
   "checks": [
@@ -86,5 +86,18 @@
     "removedUnusedDrafts": 1,
     "backup": "data/backups/before-cleanup-1793766771954-748971a8.sqlite",
     "originalRollbackDatabaseUnchanged": true
+  },
+  "aiVerification": {
+    "syntheticPythonCodingQuestions": 4,
+    "readyQuestions": 4,
+    "databaseRecordsCreated": 0,
+    "regressions": [
+      "Thought-part filtering",
+      "Fenced JSON",
+      "Truncation retry with increased budget",
+      "Bounded malformed JSON retry",
+      "Safety and quota handling"
+    ],
+    "liveSchemaVerified": true
   }
 }
