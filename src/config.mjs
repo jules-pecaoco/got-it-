@@ -1,15 +1,18 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { configureRuntimeTemp } from './runtime-temp.mjs';
 
 export const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 export function loadConfig(root = projectRoot) {
   const envFile = join(root, '.env');
   if (existsSync(envFile)) process.loadEnvFile(envFile);
+  const tempDirectory = configureRuntimeTemp(root);
   const configuredFile = process.env.DATA_FILE || join(root, 'data', 'studio.sqlite');
   const config = {
     root,
+    tempDirectory,
     dataFile: configuredFile === ':memory:' ? configuredFile : resolve(root, configuredFile),
     demoMode: process.env.DEMO_MODE !== '0',
     platformLabel: process.env.PLATFORM_LABEL || 'Got It!',

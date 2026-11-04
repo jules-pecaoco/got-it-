@@ -4,7 +4,7 @@
   "rollbackTag": "codex/pre-migration-2026-11-04",
   "originalDataPreserved": true,
   "automatedTests": {
-    "passed": 115,
+    "passed": 116,
     "failed": 0
   },
   "checks": [
@@ -53,10 +53,10 @@
     "foreignKeyViolations": 0
   },
   "remainingGates": [
-    "Real 80-student Docker load: blocked by the existing 10 GB system/temp disk-space requirement; C: had approximately 2 GB free",
     "Institutional deployment and HTTPS preview/worker host configuration",
     "Representative full-duration proctored pilot",
-    "Comprehensive accessibility and security review"
+    "Comprehensive accessibility and security review",
+    "Investigate host-contention grading: an initial Docker rehearsal concurrent with build/regression checks produced a partial score for valid code; isolated rerun passed all 80"
   ],
   "deliberatelyDeferred": [
     "PostgreSQL migration",
@@ -64,5 +64,19 @@
     "MySQL and framework hosting",
     "automated full browser interaction grading"
   ],
-  "notes": "Fastify compatibility controllers preserve existing APIs. New runtime/editor modules use TypeScript; existing workflows remain JavaScript. Intermediate phase logs are local diagnostics; migration-checks.txt is the final combined check."
+  "notes": "Fastify compatibility controllers preserve existing APIs. New runtime/editor modules use TypeScript; existing workflows remain JavaScript. Intermediate phase logs are local diagnostics; migration-checks.txt is the final combined check.",
+  "storage": {
+    "runtimeTemp": "D:\\code\\ctfv1\\data\\tmp",
+    "npmCache": "D:\\code\\ctfv1\\data\\npm-cache",
+    "dockerDisk": "D:\\docker\\DockerDesktopWSL"
+  },
+  "realDockerLoad": {
+    "students": 80,
+    "verifiedScores": 80,
+    "requests": 3170,
+    "durationSeconds": 119.55,
+    "requestP95Ms": 196.2,
+    "queueDrained": true,
+    "workload": "Two Python private tests per student; no concurrent build/test workload"
+  }
 }

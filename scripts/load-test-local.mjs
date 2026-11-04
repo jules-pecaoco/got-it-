@@ -4,13 +4,16 @@ import os from 'node:os';
 import { parse } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { buildGeneratedPackage } from '../src/ai.mjs';
+import { configureRuntimeTemp } from '../src/runtime-temp.mjs';
+
+const tempDirectory = configureRuntimeTemp();
 
 const realDocker = process.argv.includes('--docker');
 const count = Number(process.argv.find(arg => /^--students=/.test(arg))?.split('=')[1] || 80);
 assert.ok(Number.isInteger(count) && count >= 1 && count <= 80, 'Choose 1–80 students.');
 if (realDocker) {
   const disk = statfsSync(parse(os.tmpdir()).root);
-  assert.ok(disk.bavail * disk.bsize >= 10 * 2**30, 'Free at least 10 GB on the system/temp drive before a Docker load test.');
+  assert.ok(disk.bavail * disk.bsize >= 10 * 2**30, `Free at least 10 GB on the runtime/temp drive (${tempDirectory}) before a Docker load test.`);
 }
 // Never connect to the configured classroom database or send data to AI.
 process.env.NODE_ENV = 'test'; process.env.DATA_FILE = ':memory:'; process.env.DEMO_MODE = '1';
@@ -64,7 +67,7 @@ try {
     assert.equal(store.score(joined.session.id), 10);
   }));
   timings.sort((a,b) => a-b);
-  console.log(JSON.stringify({ mode: realDocker ? 'REAL Docker execution' : 'SIMULATED runner; not a Docker capacity measurement', students: count,
+  console.log(JSON.stringify({ mode: realDocker ? 'REAL Docker execution' : 'SIMULATED runner; not a Docker capacity measurement', tempDirectory, students: count,
     requests: timings.length, durationSeconds: +( (performance.now()-started)/1000).toFixed(2),
     requestP95Ms: +timings[Math.floor(timings.length*0.95)].toFixed(2), peakSimulatedExecutions: realDocker ? undefined : peak,
     queue: store.codingQueue.stats(), verifiedScores: count }, null, 2));

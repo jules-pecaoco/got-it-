@@ -33,3 +33,7 @@ Scores remain hidden while accepted submissions are pending. Completed queue rec
 Record queue wait, total completion time, normal request latency, CPU/RAM, and errors. An 80-student HTTP pass is not evidence of acceptable coding turnaround. Choose the class size from real-Docker and public-network rehearsals. Upload stability, power loss, laptop sleep, shared credentials, and a single computer remain deployment limitations.
 
 Assets now use ETag revalidation and a process cache; assessment APIs remain no-store. Draft autosave waits for a 1.5-second typing pause and still flushes on supported navigation/submission. SQLite indexes, prepared statement reuse, and aggregated gradebook reads reduce repeated database work.
+## Runtime storage
+
+This checkout uses D: for project temporary files (`data/tmp`) and npm cache (`data/npm-cache`). Docker Desktop's images and container disks are already stored at `D:\docker\DockerDesktopWSL`. Disk readiness checks use the configured runtime temp drive, alongside the project and database drives. The 10 GB free-space requirement remains enabled.
+

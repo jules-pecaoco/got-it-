@@ -6,6 +6,8 @@ Verified original database backup: `data/backups/studio-2026-11-04T03-17-08-580Z
 
 ## Run safely
 
+Runtime temporary files and Node/tsx caches use `data/tmp` on the project drive (`D:\code\ctfv1\data\tmp` here). Project npm cache uses `data/npm-cache`. Application, build, test and maintenance entry points set TEMP, TMP and TMPDIR for their own processes and children; Windows-wide settings are unchanged. `RUNTIME_TEMP_DIR` optionally selects another project-relative or absolute directory. Docker Desktop's disk images were verified at `D:\docker\DockerDesktopWSL`.
+
 `npm ci`, then `npm run typecheck`, `npm test`, and `npm start`.
 
 `npm start` builds the editors and starts the migration on a separate database ending in `.migration.sqlite`. The original configured database stays unchanged. Explicit `MIGRATION_DATA_FILE` selects another migration copy. Never point the original server at an upgraded database.
@@ -46,13 +48,14 @@ Staff can inspect request latency, event-loop delay and queue age at `/api/instr
 
 ## Verification on 4 November 2026
 
-- 115 automated tests passed; TypeScript, JavaScript syntax, scoped formatting and whitespace checks passed.
+- 116 automated tests passed; TypeScript, JavaScript syntax, scoped formatting and whitespace checks passed.
 - Browser: logic editor, saved-draft refresh, sample results, disconnect/reconnect recovery and cross-origin PHP preview verified using fictional records. The Playwright skill was used for these checks.
 - Real Docker: JavaScript, Python, SQL and PHP execution, invalid programs, execution/output limits and runtime restrictions verified.
 - Real PHP: HTTP rendering, SQLite CRUD, static assets, database recovery/reset, filesystem restriction, console bridge, preview cookie paths and revoked preview access verified.
 - Simulated 80-student rehearsal: all 80 scores verified, queue drained; this is not Docker throughput evidence.
 - Restore drill: baseline and migrated code loaded separate backup copies; nine table counts and all six existing grades matched, with no foreign-key violations.
-- The real 80-student Docker load test stopped at the existing 10 GB system/temp disk-space requirement. Approximately 2 GB was free on C:. No disk cleanup or guard bypass was performed.
+- After selecting D: runtime temp storage (Docker disks were already on D:), the real 80-student Docker rehearsal passed: 80 scores verified, queue drained in 119.55 seconds, request p95 196.2 ms. This fixture has two Python private tests per student. The 10 GB disk-space check remained enabled.
+- An initial real run concurrent with build/regression work produced a partial score for valid code. The isolated rerun passed all 80. Avoid builds/maintenance during exams and investigate host-contention grading before graded deployment.
 - Institutional deployment, representative full-duration examination, comprehensive accessibility review and penetration testing remain release gates. No live classroom run was performed.
 
 ## Release gates

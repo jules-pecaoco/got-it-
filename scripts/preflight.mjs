@@ -11,6 +11,7 @@ check(!config.demoMode, 'Demo mode is disabled.');
 check(config.instructorPassword.length >= 16 && config.instructorPassword !== 'demo-instructor', 'Faculty password has at least 16 characters.');
 check(config.publicOrigin?.startsWith('https://'), 'PUBLIC_ORIGIN is the actual public HTTPS address.');
 console.log(`Database: ${config.dataFile}`);
+console.log(`Runtime temp: ${config.tempDirectory}`);
 console.log(`RAM: ${(os.freemem()/2**30).toFixed(1)} GB currently free / ${(os.totalmem()/2**30).toFixed(1)} GB total`);
 const roots = new Set([parse(os.tmpdir()).root, parse(config.root).root, parse(config.dataFile).root]);
 for (const root of roots) {
