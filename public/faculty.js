@@ -377,7 +377,7 @@ function renderRunSummary() {
   if (Number.isInteger(days) && days >= 1 && days <= 365)
     target.append(node('p', '', `Students may join until ${localDateTime(Date.now() + days * 86400_000)}. All attempts end by this time.`));
   target.append(node('p', 'small', $('run-feedback-mode').value === 'graded'
-    ? 'Graded: scores stay hidden until you publish them or the run closes.'
+    ? 'Graded: scores stay hidden until you publish them.'
     : 'Practice: students see correctness and scores immediately.'),
     node('p', 'small', $('run-shuffle-questions').checked ? 'Questions shuffled within each section or mission.' : 'Questions shown in the authored order.'));
 }
@@ -433,7 +433,7 @@ $('instructor-login').addEventListener('submit', event => {
   perform(async () => {
     await request('/api/instructor/login', {
       method: 'POST',
-      data: { password: $('instructor-password').value }
+      data: { username: $('instructor-username').value.trim(), password: $('instructor-password').value }
     });
     state.instructorAuthenticated = true;
     $('instructor-password').value = '';
@@ -1568,6 +1568,12 @@ const packageInput = id => {
   if (!value.public || !value.private) throw new Error('Package requires public and private root objects.');
   return value;
 };
+$('create-web-project').addEventListener('click', () => perform(async () => {
+  const result = await request('/api/instructor/web-template', { method: 'POST' });
+  state.selectedExam = result; state.sources = []; invalidateValidation();
+  await refreshLibrary(); setActivityMode('library'); await loadSources(); showStep('review');
+  message('PHP project created. Edit its files and grading checks in Advanced package editing, then review and publish.');
+}));
 
 $('import-package').addEventListener('click', () => perform(async () => {
   const value = packageInput('new-package-json');
@@ -1847,6 +1853,11 @@ $('create-run').addEventListener('click', () => perform(async () => {
 }));
 
 $('load-results').addEventListener('click', () => perform(loadResults));
+$('retry-grading').addEventListener('click', () => perform(async () => {
+  const runId = $('results-run').value; if (!runId) return;
+  const result = await request(`/api/instructor/runs/${runId}/retry-grading`, { method: 'POST' });
+  message(`${result.retried} interrupted jobs queued again.`); await loadResults();
+}));
 $('publish-all-scores').addEventListener('click', () => perform(async () => {
   const runId = $('results-run').value;
   if (!runId) throw new Error('Select a run.');
@@ -1935,6 +1946,7 @@ function responseText(question, submission) {
   if (!submission) return 'No answer submitted';
   const value = submission.value, config = question.publicConfig || {};
   const option = id => config.options?.find(item => item.id === id)?.label ?? String(id);
+  if (question.type === 'web_project' && value?.files) return Object.entries(value.files).map(([name, source]) => `--- ${name} ---\n${source}`).join('\n\n') + (value.database ? '\n\nSQLite snapshot included.' : '');
   if (question.type === 'single_choice') return option(value);
   if (question.type === 'multiple_choice') return Array.isArray(value) ? value.map(option).join(', ') : String(value);
   if (question.type === 'true_false') return value ? 'True' : 'False';
@@ -2111,7 +2123,7 @@ function renderResults() {
   $('results-publication-message').textContent = state.publicationNotice?.runId === runId ? state.publicationNotice.text
     : result.feedbackMode === 'practice' ? 'Practice run · Students see scores immediately.'
     : counts.readyToPublish ? `${counts.readyToPublish} completed ${counts.readyToPublish === 1 ? 'score is' : 'scores are'} ready to publish.`
-    : counts.hidden ? 'Scores for students still in progress stay hidden until they finish and you publish, or the run closes.'
+    : counts.hidden ? 'Scores for students still in progress stay hidden until they finish and you publish.'
     : 'No completed scores are waiting to be published.';
   const target = $('results-table'); clear(target);
   const rows = filterResultRows(result.rows, {

@@ -2,6 +2,8 @@
 
 **Gotta Catch Ed All**
 
+Migration branch: see [migration, verification and rollback](docs/MIGRATION.md). `npm start` uses a separate migration database and preserves the original. PHP projects and the Vue logic editor require `npm run build` (included in start/test).
+
 Got It! hosts activities, quizzes, tests, exams, and CTF challenges with server-owned grading. Faculty Studio is the faculty workspace; students and proctors use their own views. The Week 13 CTF uses a fictional ticket queue. This local application has not been deployed for a class.
 
 ## Start the demonstration
@@ -34,7 +36,7 @@ To enable the faculty AI assistant, create a free Gemini API key in Google AI St
 - Upload text, Markdown, PDF or PowerPoint (`.pptx`) teaching material. The server extracts PDF pages and slide text with page/slide labels. Create a faculty AI draft from one source, then review its questions and answer key. An optional AI check estimates source match as a percentage. Faculty decides what to approve; coverage notes are optional.
 - Upload each class roster once, then add, edit, search, sort, or remove individual students in its DataTables roster. Class names, sections, whole-roster replacement, and deletion are also available. Existing runs keep their student lists when a class changes or is deleted. Students join with school ID and PIN.
 - Set duration and retry limits, point costs and time costs by section or mission and question. Faculty can view the answer key after sign-in.
-- Choose **Graded** or **Practice** feedback when creating a run. Graded is the Faculty default: students receive save confirmation, while correctness and scores stay hidden until faculty publishes the completed attempt's score or the run closes. Reopening or extending a released attempt hides its score until faculty publishes again or the run closes. Practice keeps immediate feedback. Existing runs retain Practice behavior.
+- Choose **Graded** or **Practice** feedback when creating a run. Graded is the Faculty default: students receive save confirmation, while correctness and scores stay hidden until faculty publishes the completed attempt's score. Reopening or extending a released attempt hides its score until faculty publishes again. Practice keeps immediate feedback. Existing runs retain Practice behavior.
 - Optionally shuffle questions within each section or mission when creating a run. Each student's order is saved on first join and restored on resume; section prerequisites stay in order. Leave this off when questions build on each other.
 - Freeze each candidate's shuffled independent mission order and server deadline on first join. Resume preserves both.
 - Render and grade ten activity types: single choice, multiple choice, true/false, text, numeric, matching, sequencing, data inspection, DataTables code, and code writing. Coding questions support PHP, Python, SQL (SQLite), and JavaScript (Node.js), show sample inputs and expected outputs, and award partial credit across private tests.
@@ -42,7 +44,7 @@ To enable the faculty AI assistant, create a free Gemini API key in Google AI St
 - In Faculty Results, review each student's submitted answers and the answer key. After an attempt ends, replace a question's automatic points with a reason, or restore its automatic score. The total and CSV update, and changes appear in the audit log.
 - Faculty workspaces separate Activities, Classes, and Results from activity preparation. Search and filter activities, follow the draft/review/publish/run checklist, and inspect a live run summary that distinguishes the joining window from each student's attempt duration.
 - Results load when a run is selected. Participation summaries, student search, attempt and score-visibility filters, and persistent publication confirmations keep completed attempts separate from published scores. After a graded attempt ends, the student view checks for published scores every 15 seconds and when returning to the tab; students can also select **Check for published score**. Run settings and access details are available below the table.
-- Students check activity details, retry costs, feedback rules, and fullscreen requirements before starting a new timer. Per-question status distinguishes saved drafts from submitted answers, with draft-save retry controls and warnings before leaving unsubmitted revisions. Saved drafts do not count toward grades.
+- Students check activity details, retry costs, feedback rules, and fullscreen requirements before starting a new timer. Per-question status distinguishes saved drafts from submitted answers, with draft-save retry controls and warnings before leaving unsubmitted revisions. Saved drafts become final submissions on finish or expiry, subject to retry limits.
 - Issue, replace, or revoke a separate proctor code for each run in Faculty Results. Proctors see participation, question progress, last submission, and time remaining. They cannot see answers, grades, or faculty controls.
 - Keep private answers outside `public/` and candidate responses. The browser only receives public activity data.
 
@@ -55,7 +57,7 @@ npm run setup:coding
 npm run verify:coding
 ```
 
-The setup downloads three digest-pinned runtime images; Python also supplies SQLite. Coding runs as a non-root user with no network or host mounts, a read-only root, a small temporary filesystem, memory/process/CPU limits, and time/output bounds. The server never executes student code directly on the host. Keep Docker running while students use coding questions; unavailable runtimes do not consume a submission attempt. Student pages use a persistent queue with two active jobs, one pending job per student, and saved on-time receipts. Queue waits can finish after the deadline. Direct synchronous API clients retain the busy/retry behavior. Standard-library console programs and single read-only SQLite queries are supported; this does not host PHP websites, browser JavaScript apps, or external database servers. Other activity types do not require Docker.
+The setup downloads three digest-pinned runtime images; Python also supplies SQLite. Coding runs as a non-root user with no network or host mounts, a read-only root, a small temporary filesystem, memory/process/CPU limits, and time/output bounds. The server never executes student code directly on the host. Keep Docker running while students use coding questions; unavailable runtimes do not consume a submission attempt. Student pages use a persistent queue with two active jobs, one pending job per student, and saved on-time receipts. Queue waits can finish after the deadline. Direct synchronous API clients retain the busy/retry behavior. Standard-library console programs and single read-only SQLite queries are supported; The separate web_project workspace hosts plain PHP/HTML/CSS/JavaScript with SQLite; external database servers are not included. Other activity types do not require Docker.
 
 ## Create a new activity
 
@@ -93,4 +95,4 @@ This exercises package validation, two unrelated subjects, the Week 13 table act
 
 The browser UI uses the Solar Ledger palette and square components. Paper backups bundle the OFL Poppins regular font for consistent printing; the browser UI uses a sans-serif fallback. Keyboard controls are available for the activities, including matching and sequencing.
 
-The server is a single-process Node application. It stores drafts and published content in SQLite, with private rules in a protected table column. Demo seed files live outside the static `public/` directory. Answers are evaluated only in the server process. See [security limits](docs/SECURITY.md) and [test evidence](docs/TEST_PLAN.md).
+The application uses Fastify with compatibility controllers, SQLite and optional isolated execution workers. It stores drafts and published content in SQLite, with private rules in a protected table column. Demo seed files live outside the static `public/` directory. Answers are evaluated only in the server process. See [security limits](docs/SECURITY.md) and [test evidence](docs/TEST_PLAN.md).

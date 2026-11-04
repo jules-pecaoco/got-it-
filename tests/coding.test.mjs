@@ -19,6 +19,24 @@ const request = { title: 'Sum coding', subject: 'Programming', kind: 'ctf', ques
 const draft = (language = 'python', kind = 'ctf') => buildGeneratedPackage({ ...request, kind, programmingLanguage: language }, { missions: [{ title: 'Compute', activities: [question(language)] }] });
 const sumRunner = async (_language, code, input) => ({ output: code === 'hardcoded' ? '5' : String(input.split(' ').map(Number).reduce((a, b) => a + b, 0)), error: '', succeeded: code !== 'syntax error' });
 
+test('finishing while code is queued grades its saved draft only once', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const store = new Store(':memory:', { codeRunner: async (...args) => { await gate; return sumRunner(...args); } });
+  try {
+    const value = draft(); store.importDraft(value.public, value.private); store.addSource(value.public.examId, 1, source); store.publish(value.public.examId, 1);
+    const run = store.createRun({ examId: value.public.examId, version: 1, pin: '4242', opensAt: new Date(Date.now() - 1000).toISOString(), closesAt: new Date(Date.now() + 600000).toISOString(), roster: [{ candidateId: 'A', displayName: 'Alex', section: 'S' }] });
+    const id = store.join({ runId: run.id, candidateId: 'A', pin: '4242' }).session.id;
+    const response = { value: solution.python }; store.saveDraft(id, 'm1-q1', response);
+    const receipt = store.queueCode(id, 'm1-q1', 'submit', response, 'queued-draft-check-001');
+    store.finalize(id); assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM coding_jobs').get().n, 1);
+    release(); const until = Date.now() + 3000;
+    while (store.codingQueue.view(id, receipt.jobId).status !== 'done' && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM submissions').get().n, 1);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM penalty_events').get().n, 0);
+  } finally { release(); store.close(); }
+});
+
 test('restart cleanup targets only containers labelled with the recovered job', async () => {
   const job = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', calls = [];
   assert.ok(dockerArguments('python', 'example', job).includes(`gotit.job=${job}`));

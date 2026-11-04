@@ -160,7 +160,7 @@ test('candidate API restores drafts and retries submissions safely; faculty reco
   assert.equal(reopened.payload.data.status, 'in_progress');
 });
 
-test('graded runs save answers without revealing results until the run closes', async () => {
+test('graded runs require publication even after the run closes', async () => {
   const instructor = store.loginInstructor('demo-instructor', 'demo-instructor').token;
   const created = await call('/api/instructor/runs', { method: 'POST', token: instructor, data: {
     examId: 'garden-demo', version: 1, name: 'Graded feedback check', pin: '4321', feedbackMode: 'graded',
@@ -192,8 +192,10 @@ test('graded runs save answers without revealing results until the run closes', 
   assert.equal((await call(`/api/instructor/runs/${runId}/results`, { token: instructor })).payload.data.rows[0].score, 50);
   store.db.prepare('UPDATE runs SET closes_at=? WHERE id=?').run(new Date(Date.now() - 1000).toISOString(), runId);
   const released = await call('/api/me/results', { token: candidate.token });
-  assert.equal(released.payload.data.resultsReleased, true);
-  assert.equal(released.payload.data.score, 50);
+  assert.equal(released.payload.data.resultsReleased, false);
+  assert.equal(released.payload.data.score, undefined);
+  store.publishStudentResults(runId, 'G-001');
+  assert.equal((await call('/api/me/results', { token: candidate.token })).payload.data.score, 50);
   const resumed = await call('/api/auth/student/join', { method: 'POST', data: { runId, candidateId: 'G-001', pin: '4321' } });
   assert.equal(resumed.payload.data.session.score, 50);
 });

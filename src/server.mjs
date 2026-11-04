@@ -1,19 +1,45 @@
-import http from 'node:http';
+import { facultyApi } from './routes/faculty.mjs';
+import { studentApi } from './routes/student.mjs';
+import { createHttpServer } from './http-server.mts';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { Store } from './store.mjs';
-import { aiAvailable, generateExam, proposeExam, inspectProposal, buildApprovedPackage, checkSourceSupport, validateGeneratedDraft } from './ai.mjs';
-import { extractMaterial } from './materials.mjs';
 import { loadConfig } from './config.mjs';
 import { RateLimiter } from './rate-limit.mjs';
 import { accessToken, browserSession, clearBrowserSession, checkRequestOrigin } from './http-session.mjs';
-import { codingStatus, previewCode } from './code-runner.mjs';
+import { executionRunner } from './execution-client.mts';
+import { createPreviewService } from './web-preview.mts';
+import { migrationDatabase } from './migration-database.mjs';
+import { measureRequest, metricsSnapshot } from './metrics.mts';
 
-const { root, dataFile, demoMode, platformLabel, platformTagline, instructorPassword, publicOrigin } = loadConfig();
+const runtimeConfig = loadConfig();
+if (process.env.NODE_ENV !== 'test' && process.env.MIGRATION_ACTIVE !== '1') runtimeConfig.dataFile = migrationDatabase(runtimeConfig.dataFile);
+const { root, dataFile, demoMode, platformLabel, platformTagline, instructorPassword, publicOrigin } = runtimeConfig;
 if (!instructorPassword) throw new Error('INSTRUCTOR_PASSWORD is required when DEMO_MODE=0.');
-const store = new Store(dataFile);
+const store = new Store(dataFile, { codeRunner: executionRunner() });
 const assetCache = new Map();
+const previewOrigin = process.env.PREVIEW_ORIGIN ? new URL(process.env.PREVIEW_ORIGIN).origin : null;
+if (previewOrigin && previewOrigin === publicOrigin) throw new Error('PREVIEW_ORIGIN must differ from PUBLIC_ORIGIN.');
+const webPreviews = previewOrigin ? createPreviewService(previewOrigin, sessionId => {
+  try { const { session } = store.context(sessionId); return session.status === 'in_progress' && Date.now() < Date.parse(session.deadline_at); } catch { return false; }
+}, publicOrigin || '*') : null;
+async function snapshotProjects(sessionId = null, all = false) {
+  if (!webPreviews) return;
+  const drafts = store.db.prepare(`SELECT d.session_id,d.activity_id,d.response_json FROM answer_drafts d JOIN sessions s ON s.id=d.session_id
+    WHERE (? IS NULL OR d.session_id=?) AND (? OR ? IS NOT NULL OR s.deadline_at<=?)`).all(sessionId, sessionId, Number(all), sessionId, new Date().toISOString());
+  for (const draft of drafts) {
+    const response = JSON.parse(draft.response_json);
+    if (!response.value?.files) continue;
+    const database = await webPreviews.snapshot(draft.session_id, draft.activity_id);
+    if (database) store.db.prepare('UPDATE answer_drafts SET response_json=? WHERE session_id=? AND activity_id=? AND response_json=?')
+      .run(JSON.stringify({ value: { ...response.value, database } }), draft.session_id, draft.activity_id, draft.response_json);
+  }
+}
+function answerLimit(sessionId, activityId) {
+  const activity = store.context(sessionId).exam.public.missions.flatMap(mission => mission.activities).find(item => item.id === activityId);
+  return activity?.type === 'web_project' ? 1_700_000 : 110_000;
+}
 
 function seedDemo() {
   for (const name of ['archives', 'garden']) {
@@ -25,7 +51,7 @@ function seedDemo() {
     }
     if (!store.listRuns().some(x => x.examId === pub.examId && x.version === pub.version)) {
       store.createRun({
-        examId: pub.examId, version: pub.version, pin: '4242',
+        examId: pub.examId, version: pub.version, pin: '4242', feedbackMode: 'practice',
         opensAt: new Date(Date.now() - 3600_000).toISOString(),
         closesAt: new Date(Date.now() + 7 * 86400_000).toISOString(),
         roster: [
@@ -40,7 +66,7 @@ if (demoMode && process.env.NODE_ENV === 'test') seedDemo();
 
 function json(res, status, payload, requestId, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
-  res.end(JSON.stringify({ ...payload, requestId }));
+  res.end(JSON.stringify({ ...payload, requestId, serverNow: new Date().toISOString() }));
 }
 function csv(res, body) {
   res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="gradebook.csv"', 'Cache-Control': 'no-store' });
@@ -115,7 +141,8 @@ async function api(req, res, url, requestId) {
   }
   if (method === 'POST' && path === '/api/instructor/login') {
     limit(`admin-login:${req.socket.remoteAddress}`, 10);
-    return send(res, requestId, browserSession(req, res, 'instructor', store.loginInstructor((await body(req)).password, instructorPassword), publicOrigin));
+    const input = await body(req);
+    return send(res, requestId, browserSession(req, res, 'instructor', store.loginInstructor(input.password, instructorPassword, input.username || 'faculty'), publicOrigin));
   }
   if (method === 'POST' && path === '/api/auth/proctor/join') {
     limit(`proctor-login:${req.socket.remoteAddress}`, 10);
@@ -132,162 +159,7 @@ async function api(req, res, url, requestId) {
       return send(res, requestId, result);
     }
   }
-  if (path.startsWith('/api/instructor/')) {
-    const instructorToken = accessToken(req, 'instructor');
-    store.requireInstructor(instructorToken);
-    if (method === 'GET' && path === '/api/instructor/session') return send(res, requestId, { authenticated: true });
-    if (method === 'GET' && path === '/api/instructor/system') return send(res, requestId, { uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), coding: store.codingQueue.stats() });
-    if (method === 'POST' && path === '/api/instructor/logout') {
-      const result = store.logoutInstructor(instructorToken);
-      clearBrowserSession(req, res, 'instructor', publicOrigin);
-      return send(res, requestId, result);
-    }
-    if (method === 'POST' && path === '/api/instructor/materials/extract') {
-      const input = await body(req, 15_000_000);
-      if (typeof input.base64 !== 'string' || input.base64.length > 13_400_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64))
-        throw Object.assign(new Error('Invalid material upload.'), { code: 'INVALID_MATERIAL', status: 400 });
-      return send(res, requestId, await extractMaterial({ filename: input.filename, bytes: new Uint8Array(Buffer.from(input.base64, 'base64')) }));
-    }
-    if (method === 'GET' && path === '/api/instructor/ai/status')
-      return send(res, requestId, { available: aiAvailable(), model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' });
-    if (method === 'GET' && path === '/api/instructor/code/status') return send(res, requestId, await codingStatus());
-    if (method === 'POST' && path === '/api/instructor/code/preview') {
-      limit(`code-preview:instructor:${instructorToken}`, 12);
-      const input = await body(req, 500_000);
-      return send(res, requestId, await previewCode(input.config, input.value, store.codeRunner));
-    }
-    if (path === '/api/instructor/ai/proposal') {
-      if (method === 'GET') return send(res, requestId, store.getAiProposal(instructorToken));
-      if (method === 'PUT') return send(res, requestId, store.saveAiProposal(instructorToken, await body(req)));
-      if (method === 'DELETE') return send(res, requestId, store.deleteAiProposal(instructorToken));
-    }
-    if (method === 'POST' && path === '/api/instructor/ai/inspect')
-      return send(res, requestId, inspectProposal(await body(req)));
-    if (method === 'POST' && path === '/api/instructor/ai/generate') {
-      limit(`ai-generate:${req.socket.remoteAddress}`, 5, 3600_000);
-      return send(res, requestId, await generateExam(await body(req)));
-    }
-    if (method === 'POST' && path === '/api/instructor/ai/propose') {
-      limit(`ai-propose:${req.socket.remoteAddress}`, 5, 3600_000);
-      return send(res, requestId, await proposeExam(await body(req)));
-    }
-    if (method === 'POST' && path === '/api/instructor/ai/approved-draft') {
-      const input = await body(req);
-      const packageResult = buildApprovedPackage(input);
-      const created = store.tx(() => {
-        const draft = store.importDraft(packageResult.public,
-          { ...packageResult.private, evidence: packageResult.evidence }, 'ai-faculty');
-        store.addSource(draft.examId, draft.version, input.source, 'ai-faculty');
-        return draft;
-      });
-      return send(res, requestId, created, 201);
-    }
-    if (method === 'POST' && path === '/api/instructor/ai/draft') {
-      const input = await body(req);
-      const source = validateGeneratedDraft(input);
-      const created = store.tx(() => {
-        const draft = store.importDraft(input.public, input.private, 'ai-faculty');
-        store.addSource(draft.examId, draft.version, source, 'ai-faculty');
-        return draft;
-      });
-      return send(res, requestId, created, 201);
-    }
-    const aiCheckPath = /^\/api\/instructor\/ai\/check\/([a-z0-9-]+)\/(\d+)$/.exec(path);
-    if (method === 'POST' && aiCheckPath) {
-      limit(`ai-check:${req.socket.remoteAddress}`, 10, 3600_000);
-      const exam = store.getExam(aiCheckPath[1], Number(aiCheckPath[2]));
-      const sources = store.listSources(aiCheckPath[1], Number(aiCheckPath[2]));
-      return send(res, requestId, await checkSourceSupport(exam, sources));
-    }
-    if (method === 'GET' && /^\/api\/instructor\/(assessments|exams)$/.test(path)) return send(res, requestId, store.listExams());
-    if (method === 'POST' && /^\/api\/instructor\/(assessments|exams)$/.test(path)) {
-      const input = await body(req);
-      return send(res, requestId, store.importDraft(input.public, input.private), 201);
-    }
-    const examPath = /^\/api\/instructor\/(?:assessments|exams)\/([a-z0-9-]+)\/(\d+)(?:\/(validate|publish|clone|archive|restore))?$/.exec(path);
-    const sourcePath = /^\/api\/instructor\/(?:assessments|exams)\/([a-z0-9-]+)\/(\d+)\/sources(?:\/([a-f0-9-]+))?$/.exec(path);
-    if (sourcePath) {
-      const [, id, rawVersion, sourceId] = sourcePath, version = Number(rawVersion);
-      if (method === 'GET' && !sourceId) return send(res, requestId, store.listSources(id, version));
-      if (method === 'POST' && !sourceId) return send(res, requestId, store.addSource(id, version, await body(req)), 201);
-      if (method === 'PUT' && sourceId) return send(res, requestId, store.reviewSource(id, version, sourceId, await body(req)));
-    }
-    if (examPath) {
-      const [, id, rawVersion, action] = examPath, version = Number(rawVersion);
-      if (method === 'GET' && !action) {
-        const exam = store.getExam(id, version);
-        return send(res, requestId, { status: exam.status, public: exam.public, private: exam.private, contentHash: exam.content_hash });
-      }
-      if (method === 'PUT' && !action) {
-        const input = await body(req);
-        return send(res, requestId, store.updateDraft(id, version, input.public, input.private));
-      }
-      if (method === 'POST' && action === 'validate') return send(res, requestId, { errors: store.validate(id, version) });
-      if (method === 'POST' && action === 'clone') return send(res, requestId, store.cloneExam(id, version), 201);
-      if (method === 'POST' && action === 'archive') return send(res, requestId, store.archiveExam(id, version));
-      if (method === 'POST' && action === 'restore') return send(res, requestId, store.restoreExam(id, version));
-      if (method === 'POST' && action === 'publish') {
-        const input = await body(req);
-        if (input.approved !== true) throw Object.assign(new Error('Explicit instructor approval is required.'), { code: 'APPROVAL_REQUIRED', status: 400 });
-        return send(res, requestId, store.publish(id, version));
-      }
-    }
-    if (path === '/api/instructor/classes') {
-      if (method === 'GET') return send(res, requestId, store.listClasses());
-      if (method === 'POST') return send(res, requestId, store.createClass(await body(req)), 201);
-    }
-    const classStudentPath = /^\/api\/instructor\/classes\/([a-f0-9-]+)\/students(?:\/([A-Za-z0-9-]{1,40}))?$/.exec(path);
-    if (classStudentPath) {
-      const [, classId, candidateId] = classStudentPath;
-      if (method === 'POST' && !candidateId) return send(res, requestId, store.createStudent(classId, await body(req)), 201);
-      if (method === 'PUT' && candidateId) return send(res, requestId, store.updateStudent(classId, candidateId, await body(req)));
-      if (method === 'DELETE' && candidateId) return send(res, requestId, store.deleteStudent(classId, candidateId));
-    }
-    const classPath = /^\/api\/instructor\/classes\/([a-f0-9-]+)$/.exec(path);
-    if (classPath) {
-      if (method === 'GET') return send(res, requestId, store.getClass(classPath[1]));
-      if (method === 'PUT') return send(res, requestId, store.updateClass(classPath[1], await body(req)));
-      if (method === 'DELETE') return send(res, requestId, store.deleteClass(classPath[1]));
-    }
-    if (method === 'GET' && path === '/api/instructor/runs') return send(res, requestId, store.listRuns());
-    if (method === 'POST' && path === '/api/instructor/runs') return send(res, requestId, store.createRun(await body(req)), 201);
-    const runPinPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/pin$/.exec(path);
-    if (method === 'PUT' && runPinPath)
-      return send(res, requestId, store.resetRunPin(runPinPath[1], (await body(req)).pin));
-    const recoveryPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/(extend|reopen)$/.exec(path);
-    if (method === 'POST' && recoveryPath) return send(res, requestId,
-      store.recoverStudent(recoveryPath[1], recoveryPath[2], await body(req), recoveryPath[3]));
-    const publishAllResultsPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/publish-scores$/.exec(path);
-    if (method === 'POST' && publishAllResultsPath)
-      return send(res, requestId, store.publishCompletedResults(publishAllResultsPath[1]));
-    const publishStudentResultsPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/publish-scores$/.exec(path);
-    if (method === 'POST' && publishStudentResultsPath)
-      return send(res, requestId, store.publishStudentResults(publishStudentResultsPath[1], publishStudentResultsPath[2]));
-    const studentReviewPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})(?:\/scores\/([A-Za-z0-9-]+))?$/.exec(path);
-    if (studentReviewPath) {
-      const [, runId, candidateId, activityId] = studentReviewPath;
-      if (method === 'GET' && !activityId) return send(res, requestId, store.reviewStudent(runId, candidateId));
-      if (method === 'PUT' && activityId) return send(res, requestId,
-        store.overrideQuestionScore(runId, candidateId, activityId, await body(req)));
-      if (method === 'DELETE' && activityId) return send(res, requestId,
-        store.clearQuestionScoreOverride(runId, candidateId, activityId));
-    }
-    const proctorAccessPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/proctor-access$/.exec(path);
-    if (proctorAccessPath) {
-      const runId = proctorAccessPath[1];
-      if (method === 'GET') return send(res, requestId, store.proctorAccess(runId));
-      if (method === 'POST') return send(res, requestId, store.issueProctorAccess(runId, (await body(req)).code));
-      if (method === 'DELETE') return send(res, requestId, store.revokeProctorAccess(runId));
-    }
-    const runPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/(name|results|export.csv)$/.exec(path);
-    if (method === 'PUT' && runPath?.[2] === 'name') return send(res, requestId, store.renameRun(runPath[1], (await body(req)).name));
-    if (method === 'GET' && runPath) {
-      const result = store.results(runPath[1]);
-      if (runPath[2] === 'export.csv') return csv(res, gradebook(result));
-      return send(res, requestId, result);
-    }
-    if (method === 'GET' && path === '/api/instructor/audit') return send(res, requestId, store.auditLog());
-  }
+  if (path.startsWith('/api/instructor/')) return facultyApi({ req, res, url, requestId, store, publicOrigin, send, csv, gradebook, body, limit, metricsSnapshot });
   if (method === 'POST' && (path === '/api/auth/student/join' || path === '/api/auth/student/preview')) {
     // Socket address is intentional: forwarded headers are not trusted. Allow a full
     // 500-student class behind NAT/proxy; credential failures have separate limits.
@@ -297,52 +169,18 @@ async function api(req, res, url, requestId) {
     const result = studentAdmission(req, input, preview);
     return send(res, requestId, preview ? result : browserSession(req, res, 'candidate', result, publicOrigin));
   }
-  if (path.startsWith('/api/me/')) {
-    const candidateToken = accessToken(req, 'candidate');
-    const sessionId = store.requireCandidate(candidateToken);
-    const jobPath = /^\/api\/me\/coding-jobs\/([a-f0-9-]{36})$/.exec(path);
-    if (method === 'GET' && jobPath) return send(res, requestId, store.codingQueue.view(sessionId, jobPath[1]));
-    if (method === 'POST' && path === '/api/me/logout') {
-      const result = store.logoutCandidate(candidateToken);
-      clearBrowserSession(req, res, 'candidate', publicOrigin);
-      return send(res, requestId, result);
-    }
-    if (method === 'GET' && (path === '/api/me/session' || path === '/api/me/results')) return send(res, requestId, store.sessionView(sessionId));
-    if (method === 'GET' && path === '/api/me/missions/current') {
-      const state = store.progress(sessionId);
-      const current = state.find(x => x.unlocked && !x.completed) ?? state.findLast(x => x.unlocked);
-      return send(res, requestId, current ? store.missionView(sessionId, current.id) : null);
-    }
-    const missionPath = /^\/api\/me\/missions\/([a-zA-Z0-9-]+)$/.exec(path);
-    if (method === 'GET' && missionPath) return send(res, requestId, store.missionView(sessionId, missionPath[1]));
-    const activityPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/submit$/.exec(path);
-    if (method === 'POST' && activityPath) {
-      limit(`submit:${sessionId}:${activityPath[1]}`, 6);
-      if (req.headers.prefer === 'respond-async' && store.context(sessionId).exam.public.missions.some(m => m.activities.some(a => a.id === activityPath[1] && a.type === 'code_writing'))) {
-        return send(res, requestId, store.queueCode(sessionId, activityPath[1], 'submit', await body(req, 110_000), req.headers['idempotency-key']), 202);
-      }
-      return send(res, requestId, await store.submitAnswer(sessionId, activityPath[1], await body(req, 110_000), req.headers['idempotency-key'] ?? null));
-    }
-    const codePreviewPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/preview$/.exec(path);
-    if (method === 'POST' && codePreviewPath) {
-      limit(`code-preview:${sessionId}`, 12);
-      if (req.headers.prefer === 'respond-async') return send(res, requestId, store.queueCode(sessionId, codePreviewPath[1], 'preview', await body(req, 110_000), req.headers['idempotency-key']), 202);
-      return send(res, requestId, await store.previewCode(sessionId, codePreviewPath[1], await body(req, 110_000)));
-    }
-    const draftPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/draft$/.exec(path);
-    if (method === 'PUT' && draftPath) return send(res, requestId, store.saveDraft(sessionId, draftPath[1], await body(req, 110_000)));
-    if (method === 'POST' && path === '/api/me/finalize') return send(res, requestId, store.finalize(sessionId));
-  }
+  if (path.startsWith('/api/me/')) return studentApi({ req, res, url, requestId, store, publicOrigin, send, body, limit, webPreviews, answerLimit, snapshotProjects });
   throw Object.assign(new Error('Route not found.'), { code: 'NOT_FOUND', status: 404 });
 }
 
 const staticTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' };
-const server = http.createServer(async (req, res) => {
+const { app, server, ready } = createHttpServer(async (req, res) => {
+  measureRequest(req, res);
   const requestId = randomUUID();
   res.setHeader('X-Request-Id', requestId);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'");
+  res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; frame-src ${previewOrigin || "'none'"}; base-uri 'none'; object-src 'none'`);
   try {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname.startsWith('/api/')) {
@@ -375,8 +213,21 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+await ready;
 if (process.env.NODE_ENV !== 'test') {
+  let settling = false, lastCheckpoint = 0;
+  const expiryTimer = setInterval(async () => {
+    if (settling) return; settling = true;
+    try { const all = Date.now() - lastCheckpoint > 15000; await snapshotProjects(null, all); if (all) lastCheckpoint = Date.now(); store.settleExpired(); } catch (error) { console.error(JSON.stringify({ code: 'EXPIRY_FAILED', message: error.message })); }
+    finally { settling = false; }
+  }, 1000);
+  expiryTimer.unref();
+  server.on('close', () => clearInterval(expiryTimer));
+  if (webPreviews) {
+    webPreviews.server.listen(Number(process.env.PREVIEW_PORT || 3102), process.env.PREVIEW_HOST || '127.0.0.1');
+    server.on('close', () => { void webPreviews.close(); });
+  }
   const port = Number(process.env.PORT || 3000);
   server.listen(port, process.env.HOST || '127.0.0.1', () => console.log(`${platformLabel} listening on http://${process.env.HOST || '127.0.0.1'}:${port} (demo=${demoMode})`));
 }
-export { server, store };
+export { server, store, webPreviews };

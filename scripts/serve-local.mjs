@@ -1,11 +1,16 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { loadConfig } from '../src/config.mjs';
+import { migrationDatabase } from '../src/migration-database.mjs';
 
-const { root } = loadConfig();
+const { root, dataFile } = loadConfig();
+if (process.env.MIGRATION_ACTIVE !== '1') {
+  process.env.DATA_FILE = migrationDatabase(dataFile);
+  process.env.MIGRATION_ACTIVE = '1';
+}
 let child, backupTimer, backupRunning = false, stopping = false, failures = 0;
 function run(script, inherit = true) {
-  return spawn(process.execPath, ['--experimental-sqlite', join(root, script)], { cwd: root, windowsHide: true, stdio: inherit ? 'inherit' : 'ignore', env: { ...process.env, NODE_ENV: 'production' } });
+  return spawn(process.execPath, ['--import', 'tsx', '--experimental-sqlite', join(root, script)], { cwd: root, windowsHide: true, stdio: inherit ? 'inherit' : 'ignore', env: { ...process.env, NODE_ENV: 'production' } });
 }
 const preflight = run('scripts/preflight.mjs');
 preflight.on('exit', code => {

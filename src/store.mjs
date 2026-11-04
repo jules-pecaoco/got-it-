@@ -1,3 +1,4 @@
+import { resultsReleased } from './assessment-policy.mts';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -7,6 +8,10 @@ import { answerText } from '../public/answer-key.js';
 import { initializeStoreSchema } from './store-schema.mjs';
 import { evaluateCode, executeCode, previewCode, cleanupJobContainers } from './code-runner.mjs';
 import { CodingQueue } from './coding-queue.mjs';
+import { migrate } from './migrations.mjs';
+import { facultyId, asFaculty, assertOwner, passwordHash, passwordMatches } from './faculty-access.mjs';
+import { evaluateWeb } from './web-grading.mts';
+import { validateProject } from '../public/web-project.js';
 
 const parse = value => JSON.parse(value);
 const shuffled = values => {
@@ -27,9 +32,6 @@ const presentationKind = pub => {
   return 'activity';
 };
 const stamp = () => new Date().toISOString();
-const resultsReleased = (run, session) => run.feedback_mode === 'practice' ||
-  Date.now() >= Date.parse(run.closes_at) || (!!session?.results_published_at &&
-    (session.status !== 'in_progress' || Date.now() >= Date.parse(session.deadline_at)));
 const invariant = (condition, code, message, status = 400) => { if (!condition) throw Object.assign(new Error(message), { code, status }); };
 
 export class Store {
@@ -38,22 +40,29 @@ export class Store {
     if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
     initializeStoreSchema(this.db);
+    migrate(this.db);
     // Cache statements only after schema upgrades have completed.
     const prepare = this.db.prepare.bind(this.db), statements = new Map();
     this.db.prepare = sql => {
       if (!statements.has(sql)) statements.set(sql, prepare(sql));
       return statements.get(sql);
     };
-    this.codingQueue = new CodingQueue(this.db, job => this.completeCodingJob(job));
+    this.codingQueue = new CodingQueue(this.db, job => asFaculty(null, () => this.completeCodingJob(job)));
   }
   close() { this.codingQueue.close(); this.db.close(); }
   queueCode(sessionId, activityId, kind, submission, key = randomUUID()) {
     invariant(typeof key === 'string' && /^[A-Za-z0-9-]{16,80}$/.test(key), 'INVALID_IDEMPOTENCY_KEY', 'Submission retry key is invalid.');
-    const existing = this.db.prepare('SELECT status FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind=? AND request_key=?').get(sessionId, activityId, kind, key);
+    const existing = this.db.prepare('SELECT status,payload_json FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind=? AND request_key=?').get(sessionId, activityId, kind, key);
+    if (existing && submission?.value?.files) {
+      const accepted = parse(existing.payload_json);
+      invariant(JSON.stringify(accepted.value.files) === JSON.stringify(submission.value.files), 'IDEMPOTENCY_CONFLICT', 'Retry key belongs to a different project.', 409);
+      submission = accepted;
+    }
     if (existing && existing.status !== 'failed') return this.codingQueue.enqueue(sessionId, activityId, kind, key, submission);
     const { mission, activity } = this.codingContext(sessionId, activityId);
     invariant(['submit', 'preview'].includes(kind), 'INVALID_JOB', 'Invalid coding job.');
-    invariant(typeof submission?.value === 'string' && submission.value.trim() && submission.value.length <= 16000, 'INVALID_CODE', 'Enter 1–16,000 characters of code.');
+    if (activity.type === 'web_project') invariant(!validateProject(submission?.value).length, 'INVALID_PROJECT', validateProject(submission?.value).join(' '));
+    else invariant(typeof submission?.value === 'string' && submission.value.trim() && submission.value.length <= 16000, 'INVALID_CODE', 'Enter 1–16,000 characters of code.');
     if (kind === 'submit') {
       const policy = resolveRetryPolicy(mission, activity);
       const previous = this.db.prepare('SELECT COUNT(*) AS n FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).n;
@@ -65,7 +74,7 @@ export class Store {
     if (job.recovered && this.codeRunner === executeCode) await cleanupJobContainers(job.id);
     const { exam } = this.context(job.session_id);
     const activity = exam.public.missions.flatMap(m => m.activities).find(a => a.id === job.activity_id);
-    invariant(activity?.type === 'code_writing', 'INVALID_CODE_ACTIVITY', 'Coding question unavailable.');
+    invariant(['code_writing', 'web_project'].includes(activity?.type), 'INVALID_CODE_ACTIVITY', 'Coding question unavailable.');
     const submission = parse(job.payload_json);
     const runner = (...args) => this.codeRunner(...args, { jobId: job.id });
     if (job.kind === 'preview') return previewCode(activity.publicConfig, submission.value, runner);
@@ -73,7 +82,9 @@ export class Store {
     // student's remaining time. Direct synchronous submissions retain their policy.
     const prior = this.db.prepare('SELECT 1 FROM submissions WHERE session_id=? AND activity_id=? AND idempotency_key=?')
       .get(job.session_id, job.activity_id, job.request_key);
-    const evaluation = prior ? { awarded: [] } : await evaluateCode(activity, exam.private.rules[activity.gradingRuleId], submission, runner);
+    const evaluation = prior ? { awarded: [] } : activity.type === 'web_project'
+      ? await evaluateWeb(activity.publicConfig, exam.private.rules[activity.gradingRuleId], submission)
+      : await evaluateCode(activity, exam.private.rules[activity.gradingRuleId], submission, runner);
     return this.#submitEvaluated(job.session_id, job.activity_id, submission, job.request_key, evaluation, job.accepted_at);
   }
   tx(fn) {
@@ -82,13 +93,16 @@ export class Store {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   audit(actor, action, target, detail = {}) {
-    this.db.prepare('INSERT INTO audit_events VALUES (?,?,?,?,?,?)').run(randomUUID(), actor, action, target, JSON.stringify(detail), stamp());
+    const targetOwner = this.db.prepare('SELECT r.owner_id FROM sessions s JOIN runs r ON r.id=s.run_id WHERE s.id=?').get(target)?.owner_id;
+    this.db.prepare('INSERT INTO audit_events(id,actor,action,target,detail_json,at,owner_id) VALUES (?,?,?,?,?,?,?)')
+      .run(randomUUID(), facultyId() || actor, action, target, JSON.stringify(detail), stamp(), facultyId() || targetOwner || 'faculty');
   }
   importDraft(pub, priv, actor = 'instructor') {
     invariant(pub?.examId && Number.isInteger(pub?.version), 'INVALID_PACKAGE', 'examId and version are required.');
     invariant(!this.db.prepare('SELECT 1 FROM exams WHERE exam_id=? AND version=?').get(pub.examId, pub.version), 'VERSION_EXISTS', 'This version already exists.', 409);
     this.db.prepare('INSERT INTO exams (exam_id,version,status,public_json,private_json) VALUES (?,?,?,?,?)')
       .run(pub.examId, pub.version, 'draft', JSON.stringify(pub), JSON.stringify(priv));
+    this.db.prepare('UPDATE exams SET owner_id=? WHERE exam_id=? AND version=?').run(facultyId() || 'faculty', pub.examId, pub.version);
     this.audit(actor, 'import_draft', `${pub.examId}@${pub.version}`);
     return { examId: pub.examId, version: pub.version, status: 'draft' };
   }
@@ -109,6 +123,7 @@ export class Store {
       const documents = this.listSources(examId, version);
       this.db.prepare('INSERT INTO exams (exam_id,version,status,public_json,private_json) VALUES (?,?,?,?,?)')
         .run(examId, nextVersion, 'draft', JSON.stringify(pub), JSON.stringify(source.private));
+      this.db.prepare('UPDATE exams SET owner_id=? WHERE exam_id=? AND version=?').run(source.owner_id, examId, nextVersion);
       const insert = this.db.prepare('INSERT INTO source_documents VALUES (?,?,?,?,?,?,?,?)');
       for (const document of documents) insert.run(randomUUID(), examId, nextVersion, document.filename,
         document.content, document.coverage ? JSON.stringify(document.coverage) : null,
@@ -120,10 +135,11 @@ export class Store {
   getExam(examId, version) {
     const row = this.db.prepare('SELECT * FROM exams WHERE exam_id=? AND version=?').get(examId, version);
     invariant(row, 'EXAM_NOT_FOUND', 'Activity version not found.', 404);
+    assertOwner(row.owner_id);
     return { ...row, public: parse(row.public_json), private: parse(row.private_json) };
   }
   listExams() {
-    return this.db.prepare('SELECT exam_id,version,status,public_json,published_at,archived_at FROM exams ORDER BY exam_id,version DESC').all()
+    return this.db.prepare('SELECT exam_id,version,status,public_json,published_at,archived_at FROM exams WHERE (? IS NULL OR owner_id=?) ORDER BY exam_id,version DESC').all(facultyId(), facultyId())
       .map(r => {
         const pub = parse(r.public_json);
         return { examId: r.exam_id, version: r.version, status: r.status, title: pub.title,
@@ -212,13 +228,14 @@ export class Store {
     return this.db.prepare(`SELECT c.id,c.name,c.section,c.created_at,c.updated_at,
       COUNT(s.candidate_id) AS student_count FROM classes c
       LEFT JOIN class_students s ON s.class_id=c.id
-      GROUP BY c.id ORDER BY c.name COLLATE NOCASE,c.section`).all()
+      WHERE (? IS NULL OR c.owner_id=?) GROUP BY c.id ORDER BY c.name COLLATE NOCASE,c.section`).all(facultyId(), facultyId())
       .map(row => ({ id: row.id, name: row.name, section: row.section,
         studentCount: row.student_count, createdAt: row.created_at, updatedAt: row.updated_at }));
   }
   getClass(classId) {
     const row = this.db.prepare('SELECT * FROM classes WHERE id=?').get(classId);
     invariant(row, 'CLASS_NOT_FOUND', 'Class not found.', 404);
+    assertOwner(row.owner_id);
     const roster = this.db.prepare('SELECT candidate_id,display_name,gender,year_level,program_short_name FROM class_students WHERE class_id=? ORDER BY display_name COLLATE NOCASE,candidate_id').all(classId)
       .map(student => ({ candidateId: student.candidate_id, displayName: student.display_name,
         gender: student.gender || '', yearLevel: student.year_level || '', programShortName: student.program_short_name || '',
@@ -311,7 +328,7 @@ export class Store {
     const { name, section, roster } = this.classInput(input, true);
     const id = randomUUID(), now = stamp();
     this.tx(() => {
-      this.db.prepare('INSERT INTO classes VALUES (?,?,?,?,?)').run(id, name, section, now, now);
+      this.db.prepare('INSERT INTO classes(id,name,section,created_at,updated_at,owner_id) VALUES (?,?,?,?,?,?)').run(id, name, section, now, now, facultyId() || 'faculty');
       const insert = this.db.prepare('INSERT INTO class_students (class_id,candidate_id,display_name,gender,year_level,program_short_name) VALUES (?,?,?,?,?,?)');
       for (const student of roster) insert.run(id, student.candidateId, student.displayName.trim(),
         student.gender || '', student.yearLevel || '', student.programShortName || '');
@@ -349,7 +366,7 @@ export class Store {
       'INVALID_RUN', 'Run name must be text.');
     const name = input.name === undefined || input.name === null || input.name === '' ? null : input.name.trim();
     invariant(name === null || (name.length >= 1 && name.length <= 80), 'INVALID_RUN', 'Run name must be 1–80 characters.', 400);
-    const feedbackMode = input.feedbackMode ?? 'practice';
+    const feedbackMode = input.feedbackMode ?? 'graded';
     invariant(['practice', 'graded'].includes(feedbackMode), 'INVALID_RUN', 'Choose Practice or Graded feedback.');
     invariant(input.shuffleQuestions === undefined || typeof input.shuffleQuestions === 'boolean',
       'INVALID_RUN', 'Shuffle questions must be on or off.');
@@ -374,6 +391,7 @@ export class Store {
       this.db.prepare('INSERT INTO runs (id,exam_id,version,pin_hash,opens_at,closes_at,status,name,class_id,class_name,feedback_mode,shuffle_questions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(id, input.examId, input.version, hash(input.pin), new Date(opens).toISOString(), new Date(closes).toISOString(), 'open', name,
           assignedClass?.id ?? null, assignedClass?.name ?? null, feedbackMode, Number(shuffleQuestions));
+      this.db.prepare('UPDATE runs SET owner_id=? WHERE id=?').run(facultyId() || 'faculty', id);
       const insert = this.db.prepare('INSERT INTO roster (run_id,candidate_id,display_name,section) VALUES (?,?,?,?)');
       for (const r of roster) insert.run(id, r.candidateId, r.displayName, r.section);
       this.audit(actor, 'create_run', id, { examId: input.examId, version: input.version, name,
@@ -386,7 +404,8 @@ export class Store {
   }
   listRuns() {
     return this.db.prepare(`SELECT r.id,r.exam_id,r.version,r.opens_at,r.closes_at,r.status,r.name,r.class_id,r.class_name,r.feedback_mode,r.shuffle_questions,e.public_json
-      FROM runs r JOIN exams e ON e.exam_id=r.exam_id AND e.version=r.version ORDER BY r.opens_at DESC`).all()
+      FROM runs r JOIN exams e ON e.exam_id=r.exam_id AND e.version=r.version
+      WHERE (? IS NULL OR r.owner_id=?) ORDER BY r.opens_at DESC`).all(facultyId(), facultyId())
       .map(r => {
         const examTitle = parse(r.public_json).title;
         return { id: r.id, examId: r.exam_id, examTitle, version: r.version,
@@ -474,7 +493,7 @@ export class Store {
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
     const exam = this.getExam(run.exam_id, run.version);
     const questionCount = exam.public.missions.reduce((sum, mission) => sum + mission.activities.length, 0);
-    const rows = this.db.prepare(`SELECT r.candidate_id,r.display_name,r.section,s.status,s.started_at,s.deadline_at,
+    const rows = this.db.prepare(`SELECT r.candidate_id,r.display_name,r.section,s.status,s.started_at,s.deadline_at,s.last_seen_at,
       (SELECT COUNT(DISTINCT sub.activity_id) FROM submissions sub WHERE sub.session_id=s.id) AS answered_count,
       (SELECT MAX(sub.at) FROM submissions sub WHERE sub.session_id=s.id) AS last_submission_at
       FROM roster r LEFT JOIN sessions s ON s.run_id=r.run_id AND s.candidate_id=r.candidate_id
@@ -482,7 +501,7 @@ export class Store {
       .map(row => ({ candidateId: row.candidate_id, displayName: row.display_name, section: row.section,
         status: row.status === 'in_progress' && Date.now() >= Date.parse(row.deadline_at) ? 'expired'
           : row.status || 'registered',
-        startedAt: row.started_at, deadlineAt: row.deadline_at,
+        startedAt: row.started_at, deadlineAt: row.deadline_at, lastSeenAt: row.last_seen_at,
         answeredCount: row.answered_count || 0, lastSubmissionAt: row.last_submission_at }));
     const counts = { registered: 0, in_progress: 0, submitted: 0, expired: 0 };
     for (const row of rows) counts[row.status]++;
@@ -490,18 +509,28 @@ export class Store {
       version: run.version, className: run.class_name, opensAt: run.opens_at, closesAt: run.closes_at,
       questionCount, counts, rows, updatedAt: stamp() };
   }
-  loginInstructor(password, configuredPassword) {
-    invariant(typeof password === 'string' && password === configuredPassword, 'UNAUTHORIZED', 'Invalid instructor credentials.', 401);
+  setFacultyPassword(id, password) {
+    invariant(typeof id === 'string' && /^[a-z0-9-]{3,40}$/.test(id), 'INVALID_FACULTY', 'Use a faculty username of 3–40 lowercase letters, digits or hyphens.');
+    this.db.prepare(`INSERT INTO faculty_accounts VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET password_hash=excluded.password_hash`)
+      .run(id, passwordHash(password), stamp());
+    this.db.prepare('DELETE FROM instructor_tokens WHERE faculty_id=?').run(id);
+  }
+  loginInstructor(password, configuredPassword, username = 'faculty') {
+    const account = this.db.prepare('SELECT password_hash FROM faculty_accounts WHERE id=?').get(username);
+    const valid = account ? passwordMatches(password, account.password_hash)
+      : username === 'faculty' && typeof password === 'string' && password === configuredPassword;
+    invariant(valid, 'UNAUTHORIZED', 'Invalid instructor credentials.', 401);
     const token = randomUUID() + randomUUID();
     const expires = new Date(Date.now() + 8 * 3600_000).toISOString();
     this.db.prepare('DELETE FROM instructor_tokens WHERE expires_at<=?').run(stamp());
-    this.db.prepare('INSERT INTO instructor_tokens VALUES (?,?)').run(hash(token), expires);
-    this.audit('instructor', 'login', 'instructor');
+    this.db.prepare('INSERT INTO instructor_tokens(token_hash,expires_at,faculty_id) VALUES (?,?,?)').run(hash(token), expires, username);
+    this.audit(username, 'login', username);
     return { token, expiresAt: expires };
   }
   requireInstructor(token) {
-    const row = token && this.db.prepare('SELECT expires_at FROM instructor_tokens WHERE token_hash=?').get(hash(token));
+    const row = token && this.db.prepare('SELECT expires_at,faculty_id FROM instructor_tokens WHERE token_hash=?').get(hash(token));
     invariant(row && Date.parse(row.expires_at) > Date.now(), 'UNAUTHORIZED', 'Instructor sign-in required.', 401);
+    return row.faculty_id;
   }
   logoutInstructor(token) {
     this.requireInstructor(token);
@@ -587,8 +616,9 @@ export class Store {
     return { token, expiresAt, resumed: false, session: this.sessionView(id) };
   }
   requireCandidate(token) {
-    const row = token && this.db.prepare('SELECT id FROM sessions WHERE token_hash=? AND token_expires_at>?').get(hash(token), stamp());
+    const row = token && this.db.prepare('SELECT id,last_seen_at FROM sessions WHERE token_hash=? AND token_expires_at>?').get(hash(token), stamp());
     invariant(row, 'UNAUTHORIZED', 'Candidate sign-in required.', 401);
+    if (!row.last_seen_at || Date.now() - Date.parse(row.last_seen_at) > 10000) this.db.prepare('UPDATE sessions SET last_seen_at=? WHERE id=?').run(stamp(), row.id);
     return row.id;
   }
   logoutCandidate(token) {
@@ -635,17 +665,19 @@ export class Store {
     return Math.max(0, earned - lost + adjustment);
   }
   sessionView(sessionId) {
+    this.settleDrafts(sessionId);
     const { session, run, exam, roster } = this.context(sessionId);
     const progress = this.progress(sessionId);
     const status = Date.now() >= Date.parse(session.deadline_at) && session.status === 'in_progress' ? 'expired' : session.status;
-    const pendingCodingCount = this.db.prepare("SELECT COUNT(*) AS n FROM coding_jobs WHERE session_id=? AND kind='submit' AND status IN ('queued','running')").get(sessionId).n;
-    const released = !pendingCodingCount && resultsReleased(run, session);
+    const pendingCodingCount = this.db.prepare("SELECT COUNT(*) AS n FROM coding_jobs WHERE session_id=? AND kind='submit' AND status IN ('queued','running','failed')").get(sessionId).n;
+    const pendingReview = this.hasPendingReview(sessionId);
+    const released = !pendingCodingCount && !pendingReview && resultsReleased(run, session);
     return {
       id: session.id, candidateId: session.candidate_id, displayName: roster.display_name, section: roster.section,
       examId: exam.public.examId, version: exam.public.version, title: exam.public.title,
       kind: presentationKind(exam.public), difficulty: exam.public.difficulty || null,
       description: exam.public.description, startedAt: session.started_at, deadlineAt: session.deadline_at,
-      status, feedbackMode: run.feedback_mode, resultsReleased: released, pendingCodingCount,
+      status, feedbackMode: run.feedback_mode, resultsReleased: released, pendingCodingCount, pendingReview,
       questionCount: exam.public.missions.reduce((sum, mission) => sum + mission.activities.length, 0),
       submittedCount: this.db.prepare('SELECT COUNT(DISTINCT activity_id) AS count FROM submissions WHERE session_id=?').get(sessionId).count,
       ...(released ? { score: this.score(sessionId) } : {}), maxPoints: exam.public.settings.coreMaxPoints,
@@ -665,12 +697,12 @@ export class Store {
       const attemptsUsed = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id).count;
       const policy = resolveRetryPolicy(mission, publicActivity);
       return { ...publicActivity, lastSubmission: last ? parse(last.response_json) : null,
-        lastDraft: !last && draft ? { ...parse(draft.response_json), updatedAt: draft.updated_at } : null,
+        lastDraft: draft ? { ...parse(draft.response_json), updatedAt: draft.updated_at } : null,
         attemptsUsed, attemptPolicy: policy,
         attemptsRemaining: policy.maxRetries === null ? null : Math.max(0, policy.maxRetries + 1 - attemptsUsed) };
     }), version: exam.public.version };
   }
-  saveDraft(sessionId, activityId, response) {
+  saveDraft(sessionId, activityId, response, expectedRevision = undefined) {
     const { session, exam } = this.context(sessionId);
     invariant(session.status === 'in_progress' && Date.now() < Date.parse(session.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
     const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
@@ -678,17 +710,21 @@ export class Store {
     this.missionView(sessionId, mission.id);
     invariant(response && typeof response === 'object' && !Array.isArray(response), 'INVALID_DRAFT', 'Draft must be an answer object.');
     const encoded = JSON.stringify(response);
-    invariant(encoded.length <= 100_000, 'DRAFT_TOO_LARGE', 'Draft is too large.', 413);
+    const activity = mission.activities.find(a => a.id === activityId);
+    invariant(encoded.length <= (activity.type === 'web_project' ? 1_700_000 : 100_000), 'DRAFT_TOO_LARGE', 'Draft is too large.', 413);
+    if (activity.type === 'web_project') invariant(!validateProject(response.value).length, 'INVALID_PROJECT', validateProject(response.value).join(' '));
+    let updatedAt = stamp();
     this.tx(() => {
       const live = this.db.prepare('SELECT status,deadline_at FROM sessions WHERE id=?').get(sessionId);
       invariant(live.status === 'in_progress' && Date.now() < Date.parse(live.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
-      if (!this.db.prepare('SELECT 1 FROM submissions WHERE session_id=? AND activity_id=? LIMIT 1').get(sessionId, activityId)) {
+      const current = this.db.prepare('SELECT updated_at FROM answer_drafts WHERE session_id=? AND activity_id=?').get(sessionId, activityId);
+      invariant(expectedRevision === undefined || expectedRevision === (current?.updated_at ?? ''), 'DRAFT_CONFLICT', 'This answer changed in another tab. Reload before saving.', 409);
+      if (current && updatedAt <= current.updated_at) updatedAt = new Date(Date.parse(current.updated_at) + 1).toISOString();
         this.db.prepare(`INSERT INTO answer_drafts(session_id,activity_id,response_json,updated_at) VALUES(?,?,?,?)
           ON CONFLICT(session_id,activity_id) DO UPDATE SET response_json=excluded.response_json,updated_at=excluded.updated_at`)
-          .run(sessionId, activityId, encoded, stamp());
-      }
+          .run(sessionId, activityId, encoded, updatedAt);
     });
-    return { saved: true, updatedAt: stamp() };
+    return { saved: true, updatedAt };
   }
   submit(sessionId, activityId, submission, idempotencyKey = null) {
     return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey);
@@ -700,7 +736,7 @@ export class Store {
     invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
     this.missionView(sessionId, mission.id);
     const activity = mission.activities.find(a => a.id === activityId);
-    invariant(activity.type === 'code_writing', 'INVALID_CODE_ACTIVITY', 'This question is not a coding question.');
+    invariant(['code_writing', 'web_project'].includes(activity.type), 'INVALID_CODE_ACTIVITY', 'This question is not a coding question.');
     return { ...context, mission, activity, rule: context.exam.private.rules[activity.gradingRuleId] };
   }
   async previewCode(sessionId, activityId, submission) {
@@ -711,7 +747,7 @@ export class Store {
     invariant(!this.hasPendingCode(sessionId), 'CODING_JOB_PENDING', 'Wait for your queued coding submission to finish.', 409);
     const { exam } = this.context(sessionId);
     const activity = exam.public.missions.flatMap(m => m.activities).find(a => a.id === activityId);
-    if (activity?.type !== 'code_writing') return this.submit(sessionId, activityId, submission, idempotencyKey);
+    if (!['code_writing', 'web_project'].includes(activity?.type)) return this.submit(sessionId, activityId, submission, idempotencyKey);
     const { mission, rule } = this.codingContext(sessionId, activityId);
     invariant(idempotencyKey === null || (typeof idempotencyKey === 'string' && /^[A-Za-z0-9-]{16,80}$/.test(idempotencyKey)), 'INVALID_IDEMPOTENCY_KEY', 'Submission retry key is invalid.');
     const previous = idempotencyKey && this.db.prepare('SELECT request_hash FROM submissions WHERE session_id=? AND activity_id=? AND idempotency_key=?').get(sessionId, activityId, idempotencyKey);
@@ -722,10 +758,11 @@ export class Store {
     const count = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).count;
     const policy = resolveRetryPolicy(mission, activity);
     invariant(policy.maxRetries === null || count <= policy.maxRetries, 'ATTEMPT_LIMIT', 'No attempts remain for this question.', 403);
-    const result = await evaluateCode(activity, rule, submission, this.codeRunner);
+    const result = activity.type === 'web_project' ? await evaluateWeb(activity.publicConfig, rule, submission) : await evaluateCode(activity, rule, submission, this.codeRunner);
     return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, result);
   }
   #submitEvaluated(sessionId, activityId, submission, idempotencyKey = null, executionResult = null, acceptedAt = null) {
+    const receivedAt = acceptedAt || stamp();
     const { run, exam } = this.context(sessionId);
     const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
     invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
@@ -763,7 +800,7 @@ export class Store {
       this.db.prepare(`INSERT INTO submissions(id,session_id,activity_id,response_json,result,at,idempotency_key,request_hash)
         VALUES(?,?,?,?,?,?,?,?)`).run(submissionId, sessionId, activityId, JSON.stringify(submission), evaluation.result,
           acceptedAt || stamp(), idempotencyKey, idempotencyKey ? requestHash : null);
-      this.db.prepare('DELETE FROM answer_drafts WHERE session_id=? AND activity_id=?').run(sessionId, activityId);
+      this.db.prepare('DELETE FROM answer_drafts WHERE session_id=? AND activity_id=? AND updated_at<=?').run(sessionId, activityId, receivedAt);
       const insert = this.db.prepare('INSERT OR IGNORE INTO score_events VALUES (?,?,?,?,?)');
       for (const c of evaluation.awarded) insert.run(sessionId, activityId, c.id, c.points, stamp());
       if (previous > 0) {
@@ -789,7 +826,36 @@ export class Store {
       penaltyApplied: attemptNumber > 1 ? { points: policy.pointPenalty, seconds: policy.timePenaltySeconds } : null,
       attemptsRemaining: policy.maxRetries === null ? null : Math.max(0, policy.maxRetries + 1 - attemptNumber) };
   }
+  settleExpired(runId = null) {
+    const sessions = this.db.prepare(`SELECT id FROM sessions WHERE status='in_progress' AND deadline_at<=?
+      AND (? IS NULL OR run_id=?)`).all(stamp(), runId, runId);
+    for (const session of sessions) this.finalize(session.id);
+  }
+  settleDrafts(sessionId, force = false) {
+    const { session, exam } = this.context(sessionId);
+    if (session.status !== 'in_progress' || (!force && Date.now() < Date.parse(session.deadline_at))) return;
+    const drafts = this.db.prepare('SELECT * FROM answer_drafts WHERE session_id=? ORDER BY updated_at').all(sessionId);
+    for (const draft of drafts) {
+      const mission = exam.public.missions.find(m => m.activities.some(a => a.id === draft.activity_id));
+      const activity = mission?.activities.find(a => a.id === draft.activity_id);
+      if (!activity) continue;
+      const policy = resolveRetryPolicy(mission, activity);
+      const count = this.db.prepare('SELECT COUNT(*) AS n FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activity.id).n;
+      // Exhausted retries never become free attempts at expiry.
+      if (policy.maxRetries !== null && count > policy.maxRetries) continue;
+      const response = parse(draft.response_json);
+      const queued = this.db.prepare("SELECT payload_json FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind='submit' AND status IN ('queued','running','failed')").all(sessionId, activity.id);
+      if (queued.some(job => job.payload_json === draft.response_json)) continue;
+      const key = `draft-${hash(draft.updated_at + draft.response_json).slice(0, 48)}`;
+      if (['code_writing', 'web_project'].includes(activity.type)) {
+        this.codingQueue.enqueue(sessionId, activity.id, 'submit', key, response, { acceptedAt: draft.updated_at, finalizing: true });
+      } else {
+        this.#submitEvaluated(sessionId, activity.id, response, key, null, draft.updated_at);
+      }
+    }
+  }
   finalize(sessionId) {
+    this.settleDrafts(sessionId, true);
     const { session } = this.context(sessionId);
     if (session.status === 'in_progress') {
       const status = Date.now() >= Date.parse(session.deadline_at) ? 'expired' : 'submitted';
@@ -799,6 +865,7 @@ export class Store {
     return this.sessionView(sessionId);
   }
   results(runId) {
+    this.settleExpired(runId);
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
     const exam = this.getExam(run.exam_id, run.version);
@@ -818,7 +885,7 @@ export class Store {
     for (const row of this.db.prepare('SELECT session_id,activity_id,points FROM score_overrides WHERE session_id IN (SELECT id FROM sessions WHERE run_id=?)').all(runId)) {
       totals.set(row.session_id, (totals.get(row.session_id) || 0) + row.points - (perQuestion.get(`${row.session_id}:${row.activity_id}`) || 0));
     }
-    const pending = new Set(this.db.prepare("SELECT DISTINCT session_id FROM coding_jobs WHERE kind='submit' AND status IN ('queued','running') AND session_id IN (SELECT id FROM sessions WHERE run_id=?)").all(runId).map(r => r.session_id));
+    const pending = new Set(this.db.prepare("SELECT DISTINCT session_id FROM coding_jobs WHERE kind='submit' AND status IN ('queued','running','failed') AND session_id IN (SELECT id FROM sessions WHERE run_id=?)").all(runId).map(r => r.session_id));
     return { runId, examId: run.exam_id, version: run.version, title: exam.public.title,
       classId: run.class_id, className: run.class_name,
       name: run.name || exam.public.title,
@@ -829,12 +896,14 @@ export class Store {
         sessionId: r.session_id, status: r.session_id && r.status === 'in_progress' && Date.now() >= Date.parse(r.deadline_at)
           ? 'expired' : r.status ?? 'registered', startedAt: r.started_at,
         deadlineAt: r.deadline_at, score: Math.max(0, totals.get(r.session_id) || 0), pendingCoding: pending.has(r.session_id),
-        resultsReleased: !pending.has(r.session_id) && resultsReleased(run, r) })) };
+        pendingReview: !!r.session_id && this.hasPendingReview(r.session_id),
+        resultsReleased: !pending.has(r.session_id) && !this.hasPendingReview(r.session_id) && resultsReleased(run, r) })) };
   }
   publishStudentResults(runId, candidateId, actor = 'instructor') {
     const review = this.reviewStudent(runId, candidateId);
     invariant(review.sessionId, 'SESSION_NOT_FOUND', 'This student has not started an attempt.', 404);
     invariant(!this.hasPendingCode(review.sessionId), 'CODING_JOB_PENDING', 'Wait for queued coding submissions to finish.', 409);
+    invariant(!this.hasPendingReview(review.sessionId), 'REVIEW_PENDING', 'Complete the manual web rubric before publishing.', 409);
     invariant(review.status !== 'in_progress', 'ATTEMPT_IN_PROGRESS', 'Wait until the student finishes before publishing their score.', 409);
     const publishedAt = stamp();
     this.tx(() => {
@@ -851,13 +920,27 @@ export class Store {
       AND (status <> 'in_progress' OR deadline_at <= ?) AND results_published_at IS NULL`).all(runId, publishedAt);
     this.tx(() => {
       const update = this.db.prepare('UPDATE sessions SET results_published_at=? WHERE id=?');
-      for (const session of eligible) if (!this.hasPendingCode(session.id)) update.run(publishedAt, session.id);
-      this.audit(actor, 'publish_completed_results', runId, { publishedCount: eligible.filter(s => !this.hasPendingCode(s.id)).length });
+      for (const session of eligible) if (!this.hasPendingCode(session.id) && !this.hasPendingReview(session.id)) update.run(publishedAt, session.id);
+      this.audit(actor, 'publish_completed_results', runId, { publishedCount: eligible.filter(s => !this.hasPendingCode(s.id) && !this.hasPendingReview(s.id)).length });
     });
-    return { runId, publishedCount: eligible.filter(s => !this.hasPendingCode(s.id)).length, publishedAt };
+    return { runId, publishedCount: eligible.filter(s => !this.hasPendingCode(s.id) && !this.hasPendingReview(s.id)).length, publishedAt };
   }
   hasPendingCode(sessionId) {
-    return !!this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id=? AND kind='submit' AND status IN ('queued','running') LIMIT 1").get(sessionId);
+    return !!this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id=? AND kind='submit' AND status IN ('queued','running','failed') LIMIT 1").get(sessionId);
+  }
+  retryGrading(runId) {
+    const count = this.db.prepare(`UPDATE coding_jobs SET status='queued',failures=0,error_json=NULL WHERE status='failed'
+      AND session_id IN (SELECT id FROM sessions WHERE run_id=?)`).run(runId).changes;
+    this.audit('instructor', 'retry_grading', runId, { count }); this.codingQueue.pump();
+    return { retried: Number(count) };
+  }
+  hasPendingReview(sessionId) {
+    if (!sessionId) return false;
+    const { exam } = this.context(sessionId);
+    return exam.public.missions.flatMap(m => m.activities).some(activity => activity.type === 'web_project' &&
+      exam.private.rules[activity.gradingRuleId].criteria.some(criterion => criterion.answer.kind === 'manual') &&
+      this.db.prepare('SELECT 1 FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activity.id) &&
+      !this.db.prepare('SELECT 1 FROM score_overrides WHERE session_id=? AND activity_id=?').get(sessionId, activity.id));
   }
   reviewStudent(runId, candidateId) {
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
@@ -977,7 +1060,7 @@ export class Store {
     return this.reviewStudent(runId, candidateId);
   }
   auditLog() {
-    return this.db.prepare('SELECT actor,action,target,detail_json,at FROM audit_events ORDER BY at DESC LIMIT 100').all()
+    return this.db.prepare('SELECT actor,action,target,detail_json,at FROM audit_events WHERE (? IS NULL OR owner_id=?) ORDER BY at DESC LIMIT 100').all(facultyId(), facultyId())
       .map(r => ({ actor: r.actor, action: r.action, target: r.target, detail: parse(r.detail_json), at: r.at }));
   }
 }

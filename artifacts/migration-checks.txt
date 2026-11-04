@@ -1,0 +1,651 @@
+
+> got-it@0.1.0 check
+> npm run typecheck && npm run syntax:check && npm run format:check && npm test
+
+
+> got-it@0.1.0 typecheck
+> vue-tsc --noEmit
+
+
+> got-it@0.1.0 syntax:check
+> node scripts/check-syntax.mjs
+
+JavaScript syntax checks passed.
+
+> got-it@0.1.0 format:check
+> prettier --check public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes "src/**/*.mts" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/web-template.mjs
+
+Checking formatting...
+All matched files use Prettier code style!
+
+> got-it@0.1.0 pretest
+> npm run build
+
+
+> got-it@0.1.0 build
+> vite build
+
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 15 modules transformed.
+rendering chunks...
+computing gzip size...
+public/assets/workspaces.css    0.43 kB │ gzip:  0.28 kB
+public/assets/workspaces.js   118.71 kB │ gzip: 38.97 kB
+
+✓ built in 236ms
+
+> got-it@0.1.0 test
+> node --import tsx --experimental-sqlite --test tests/*.test.mjs
+
+TAP version 13
+# Subtest: AI availability reads the configured Gemini key
+ok 1 - AI availability reads the configured Gemini key
+  ---
+  duration_ms: 1.632
+  ...
+# Subtest: faculty edits are rechecked locally before a question can be approved
+ok 2 - faculty edits are rechecked locally before a question can be approved
+  ---
+  duration_ms: 16.2789
+  ...
+# Subtest: AI generation retries one temporary provider outage
+ok 3 - AI generation retries one temporary provider outage
+  ---
+  duration_ms: 16.9659
+  ...
+# Subtest: AI design becomes a valid public/private draft with verified source evidence
+ok 4 - AI design becomes a valid public/private draft with verified source evidence
+  ---
+  duration_ms: 10.2226
+  ...
+# Subtest: quiz generation uses requested difficulty and question count without CTF missions
+ok 5 - quiz generation uses requested difficulty and question count without CTF missions
+  ---
+  duration_ms: 4.1761
+  ...
+# Subtest: custom faculty guidance reaches the model but stays out of the saved package
+ok 6 - custom faculty guidance reaches the model but stays out of the saved package
+  ---
+  duration_ms: 1.6058
+  ...
+# Subtest: CTF generation uses requested missions and locks later missions
+ok 7 - CTF generation uses requested missions and locks later missions
+  ---
+  duration_ms: 1.4895
+  ...
+# Subtest: faculty can approve fewer quiz questions while retaining chosen sections
+ok 8 - faculty can approve fewer quiz questions while retaining chosen sections
+  ---
+  duration_ms: 0.9477
+  ...
+# Subtest: legacy generation requires exact evidence while advisory source scores do not
+ok 9 - legacy generation requires exact evidence while advisory source scores do not
+  ---
+  duration_ms: 1.609
+  ...
+# Subtest: generated citations are corrected to the slide containing the exact passage
+ok 10 - generated citations are corrected to the slide containing the exact passage
+  ---
+  duration_ms: 1.7567
+  ...
+# Subtest: unsupported generated question is repaired before the draft is returned
+ok 11 - unsupported generated question is repaired before the draft is returned
+  ---
+  duration_ms: 3.7708
+  ...
+# Subtest: one bad question can be omitted while valid questions remain in every mission
+ok 12 - one bad question can be omitted while valid questions remain in every mission
+  ---
+  duration_ms: 1.6689
+  ...
+# Subtest: faculty preview keeps invalid questions visible for individual review
+ok 13 - faculty preview keeps invalid questions visible for individual review
+  ---
+  duration_ms: 0.9388
+  ...
+# Subtest: faculty can approve a low-match question without supplying a quote rationale
+ok 14 - faculty can approve a low-match question without supplying a quote rationale
+  ---
+  duration_ms: 0.8612
+  ...
+# (node:12216) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: revisions survive refresh; stale tabs cannot overwrite an acknowledged draft
+ok 15 - revisions survive refresh; stale tabs cannot overwrite an acknowledged draft
+  ---
+  duration_ms: 46.5704
+  ...
+# Subtest: expiry grades saved drafts once and run close never releases graded scores
+ok 16 - expiry grades saved drafts once and run close never releases graded scores
+  ---
+  duration_ms: 24.6921
+  ...
+# (node:10420) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: 500 students can preview and join through one socket IP; forwarded headers do not bypass failed-account limits
+ok 17 - 500 students can preview and join through one socket IP; forwarded headers do not bypass failed-account limits
+  ---
+  duration_ms: 3143.0253
+  ...
+# Subtest: reopen and expired-attempt extension hide published graded scores until faculty republishes
+ok 18 - reopen and expired-attempt extension hide published graded scores until faculty republishes
+  ---
+  duration_ms: 16.0398
+  ...
+# Subtest: invalid mission and question identifiers cannot publish; valid identifiers work through HTTP
+ok 19 - invalid mission and question identifiers cannot publish; valid identifiers work through HTTP
+  ---
+  duration_ms: 41.3826
+  ...
+# Subtest: JSON preserves UTF-8 split at every byte, rejects malformed bytes, and enforces byte limits
+ok 20 - JSON preserves UTF-8 split at every byte, rejects malformed bytes, and enforces byte limits
+  ---
+  duration_ms: 472.3715
+  ...
+# Subtest: browser sessions use scoped HttpOnly cookies, reject cross-origin mutations, and revoke faculty and student access on logout
+ok 21 - browser sessions use scoped HttpOnly cookies, reject cross-origin mutations, and revoke faculty and student access on logout
+  ---
+  duration_ms: 49.7028
+  ...
+# Subtest: legacy credentials are purged and new run PINs live only in the current page store
+ok 22 - legacy credentials are purged and new run PINs live only in the current page store
+  ---
+  duration_ms: 2.6541
+  ...
+# Subtest: HTTPS browser cookies are Secure and cookie input cannot override a supplied bearer token
+ok 23 - HTTPS browser cookies are Secure and cookie input cannot override a supplied bearer token
+  ---
+  duration_ms: 0.6516
+  ...
+# Subtest: browser session and retry identifiers work when randomUUID is unavailable on a LAN origin
+ok 24 - browser session and retry identifiers work when randomUUID is unavailable on a LAN origin
+  ---
+  duration_ms: 1.2551
+  ...
+# Subtest: syntax colors preserve code text and keep comments and strings intact
+ok 25 - syntax colors preserve code text and keep comments and strings intact
+  ---
+  duration_ms: 5.1359
+  ...
+# (node:11992) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: finishing while code is queued grades its saved draft only once
+ok 26 - finishing while code is queued grades its saved draft only once
+  ---
+  duration_ms: 40.1104
+  ...
+# Subtest: restart cleanup targets only containers labelled with the recovered job
+ok 27 - restart cleanup targets only containers labelled with the recovered job
+  ---
+  duration_ms: 2.918
+  ...
+# Subtest: coding output comparisons preserve text and order, support whitespace and bounded numeric tolerance
+ok 28 - coding output comparisons preserve text and order, support whitespace and bounded numeric tolerance
+  ---
+  duration_ms: 0.6209
+  ...
+# Subtest: four languages generate valid coding activities and CTFs with samples but no private test or solution leakage
+ok 29 - four languages generate valid coding activities and CTFs with samples but no private test or solution leakage
+  ---
+  duration_ms: 9.5363
+  ...
+# Subtest: coding validation rejects missing examples, unsupported languages, leaked config, bad tolerances and sample-only tests
+ok 30 - coding validation rejects missing examples, unsupported languages, leaked config, bad tolerances and sample-only tests
+  ---
+  duration_ms: 3.5951
+  ...
+# Subtest: AI receives coding instructions, expected output format and selected language; wrong modes cannot approve
+ok 31 - AI receives coding instructions, expected output format and selected language; wrong modes cannot approve
+  ---
+  duration_ms: 2.5557
+  ...
+# Subtest: private tests catch hardcoded samples, award partial credit, ignore claimed output, and preview only public cases
+ok 32 - private tests catch hardcoded samples, award partial credit, ignore claimed output, and preview only public cases
+  ---
+  duration_ms: 1.1852
+  ...
+# Subtest: sandbox uses no network, host mounts or privileged access, and cleans up timeouts and missing runtimes
+ok 33 - sandbox uses no network, host mounts or privileged access, and cleans up timeouts and missing runtimes
+  ---
+  duration_ms: 1.0228
+  ...
+# Subtest: queued coding accepts on-time work after expiry, hides pending grades, and grades once
+ok 34 - queued coding accepts on-time work after expiry, hides pending grades, and grades once
+  ---
+  duration_ms: 47.7202
+  ...
+# Subtest: queued infrastructure failures do not consume attempts and replay after a committed grade is idempotent
+ok 35 - queued infrastructure failures do not consume attempts and replay after a committed grade is idempotent
+  ---
+  duration_ms: 66.2168
+  ...
+# Subtest: coding submissions persist partial credit, preserve idempotency and protect graded feedback
+ok 36 - coding submissions persist partial credit, preserve idempotency and protect graded feedback
+  ---
+  duration_ms: 35.4035
+  ...
+# Subtest: runner outages and late execution cannot charge or record a coding attempt
+ok 37 - runner outages and late execution cannot charge or record a coding attempt
+  ---
+  duration_ms: 23.2861
+  ...
+# (node:7176) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: shared configuration loads .env independently of cwd, keeps explicit overrides and the in-memory sentinel
+ok 38 - shared configuration loads .env independently of cwd, keeps explicit overrides and the in-memory sentinel
+  ---
+  duration_ms: 398.3895
+  ...
+# Subtest: demo cleanup removes all dependent records and retains unrelated assessments
+ok 39 - demo cleanup removes all dependent records and retains unrelated assessments
+  ---
+  duration_ms: 31.7598
+  ...
+# Subtest: legacy candidate tokens expire on schema upgrade without losing resumable attempts
+ok 40 - legacy candidate tokens expire on schema upgrade without losing resumable attempts
+  ---
+  duration_ms: 16.0652
+  ...
+# Subtest: two unrelated fictional subjects validate on the same engine
+ok 41 - two unrelated fictional subjects validate on the same engine
+  ---
+  duration_ms: 6.2489
+  ...
+# Subtest: invalid totals, duplicate IDs, unsupported types, missing rules and cycles block publish
+ok 42 - invalid totals, duplicate IDs, unsupported types, missing rules and cycles block publish
+  ---
+  duration_ms: 2.0445
+  ...
+# Subtest: manual rationale or source reference is required
+ok 43 - manual rationale or source reference is required
+  ---
+  duration_ms: 0.7481
+  ...
+# Subtest: order shuffles only independent group and keeps fixed-last
+ok 44 - order shuffles only independent group and keeps fixed-last
+  ---
+  duration_ms: 1.6476
+  ...
+# Subtest: all seven common activity validators use private rules
+ok 45 - all seven common activity validators use private rules
+  ---
+  duration_ms: 1.4975
+  ...
+# (node:7432) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: faculty ownership isolates assessments, classes, runs and audit records
+ok 46 - faculty ownership isolates assessments, classes, runs and audit records
+  ---
+  duration_ms: 564.33
+  ...
+# (node:19944) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: faculty HTTP ownership rejects cross-class reads and edits
+ok 47 - faculty HTTP ownership rejects cross-class reads and edits
+  ---
+  duration_ms: 532.6112
+  ...
+# (node:4568) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: migration hosting reuses its copy and never edits the original database
+ok 48 - migration hosting reuses its copy and never edits the original database
+  ---
+  duration_ms: 26.5382
+  ...
+# Subtest: two queue owners do not reclaim another owner live lease
+ok 49 - two queue owners do not reclaim another owner live lease
+  ---
+  duration_ms: 50.5685
+  ...
+# Subtest: 80 queued jobs complete with bounded concurrency and isolated results
+ok 50 - 80 queued jobs complete with bounded concurrency and isolated results
+  ---
+  duration_ms: 685.2834
+  ...
+# Subtest: queue recovers interrupted jobs from disk and bounds its backlog
+ok 51 - queue recovers interrupted jobs from disk and bounds its backlog
+  ---
+  duration_ms: 34.2026
+  ...
+# Subtest: online backup includes committed WAL data and never overwrites a destination
+ok 52 - online backup includes committed WAL data and never overwrites a destination
+  ---
+  duration_ms: 23.7123
+  ...
+# Subtest: PowerPoint extraction keeps slide labels and readable text
+ok 53 - PowerPoint extraction keeps slide labels and readable text
+  ---
+  duration_ms: 20.3687
+  ...
+# Subtest: PDF extraction keeps page labels and rejects image-only pages
+ok 54 - PDF extraction keeps page labels and rejects image-only pages
+  ---
+  duration_ms: 1087.0528
+  ...
+# Subtest: legacy PowerPoint and invalid binary files receive a clear error
+ok 55 - legacy PowerPoint and invalid binary files receive a clear error
+  ---
+  duration_ms: 1.0689
+  ...
+# Subtest: project ZIP roundtrip preserves editable files and rejects unsafe archives
+ok 56 - project ZIP roundtrip preserves editable files and rejects unsafe archives
+  ---
+  duration_ms: 75.9346
+  ...
+# Subtest: local draft recovery handles disabled storage and preserves version metadata
+ok 57 - local draft recovery handles disabled storage and preserves version metadata
+  ---
+  duration_ms: 0.6642
+  ...
+# Subtest: question prompts preserve fenced code and indentation for four languages
+ok 58 - question prompts preserve fenced code and indentation for four languages
+  ---
+  duration_ms: 2.8742
+  ...
+# Subtest: all ten types can share an activity or CTF with valid private rules
+ok 59 - all ten types can share an activity or CTF with valid private rules
+  ---
+  duration_ms: 55.6285
+  ...
+# Subtest: matching grades each pair independently and rearranges public right-hand choices
+ok 60 - matching grades each pair independently and rearranges public right-hand choices
+  ---
+  duration_ms: 1.7146
+  ...
+# Subtest: generated table targets use server-computed rows and provide a valid reference script, including quotes and flags
+ok 61 - generated table targets use server-computed rows and provide a valid reference script, including quotes and flags
+  ---
+  duration_ms: 5.0209
+  ...
+# Subtest: custom mix enforces requested generation counts, repairs an incorrect mix, and rejects bad requests
+ok 62 - custom mix enforces requested generation counts, repairs an incorrect mix, and rejects bad requests
+  ---
+  duration_ms: 4.8118
+  ...
+# Subtest: faculty can freely change generated types, counts, and coding language before approval
+ok 63 - faculty can freely change generated types, counts, and coding language before approval
+  ---
+  duration_ms: 3.7071
+  ...
+# Subtest: limits expire, expose retry time, and bound unknown-key growth without evicting existing counters
+ok 64 - limits expire, expose retry time, and bound unknown-key growth without evicting existing counters
+  ---
+  duration_ms: 3.4318
+  ...
+# (node:5200) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: loading labels describe score publication, results checks and each workspace
+ok 65 - loading labels describe score publication, results checks and each workspace
+  ---
+  duration_ms: 2.0523
+  ...
+# Subtest: overlapping requests retain their context and stay busy until every request finishes
+ok 66 - overlapping requests retain their context and stay busy until every request finishes
+  ---
+  duration_ms: 3.1657
+  ...
+# (node:14940) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: retry policy validates bounds and can override a mission rule
+ok 67 - retry policy validates bounds and can override a mission rule
+  ---
+  duration_ms: 45.6496
+  ...
+# Subtest: each retry costs points and time, stops at the attempt limit, and appears in results
+ok 68 - each retry costs points and time, stops at the attempt limit, and appears in results
+  ---
+  duration_ms: 55.3845
+  ...
+# Subtest: an editable copy keeps reviewed sources and leaves the published version unchanged
+ok 69 - an editable copy keeps reviewed sources and leaves the published version unchanged
+  ---
+  duration_ms: 46.5826
+  ...
+# Subtest: faculty answer key gives readable table state and a valid code solution
+ok 70 - faculty answer key gives readable table state and a valid code solution
+  ---
+  duration_ms: 2.3516
+  ...
+# Subtest: HTML-as-XLS roster uses school IDs and rejects missing or duplicate IDs
+ok 71 - HTML-as-XLS roster uses school IDs and rejects missing or duplicate IDs
+  ---
+  duration_ms: 5.9703
+  ...
+# Subtest: CSV upload accepts Excel UTF-8 export with quoted names and school IDs
+ok 72 - CSV upload accepts Excel UTF-8 export with quoted names and school IDs
+  ---
+  duration_ms: 0.9889
+  ...
+# (node:19164) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: coding HTTP routes protect private tests, ignore forged expected output, and preserve graded feedback
+ok 73 - coding HTTP routes protect private tests, ignore forged expected output, and preserve graded feedback
+  ---
+  duration_ms: 156.0689
+  ...
+# Subtest: public assets revalidate while readiness and API responses remain uncached
+ok 74 - public assets revalidate while readiness and API responses remain uncached
+  ---
+  duration_ms: 10.3401
+  ...
+# Subtest: student readiness validates access without starting a timer or rotating an existing session
+ok 75 - student readiness validates access without starting a timer or rotating an existing session
+  ---
+  duration_ms: 21.0694
+  ...
+# Subtest: candidate API protects private rules, persists score and finalizes
+ok 76 - candidate API protects private rules, persists score and finalizes
+  ---
+  duration_ms: 50.7144
+  ...
+# Subtest: candidate API restores drafts and retries submissions safely; faculty recovery is authorized
+ok 77 - candidate API restores drafts and retries submissions safely; faculty recovery is authorized
+  ---
+  duration_ms: 50.9068
+  ...
+# Subtest: graded runs require publication even after the run closes
+ok 78 - graded runs require publication even after the run closes
+  ---
+  duration_ms: 43.3442
+  ...
+# Subtest: individual and bulk score publication reach students before run close without releasing active attempts
+ok 79 - individual and bulk score publication reach students before run close without releasing active attempts
+  ---
+  duration_ms: 62.7461
+  ...
+# Subtest: instructor results and CSV show roster identity and server score
+ok 80 - instructor results and CSV show roster identity and server score
+  ---
+  duration_ms: 10.1152
+  ...
+# Subtest: faculty can name a run without changing its login ID or exam version
+ok 81 - faculty can name a run without changing its login ID or exam version
+  ---
+  duration_ms: 24.1094
+  ...
+# Subtest: faculty class API supports roster CRUD and run assignment
+ok 82 - faculty class API supports roster CRUD and run assignment
+  ---
+  duration_ms: 43.6026
+  ...
+# Subtest: faculty student API enforces authentication and edits individual class rows
+ok 83 - faculty student API enforces authentication and edits individual class rows
+  ---
+  duration_ms: 24.623
+  ...
+# Subtest: instructor can import, validate and publish a new topic package
+ok 84 - instructor can import, validate and publish a new topic package
+  ---
+  duration_ms: 26.0536
+  ...
+# Subtest: student and faculty endpoints are separate and the panel is removed
+ok 85 - student and faculty endpoints are separate and the panel is removed
+  ---
+  duration_ms: 21.552
+  ...
+# Subtest: faculty-issued proctor codes allow only read-only monitoring of their run
+ok 86 - faculty-issued proctor codes allow only read-only monitoring of their run
+  ---
+  duration_ms: 41.1602
+  ...
+# Subtest: AI draft intake is faculty-only and queues its source for human review
+ok 87 - AI draft intake is faculty-only and queues its source for human review
+  ---
+  duration_ms: 15.3988
+  ...
+# Subtest: approved AI selections save a draft only through the faculty endpoint
+ok 88 - approved AI selections save a draft only through the faculty endpoint
+  ---
+  duration_ms: 12.8083
+  ...
+# Subtest: unfinished faculty AI proposals are private and recoverable
+ok 89 - unfinished faculty AI proposals are private and recoverable
+  ---
+  duration_ms: 11.0622
+  ...
+# Subtest: faculty can archive and restore a draft but students cannot
+ok 90 - faculty can archive and restore a draft but students cannot
+  ---
+  duration_ms: 12.0968
+  ...
+# Subtest: faculty material intake extracts PowerPoint slide text before source review
+ok 91 - faculty material intake extracts PowerPoint slide text before source review
+  ---
+  duration_ms: 346.6363
+  ...
+# Subtest: question shuffle stays fixed and faculty can review and override a finished answer
+ok 92 - question shuffle stays fixed and faculty can review and override a finished answer
+  ---
+  duration_ms: 37.1507
+  ...
+# (node:18388) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: published versions are immutable and private grading never appears in candidate view
+ok 93 - published versions are immutable and private grading never appears in candidate view
+  ---
+  duration_ms: 26.6178
+  ...
+# Subtest: legacy titles receive display types without rewriting saved packages
+ok 94 - legacy titles receive display types without rewriting saved packages
+  ---
+  duration_ms: 9.2232
+  ...
+# Subtest: class CRUD and run assignments keep a roster snapshot
+ok 95 - class CRUD and run assignments keep a roster snapshot
+  ---
+  duration_ms: 19.8998
+  ...
+# Subtest: student rows can be added, edited, and removed without changing existing runs
+ok 96 - student rows can be added, edited, and removed without changing existing runs
+  ---
+  duration_ms: 12.8375
+  ...
+# Subtest: draft exam names and faculty run names have separate lifecycles
+ok 97 - draft exam names and faculty run names have separate lifecycles
+  ---
+  duration_ms: 10.6403
+  ...
+# Subtest: unpublished drafts can be archived and restored without losing their content
+ok 98 - unpublished drafts can be archived and restored without losing their content
+  ---
+  duration_ms: 13.4667
+  ...
+# Subtest: roster join and resume preserve order, deadline and isolated score
+ok 99 - roster join and resume preserve order, deadline and isolated score
+  ---
+  duration_ms: 12.2407
+  ...
+# Subtest: proctor access is scoped to a run and exposes progress without answers or grades
+ok 100 - proctor access is scoped to a run and exposes progress without answers or grades
+  ---
+  duration_ms: 18.5598
+  ...
+# Subtest: readiness reports effective question retry rules and rejects a closed run before creating an attempt
+ok 101 - readiness reports effective question retry rules and rejects a closed run before creating an attempt
+  ---
+  duration_ms: 12.6277
+  ...
+# Subtest: retry, partial credit and duplicate submissions cannot award a criterion twice
+ok 102 - retry, partial credit and duplicate submissions cannot award a criterion twice
+  ---
+  duration_ms: 24.9151
+  ...
+# Subtest: idempotent retries return the original attempt without a second penalty
+ok 103 - idempotent retries return the original attempt without a second penalty
+  ---
+  duration_ms: 17.0107
+  ...
+# Subtest: candidate drafts restore through mission view and clear after submission
+ok 104 - candidate drafts restore through mission view and clear after submission
+  ---
+  duration_ms: 16.7608
+  ...
+# Subtest: faculty can extend and reopen attempts with an audited reason before run close
+ok 105 - faculty can extend and reopen attempts with an audited reason before run close
+  ---
+  duration_ms: 8.8351
+  ...
+# Subtest: new published version does not alter a candidate pinned to version one
+ok 106 - new published version does not alter a candidate pinned to version one
+  ---
+  duration_ms: 9.3367
+  ...
+# Subtest: source notes are optional while missing cited files still block publication
+ok 107 - source notes are optional while missing cited files still block publication
+  ---
+  duration_ms: 10.3382
+  ...
+# Subtest: participation separates unfinished hidden scores from completed scores ready to publish
+ok 108 - participation separates unfinished hidden scores from completed scores ready to publish
+  ---
+  duration_ms: 2.5652
+  ...
+# Subtest: results filters combine identity, attempt and visibility without treating an unstarted attempt as a hidden score
+ok 109 - results filters combine identity, attempt and visibility without treating an unstarted attempt as a hidden score
+  ---
+  duration_ms: 0.4655
+  ...
+# (node:18876) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: web packages validate files and private checks without leaking the rubric
+ok 110 - web packages validate files and private checks without leaking the rubric
+  ---
+  duration_ms: 6.8508
+  ...
+# Subtest: remote web grading keeps expected outputs in the API and requires manual rubric review
+ok 111 - remote web grading keeps expected outputs in the API and requires manual rubric review
+  ---
+  duration_ms: 129.9089
+  ...
+# (node:10344) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Week 13 version 7 fits 40 minutes and has retry rules by mission and flag
+ok 112 - Week 13 version 7 fits 40 minutes and has retry rules by mission and flag
+  ---
+  duration_ms: 29.6358
+  ...
+# Subtest: inspection grades the requested page, not a matching first page
+ok 113 - inspection grades the requested page, not a matching first page
+  ---
+  duration_ms: 2.9003
+  ...
+# Subtest: both code missions are solvable from the scaffold and reject arbitrary JavaScript
+ok 114 - both code missions are solvable from the scaffold and reject arbitrary JavaScript
+  ---
+  duration_ms: 5.0426
+  ...
+# Subtest: published version 7 supports the complete CTF on first attempts
+ok 115 - published version 7 supports the complete CTF on first attempts
+  ---
+  duration_ms: 105.3101
+  ...
+1..115
+# tests 115
+# suites 0
+# pass 115
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8410.3149

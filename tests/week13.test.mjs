@@ -103,7 +103,7 @@ test('published version 7 supports the complete CTF on first attempts', () => {
     });
     assert.deepEqual(store.validate(pub.examId, pub.version), []);
     store.publish(pub.examId, pub.version);
-    const run = store.createRun({ examId: pub.examId, version: pub.version, pin: '4321',
+    const run = store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, pin: '4321',
       opensAt: new Date(Date.now() - 1000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
       roster: [{ candidateId: 'TEST-001', displayName: 'Test Candidate', section: 'Test' }] });
     const sid = store.join({ runId: run.id, candidateId: 'TEST-001', pin: '4321' }).session.id;

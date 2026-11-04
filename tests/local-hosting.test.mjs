@@ -6,8 +6,35 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { CodingQueue } from '../src/coding-queue.mjs';
 import { backupDatabase } from '../src/backup.mjs';
+import { migrationDatabase } from '../src/migration-database.mjs';
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+test('migration hosting reuses its copy and never edits the original database', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gotit-migration-'));
+  const source = join(dir, 'original.sqlite'), target = join(dir, 'migration.sqlite');
+  const previous = process.env.MIGRATION_DATA_FILE;
+  let db = new DatabaseSync(source); db.exec('CREATE TABLE answers(value TEXT); INSERT INTO answers VALUES(\'original\')'); db.close();
+  try {
+    process.env.MIGRATION_DATA_FILE = target; assert.equal(migrationDatabase(source), target);
+    db = new DatabaseSync(target); db.exec("INSERT INTO answers VALUES('migration')"); db.close();
+    assert.equal(migrationDatabase(source), target);
+    db = new DatabaseSync(source, { readOnly: true }); assert.equal(db.prepare('SELECT COUNT(*) AS n FROM answers').get().n, 1); db.close();
+    process.env.MIGRATION_DATA_FILE = source; assert.throws(() => migrationDatabase(source), /separate/);
+  } finally { if (previous === undefined) delete process.env.MIGRATION_DATA_FILE; else process.env.MIGRATION_DATA_FILE = previous; rmSync(dir, { recursive: true }); }
+});
+test('two queue owners do not reclaim another owner live lease', async () => {
+  const db = new DatabaseSync(':memory:'); db.exec("CREATE TABLE sessions(id TEXT PRIMARY KEY); INSERT INTO sessions VALUES('s1')");
+  let release, executions = 0;
+  const handler = async () => { executions++; await new Promise(resolve => { release = resolve; }); return { saved: true }; };
+  const first = new CodingQueue(db, handler);
+  const job = first.enqueue('s1', 'q1', 'submit', 'request-key', {});
+  await tick();
+  const second = new CodingQueue(db, handler);
+  try {
+    await tick(); assert.equal(executions, 1); assert.equal(second.view('s1', job.jobId).status, 'running');
+    release(); await tick(); assert.equal(first.view('s1', job.jobId).status, 'done');
+  } finally { first.close(); second.close(); db.close(); }
+});
 test('80 queued jobs complete with bounded concurrency and isolated results', async () => {
   const db = new DatabaseSync(':memory:'); db.exec('CREATE TABLE sessions(id TEXT PRIMARY KEY)');
   let running = 0, peak = 0, executed = 0;

@@ -8,7 +8,7 @@ export function participationCounts(rows) {
     if (Object.hasOwn(attemptLabels, row.status)) counts[row.status]++;
     if (row.sessionId && !row.resultsReleased) {
       counts.hidden++;
-      if (['submitted', 'expired'].includes(row.status)) counts.readyToPublish++;
+      if (['submitted', 'expired'].includes(row.status) && !row.pendingCoding && !row.pendingReview) counts.readyToPublish++;
     }
   }
   return counts;

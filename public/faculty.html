@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/ui-refinements.css">
   <script src="/vendor/datatables.min.js" defer></script>
   <script type="module" src="/faculty.js"></script>
+  <link rel="stylesheet" href="/assets/workspaces.css">
 </head>
 <body>
   <header class="masthead">
@@ -25,6 +26,7 @@
       <div class="card compact">
         <h1>Faculty Studio</h1>
         <form id="instructor-login" class="inline-form">
+          <label>Username<input id="instructor-username" value="faculty" required autocomplete="username"></label>
           <label>Password<input id="instructor-password" type="password" required autocomplete="current-password"></label>
           <button class="primary" type="submit">Sign in</button>
         </form>
@@ -66,7 +68,7 @@
         <section class="faculty-step" data-step="exams" aria-labelledby="step-exams-title">
           <h1 id="step-exams-title">Activities</h1>
           <div id="activity-create-view" class="hidden">
-            <div class="button-row"><button type="button" id="manage-activities">Back to activities</button></div>
+            <div class="button-row"><button type="button" id="manage-activities">Back to activities</button><button type="button" id="create-web-project">Create PHP web assessment</button></div>
             <div id="ai-create" class="stack">
               <p id="ai-status" class="small"></p>
               <p id="ai-recovery-status" class="small" role="status"></p>
@@ -296,6 +298,7 @@
           <div class="results-heading-actions">
             <label>Run<select id="results-run"></select></label>
             <button type="button" id="load-results">Refresh results</button>
+            <button type="button" id="retry-grading">Retry interrupted grading</button>
             <button type="button" id="export-results">Export CSV</button>
           </div>
           <p id="results-feedback-mode" class="small"></p>

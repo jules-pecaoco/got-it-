@@ -11,7 +11,7 @@ const setup = name => {
   const store = new Store(':memory:');
   const [pub, priv] = fixtures(name);
   store.importDraft(pub, priv); store.publish(pub.examId, pub.version);
-  const run = store.createRun({ examId: pub.examId, version: pub.version, pin: '4242',
+  const run = store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, pin: '4242',
     opensAt: new Date(Date.now() - 60000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
     roster: [{ candidateId: 'A', displayName: 'Alex', section: 'S' }, { candidateId: 'B', displayName: 'Blair', section: 'S' }] });
   return { store, run, pub, priv };
@@ -54,7 +54,7 @@ test('class CRUD and run assignments keep a roster snapshot', () => {
     assert.equal(updated.roster[0].section, 'K33');
     const timing = { opensAt: new Date(Date.now() - 60000).toISOString(),
       closesAt: new Date(Date.now() + 3600000).toISOString() };
-    const run = store.createRun({ examId: pub.examId, version: pub.version, classId: classRecord.id,
+    const run = store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, classId: classRecord.id,
       pin: '4321', ...timing });
     assert.equal(run.className, 'Renamed class');
     assert.equal(run.rosterCount, 2);
@@ -67,7 +67,7 @@ test('class CRUD and run assignments keep a roster snapshot', () => {
     assert.deepEqual(store.deleteClass(classRecord.id), { id: classRecord.id, deleted: true });
     assert.equal(store.listClasses().length, 0);
     assert.equal(store.join({ runId: run.id, candidateId: 'S-002', pin: '4321' }).session.section, 'K33');
-    assert.throws(() => store.createRun({ examId: pub.examId, version: pub.version, classId: classRecord.id,
+    assert.throws(() => store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, classId: classRecord.id,
       pin: '4321', ...timing }), /Class not found/);
   } finally { store.close(); }
 });
@@ -80,7 +80,7 @@ test('student rows can be added, edited, and removed without changing existing r
     ] });
     const timing = { opensAt: new Date(Date.now() - 60_000).toISOString(),
       closesAt: new Date(Date.now() + 3_600_000).toISOString() };
-    const run = store.createRun({ examId: pub.examId, version: pub.version, classId: record.id, pin: '4242', ...timing });
+    const run = store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, classId: record.id, pin: '4242', ...timing });
     assert.equal(store.createStudent(record.id, { candidateId: 'S-003', displayName: 'Casey', programShortName: 'BSIT' }).studentCount, 3);
     assert.throws(() => store.createStudent(record.id, { candidateId: 'S-003', displayName: 'Duplicate' }), /already in the class/);
     const updated = store.updateStudent(record.id, 'S-001', { candidateId: 'S-101', displayName: 'Alex Updated', yearLevel: '3' });
@@ -89,7 +89,7 @@ test('student rows can be added, edited, and removed without changing existing r
     assert.equal(store.deleteStudent(record.id, 'S-002').studentCount, 2);
     assert.equal(store.deleteStudent(record.id, 'S-003').studentCount, 1);
     assert.equal(store.deleteStudent(record.id, 'S-101').studentCount, 0);
-    assert.throws(() => store.createRun({ examId: pub.examId, version: pub.version, classId: record.id, pin: '4242', ...timing }), /class with students/);
+    assert.throws(() => store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, classId: record.id, pin: '4242', ...timing }), /class with students/);
     assert.equal(store.join({ runId: run.id, candidateId: 'S-001', pin: '4242' }).session.section, 'K32');
     assert.throws(() => store.join({ runId: run.id, candidateId: 'S-101', pin: '4242' }), /Invalid run/);
   } finally { store.close(); }
@@ -103,7 +103,7 @@ test('draft exam names and faculty run names have separate lifecycles', () => {
     const renamed = { ...pub, title: 'Garden Survey · Finals' };
     store.updateDraft(pub.examId, pub.version, renamed, priv);
     store.publish(pub.examId, pub.version);
-    const run = store.createRun({ examId: pub.examId, version: pub.version, name: 'K32 Friday', pin: '4242',
+    const run = store.createRun({ feedbackMode: 'practice', examId: pub.examId, version: pub.version, name: 'K32 Friday', pin: '4242',
       opensAt: new Date(Date.now() - 60000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
       roster: [{ candidateId: 'A', displayName: 'Alex', section: 'K32' }] });
     assert.equal(run.name, 'K32 Friday');
@@ -304,7 +304,7 @@ test('new published version does not alter a candidate pinned to version one', (
   const joined = store.join({ runId: run.id, candidateId: 'A', secret: 'passA', pin: '4242' });
   const next = structuredClone(pub); next.version = 2; next.title = 'Garden Survey revised';
   store.importDraft(next, priv); store.publish(next.examId, next.version);
-  const newRun = store.createRun({ examId: next.examId, version: 2, pin: '4242',
+  const newRun = store.createRun({ feedbackMode: 'practice', examId: next.examId, version: 2, pin: '4242',
     opensAt: new Date(Date.now() - 60000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
     roster: [{ candidateId: 'A', displayName: 'Alex', section: 'S', secret: 'passA' }] });
   assert.equal(store.sessionView(joined.session.id).title, pub.title);

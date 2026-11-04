@@ -1,3 +1,4 @@
+import { mountLogic } from '/assets/workspaces.js';
 import { codingLanguages, codeLimit, comparisonText } from './code-task.js';
 import { tokenizeCode } from './code-highlight.js';
 const node = (tag, text, className = '') => {
@@ -19,45 +20,10 @@ export function appendCodeExamples(target, config) {
   target.append(examples);
 }
 export function renderCodingQuestion(form, activity, runSamples) {
-  const config = activity.publicConfig;
-  const language = codingLanguages.find(([name]) => name === config.language)?.[1] ?? config.language;
-  form.append(node('p', `Write your solution in ${language}. Test the examples, then submit your code. Additional private inputs are used for grading.`, 'small'));
-  appendCodeExamples(form, config);
-  const shell = node('div', undefined, 'code-editor');
-  const highlight = node('pre', undefined, 'code-highlight'); highlight.setAttribute('aria-hidden', 'true');
-  const editor = node('textarea');
-  editor.rows = 16; editor.wrap = 'off'; editor.spellcheck = false; editor.maxLength = codeLimit;
-  editor.setAttribute('aria-label', `${language} solution`);
-  editor.value = activity.lastSubmission?.value ?? activity.lastDraft?.value ?? config.starterCode;
-  const paint = () => {
-    highlight.replaceChildren();
-    for (const token of tokenizeCode(editor.value, config.language)) highlight.append(token.type
-      ? node('span', token.text, `code-${token.type}`) : document.createTextNode(token.text));
-    if (editor.value.endsWith('\n')) highlight.append(document.createTextNode(' '));
-    highlight.scrollTop = editor.scrollTop; highlight.scrollLeft = editor.scrollLeft;
-  };
-  editor.addEventListener('input', paint); editor.addEventListener('scroll', paint);
-  shell.append(highlight, editor); form.append(shell); paint();
-  const run = node('button', 'Run sample tests'); run.type = 'button';
-  const results = node('div', undefined, 'coding-results'); results.setAttribute('role', 'status');
-  form.append(run, results);
-  run.addEventListener('click', async () => {
-    run.disabled = true; results.replaceChildren(node('p', 'Running sample tests…'));
-    try {
-      const result = await runSamples(editor.value);
-      results.replaceChildren();
-      result.samples.forEach((sample, index) => {
-        const section = node('section', undefined, 'coding-sample');
-        section.append(node('h4', `Example ${index + 1}: ${sample.matches ? 'Output matches' : 'Output differs'}`),
-          node('p', 'Your output', 'small'), node('pre', sample.output || '(empty output)'),
-          node('p', 'Expected output', 'small'), node('pre', sample.expectedOutput || '(empty output)'));
-        if (sample.error) section.append(node('pre', sample.error, 'coding-error'));
-        results.append(section);
-      });
-    } catch (error) { results.replaceChildren(node('p', error.message, 'coding-error')); }
-    finally { run.disabled = false; }
-  });
-  return () => editor.value;
+  const target = document.createElement('div'); form.append(target);
+  const workspace = mountLogic(target, activity, { run: runSamples, changed: () => form.dispatchEvent(new Event('input', { bubbles: true })) });
+  form._disposeWorkspace = workspace.unmount;
+  return workspace.value;
 }
 
 export function createCodeQuestionEditor(activity) {

@@ -80,7 +80,7 @@ function renderRows() {
     statusLabel.append(icon(statusIcons[row.status] || 'registered'), document.createTextNode(labels[row.status] || row.status));
     status.append(statusLabel);
     tr.append(status, node('td', '', `${row.answeredCount} / ${view.questionCount}`),
-      node('td', '', timeText(row.lastSubmissionAt)));
+      node('td', '', timeText(row.lastSubmissionAt)), node('td', '', row.lastSeenAt ? `${timeText(row.lastSeenAt)}${Date.now() - Date.parse(row.lastSeenAt) > 45000 ? ' · Connection stale' : ''}` : 'Not seen'));
     const remaining = node('td', '', '—');
     if (row.status === 'in_progress' && row.deadlineAt) remaining.dataset.deadline = row.deadlineAt;
     tr.append(remaining);
@@ -88,7 +88,7 @@ function renderRows() {
   }
   if (!rows.length) {
     const tr = node('tr'), td = node('td', 'proctor-empty', view.rows.length ? 'No students match this filter.' : 'No students in this run.');
-    td.colSpan = 6;
+    td.colSpan = 7;
     tr.append(td);
     target.append(tr);
   }

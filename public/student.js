@@ -8,6 +8,8 @@ import { icon } from './icons.js';
 import { installPasswordToggles } from './password-toggle.js';
 import { retryPolicyText, localDateTime } from './ui-model.js';
 import { browserSessionHeaders, randomId } from './browser-session.js';
+import { localDraft, clearLocalDrafts } from './local-drafts.js';
+import { mountWeb } from '/assets/workspaces.js';
 
 installPasswordToggles();
 
@@ -20,7 +22,7 @@ const state = {
   finalizing: false,
   resultsRefreshing: false,
   fullscreenFallback: false,
-  readiness: null, draftEditors: new Map(), timerWarnings: new Set()
+  readiness: null, draftEditors: new Map(), timerWarnings: new Set(), serverClock: null
 };
 
 const node = (tag, className, content) => {
@@ -80,9 +82,10 @@ async function request(path, { method = 'GET', data, headers: extraHeaders = {},
     if (!job) {
       const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
       const result = await response.json();
+      if (result.serverNow) state.serverClock = { at: Date.parse(result.serverNow), received: performance.now() };
       if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`), { status: response.status, code: result.code });
       value = result.data;
-      if (!value?.jobId) return value;
+      if (!value?.jobId || headers.Prefer !== 'respond-async') return value;
       job = { jobId: value.jobId, payload: JSON.stringify(data) };
       if (path.endsWith('/submit') && state.session) state.session.pendingCodingCount = 1;
       try { sessionStorage.setItem(storageKey, JSON.stringify(job)); } catch { /* Optional. */ }
@@ -149,9 +152,9 @@ function renderReadiness(details) {
   const rules = $('readiness-rules'); clear(rules);
   for (const policy of details.retryPolicies)
     rules.append(node('li', '', `${details.retryPolicies.length > 1 ? `${policy.questionCount} questions: ` : ''}${retryPolicyText(policy)}`));
-  rules.append(node('li', '', 'Drafts save automatically. Submit each answer to include it in your attempt; a saved draft is not a submission.'),
+  rules.append(node('li', '', 'Drafts save automatically. Saved drafts are submitted when you finish or time expires, subject to remaining retries.'),
     node('li', '', details.feedbackMode === 'graded'
-      ? 'Scores and correctness stay hidden until faculty publishes your score or the run closes.'
+      ? 'Scores and correctness stay hidden until faculty publishes your score.'
       : 'Practice activity: you see correctness and scores after submitting each answer.'));
   const completed = details.resumed && details.status !== 'in_progress';
   $('begin-attempt').textContent = completed ? 'View attempt and results' : details.resumed ? 'Resume timed attempt' : 'Begin timed attempt';
@@ -211,11 +214,11 @@ async function flushDrafts() {
   const results = await Promise.allSettled([...state.draftEditors.values()].map(editor => editor.flush()));
   return results.every(result => result.status === 'fulfilled' && result.value !== false);
 }
-
-function confirmUnsubmittedEdits() {
-  const revised = [...state.draftEditors.values()].filter(editor => editor.revised).length;
-  return !revised || window.confirm(`${revised} ${revised === 1 ? 'answer has' : 'answers have'} changes you have not submitted. Your previous submissions still count. Leave these changes behind?`);
+function clearDraftEditors() {
+  for (const editor of state.draftEditors.values()) editor.dispose?.();
+  state.draftEditors.clear();
 }
+window.addEventListener('online', () => { flushDrafts().catch(() => message('Reconnected. Some drafts still need saving.')); });
 
 function updateSaveStatus() {
   const editors = [...state.draftEditors.values()];
@@ -225,21 +228,21 @@ function updateSaveStatus() {
   const submitted = editors.filter(editor => editor.status === 'submitted').length;
   $('save-status').textContent = failed ? `${failed} ${failed === 1 ? 'draft could' : 'drafts could'} not be saved. Retry beside the question.`
     : pending ? 'You have unsubmitted changes. Check the status beside each answer.'
-    : drafts ? `This section: ${drafts} saved ${drafts === 1 ? 'draft' : 'drafts'}. Submit each answer to include it in your attempt.`
+    : drafts ? `This section: ${drafts} saved ${drafts === 1 ? 'draft' : 'drafts'}. Saved drafts are included when you finish or time expires.`
     : submitted ? `This section: ${submitted} ${submitted === 1 ? 'answer' : 'answers'} submitted${submitted === editors.length ? '. You can continue.' : ` · ${editors.length - submitted} not submitted.`}`
-    : 'Drafts save automatically. Submit each answer to include it in your attempt.';
+    : 'Drafts save automatically. Saved drafts are included when you finish or time expires.';
 }
 
 async function leaveSession() {
   if (!await flushDrafts()) { message('Some drafts could not be saved. Retry saving before leaving.'); return; }
-  if (!confirmUnsubmittedEdits()) return;
   try { await request('/api/me/logout', { method: 'POST' }); }
   catch (error) { if (error.status !== 401) throw error; }
   if (document.fullscreenElement === document.documentElement) document.exitFullscreen().catch(() => {});
+  clearLocalDrafts(state.session.id);
   state.candidateAccess = null;
   state.session = null;
   state.mission = null;
-  state.draftEditors.clear();
+  clearDraftEditors();
   $('exam-panel').classList.add('hidden');
   $('join-panel').classList.remove('hidden');
   syncFullscreenGate();
@@ -253,7 +256,7 @@ async function finalizeAttempt() {
   const remaining = state.session.order.filter(m => !m.completed).length;
   const word = state.session.kind === 'ctf' ? 'mission' : 'section';
   const unanswered = state.session.questionCount - state.session.submittedCount;
-  const draftNote = ` ${unanswered} ${unanswered === 1 ? 'question has' : 'questions have'} no submitted answer. Saved drafts and unsubmitted changes are not included in your score.`;
+  const draftNote = ` Saved drafts will be submitted for grading, subject to remaining retries. ${unanswered} questions have no explicit submission.`;
   const prompt = (remaining
     ? `Finish now with ${remaining} unfinished ${word}${remaining === 1 ? '' : 's'}? You cannot submit more answers.`
     : 'Finish this attempt? You cannot submit more answers.') + draftNote;
@@ -299,6 +302,9 @@ function checkForPublishedResults() {
   refreshResults({ background: true }).catch(() => {});
 }
 window.setInterval(checkForPublishedResults, 15000);
+window.setInterval(() => {
+  if (!document.hidden && state.session?.status === 'in_progress') request('/api/me/heartbeat', { method: 'POST', silent: true }).catch(() => {});
+}, 15000);
 window.addEventListener('focus', checkForPublishedResults);
 document.addEventListener('visibilitychange', checkForPublishedResults);
 $('continue-mission').addEventListener('click', () => perform(async () => {
@@ -361,7 +367,8 @@ function updateTimer() {
     $('timer').textContent = 'Finished';
     return;
   }
-  const remaining = Math.max(0, Date.parse(state.session.deadlineAt) - Date.now());
+  const now = state.serverClock ? state.serverClock.at + performance.now() - state.serverClock.received : Date.now();
+  const remaining = Math.max(0, Date.parse(state.session.deadlineAt) - now);
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor(remaining / 1000) % 60;
   $('timer').textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
@@ -369,7 +376,7 @@ function updateTimer() {
   for (const threshold of [300000, 60000]) {
     if (remaining > 0 && remaining <= threshold && !state.timerWarnings.has(threshold)) {
       state.timerWarnings.add(threshold);
-      $('timer-warning').textContent = `${threshold === 60000 ? 'Less than 1 minute' : 'Less than 5 minutes'} remaining. Submit your answers before time ends. Saved drafts do not count as submissions.`;
+      $('timer-warning').textContent = `${threshold === 60000 ? 'Less than 1 minute' : 'Less than 5 minutes'} remaining. Save your work; acknowledged drafts are graded at expiry, subject to remaining retries.`;
       $('timer-warning').classList.remove('hidden');
     }
   }
@@ -406,10 +413,9 @@ function renderMissionList() {
 async function loadMission(id) {
   if (state.mission && state.mission.id !== id) {
     if (!await flushDrafts()) { message('Some drafts could not be saved. Retry beside the question before switching sections.'); return; }
-    if (!confirmUnsubmittedEdits()) { $('mobile-mission-select').value = state.mission.id; return; }
   }
   state.mission = await request(`/api/me/missions/${encodeURIComponent(id)}`);
-  state.draftEditors.clear();
+  clearDraftEditors();
   renderMissionList();
   renderMission();
   renderFlow();
@@ -472,7 +478,7 @@ function renderMission() {
 
 function renderInspection(form, activity) {
   const config = activity.publicConfig;
-  const saved = activity.lastSubmission?.value ?? activity.lastDraft?.value;
+  const saved = activity.lastDraft?.value ?? activity.lastSubmission?.value;
   const controls = node('div', 'inspection-controls');
   const field = (labelText, control) => {
     const label = node('label', '', labelText);
@@ -608,7 +614,7 @@ function renderCode(form, activity) {
   editor.spellcheck = false;
   editor.setAttribute('aria-label', 'DataTables JavaScript');
   editor.placeholder = 'Write DataTables JavaScript code here.';
-  editor.value = activity.lastSubmission?.value ?? activity.lastDraft?.value ?? config.scaffold ?? '';
+  editor.value = activity.lastDraft?.value ?? activity.lastSubmission?.value ?? config.scaffold ?? '';
   const paintCode = () => {
     const value = editor.value;
     const fragment = document.createDocumentFragment();
@@ -689,7 +695,20 @@ function renderCode(form, activity) {
 }
 
 function renderActivity(a, preview = false) {
+  const recovery = !preview ? localDraft(state.session.id, a.id) : null;
+  const recovered = recovery?.read();
+  if (recovered && recovered.baseRevision === (a.lastDraft?.updatedAt ?? '')) {
+    a.lastDraft = { ...recovered.response, updatedAt: recovered.baseRevision };
+  }
   const card = node('article', 'activity-card');
+  if (recovered && recovered.baseRevision !== (a.lastDraft?.updatedAt ?? '')) {
+    const download = node('button', '', 'Download unsynced local answer'); download.type = 'button';
+    download.addEventListener('click', () => {
+      const link = node('a'); link.href = URL.createObjectURL(new Blob([JSON.stringify(recovered.response, null, 2)], { type: 'application/json' }));
+      link.download = `${a.id}-unsynced.json`; link.click(); URL.revokeObjectURL(link.href);
+    });
+    card.append(node('p', 'small', 'This browser has unsynced changes from an older server version. Review them before replacing the current answer.'), download);
+  }
   card.append(renderPrompt(a.prompt, 'activity-prompt'));
   const policy = a.attemptPolicy;
   const attemptInfo = node('p', 'small');
@@ -702,7 +721,7 @@ function renderActivity(a, preview = false) {
   if (showPolicy) { updateAttemptInfo(); card.append(attemptInfo); }
   const form = node('form', 'activity-form');
   const cfg = a.publicConfig || {};
-  const saved = a.lastSubmission?.value ?? a.lastDraft?.value;
+  const saved = a.lastDraft?.value ?? a.lastSubmission?.value;
   let readValue;
 
   if (a.type === 'single_choice' || a.type === 'multiple_choice' || a.type === 'true_false') {
@@ -741,7 +760,7 @@ function renderActivity(a, preview = false) {
     input.setAttribute('aria-label', 'Numeric answer');
     if (typeof saved === 'number') input.value = String(saved);
     const unit = node('input');
-    unit.value = a.lastSubmission?.unit ?? a.lastDraft?.unit ?? cfg.unitLabel ?? '';
+    unit.value = a.lastDraft?.unit ?? a.lastSubmission?.unit ?? cfg.unitLabel ?? '';
     unit.setAttribute('aria-label', 'Unit');
     row.append(input, unit);
     form.append(row);
@@ -799,6 +818,13 @@ function renderActivity(a, preview = false) {
     };
   } else if (a.type === 'data_inspection') {
     readValue = renderInspection(form, a);
+  } else if (a.type === 'web_project') {
+    const target = node('div'); form.append(target);
+    const workspace = mountWeb(target, a, {
+      changed: () => form.dispatchEvent(new Event('input', { bubbles: true })),
+      preview: (value, reset) => request(`/api/me/activities/${encodeURIComponent(a.id)}/web-preview`, { method: 'POST', data: { value, reset } })
+    });
+    readValue = workspace.value; form._disposeWorkspace = workspace.unmount;
   } else if (a.type === 'code_writing') {
     readValue = renderCodingQuestion(form, a, value => request(preview ? '/api/instructor/code/preview'
       : `/api/me/activities/${encodeURIComponent(a.id)}/preview`, {
@@ -823,7 +849,8 @@ function renderActivity(a, preview = false) {
   let draftTimer;
   let draftRequest = Promise.resolve();
   let draftDirty = false, draftRevision = 0, submitting = false;
-  let saveState = a.lastSubmission ? 'submitted' : a.lastDraft ? 'draft' : 'empty';
+  let serverRevision = a.lastDraft?.updatedAt ?? '';
+  let saveState = a.lastDraft ? 'draft' : a.lastSubmission ? 'submitted' : 'empty';
   function setAnswerState(status, text) {
     saveState = status; answerState.dataset.state = status; answerState.textContent = text;
     retrySave.classList.toggle('hidden', status !== 'failed');
@@ -846,37 +873,41 @@ function renderActivity(a, preview = false) {
   };
   if (!preview) {
     state.draftEditors.set(a.id, {
-      get revised() { return draftDirty && a.attemptsUsed > 0; },
       get status() { return saveState; },
+      dispose() { clearTimeout(draftTimer); form._disposeWorkspace?.(); },
       flush: saveDraft
     });
     form.addEventListener('input', scheduleDraft);
     form.addEventListener('change', scheduleDraft);
     setAnswerState(saveState, saveState === 'submitted' ? 'Answer submitted · Included in your attempt'
-      : saveState === 'draft' ? 'Draft saved · Submit this answer to include it in your attempt' : 'No answer submitted');
+      : saveState === 'draft' ? 'Draft saved · Included when you finish or time expires' : 'No answer submitted');
   }
   function scheduleDraft() {
     clearTimeout(draftTimer);
     draftDirty = true; draftRevision++;
+    const stored = recovery?.write(readDraftSubmission(), serverRevision);
     setAnswerState('unsaved', a.attemptsUsed > 0
       ? 'Changes not submitted · Your previous submission still counts'
       : 'Draft not saved yet · Not submitted');
-    if (!a.attemptsUsed) draftTimer = setTimeout(saveDraft, 1500);
+    if (stored === false) answerState.textContent = 'Local recovery unavailable. Keep this page open until the server saves.';
+    draftTimer = setTimeout(saveDraft, 800);
   }
   async function saveDraft() {
     clearTimeout(draftTimer);
-    if (submitting || a.attemptsUsed > 0) return true;
+    if (submitting || a.attemptsRemaining === 0) return true;
     if (!draftDirty) return draftRequest;
     const snapshot = readDraftSubmission(), revision = draftRevision;
     draftDirty = false;
     setAnswerState('saving', 'Saving draft… · Not submitted');
     draftRequest = draftRequest.then(async () => {
       try {
-        await request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: snapshot, silent: true });
-        if (revision === draftRevision && !a.attemptsUsed) setAnswerState('draft', 'Draft saved · Submit this answer to include it in your attempt');
+        const saved = await request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: snapshot, headers: { 'If-Match': serverRevision }, silent: true });
+        serverRevision = saved.updatedAt;
+        if (revision === draftRevision) { recovery?.clear(); setAnswerState('draft', `Draft saved at ${new Date(saved.updatedAt).toLocaleTimeString()} · Included when you finish or time expires`); }
+        else recovery?.write(readDraftSubmission(), serverRevision);
         return true;
       } catch {
-        if (revision === draftRevision && !a.attemptsUsed) {
+        if (revision === draftRevision) {
           draftDirty = true;
           setAnswerState('failed', 'Draft could not be saved · Your answer is still on this page. Retry saving.');
         }
@@ -886,6 +917,7 @@ function renderActivity(a, preview = false) {
     return draftRequest;
   }
   retrySave.addEventListener('click', () => perform(saveDraft));
+  if (recovered && recovered.baseRevision === serverRevision) scheduleDraft();
 
   form.addEventListener('submit', event => {
     event.preventDefault();
@@ -904,7 +936,7 @@ function renderActivity(a, preview = false) {
       await draftRequest;
       const value = a.type === 'numeric_entry' ? read.number : read;
       const submission = a.type === 'numeric_entry' ? { value, unit: read.unit } : { value };
-      if (!a.attemptsUsed) await saveDraft();
+      await saveDraft();
       const retryStorageKey = `gotit:submission:${state.session.id}:${a.id}`;
       let retryRecord;
       try { retryRecord = JSON.parse(sessionStorage.getItem(retryStorageKey) || 'null'); } catch { retryRecord = null; }
@@ -917,7 +949,7 @@ function renderActivity(a, preview = false) {
       feedback.textContent = 'Submitting answer…';
       try {
         const result = await request(`/api/me/activities/${encodeURIComponent(a.id)}/submit`, {
-          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key, ...(a.type === 'code_writing' ? { Prefer: 'respond-async' } : {}) }
+          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key, ...(['code_writing', 'web_project'].includes(a.type) ? { Prefer: 'respond-async' } : {}) }
         });
         sessionStorage.removeItem(retryStorageKey);
         a.attemptsUsed = result.attemptNumber;
@@ -933,6 +965,7 @@ function renderActivity(a, preview = false) {
         renderExamHeader();
         renderMissionList();
         if (draftRevision === submittedRevision) {
+          recovery?.clear(); serverRevision = '';
           draftDirty = false;
           setAnswerState('submitted', `Answer submitted at ${new Date().toLocaleTimeString()} · Included in your attempt`);
         } else setAnswerState('unsaved', 'Changes not submitted · Your previous submission still counts');
@@ -966,7 +999,7 @@ function renderCompletion() {
     ? `${s.pendingCodingCount} coding submission is waiting for grading. Your on-time receipt is saved. This page checks for the result automatically.`
     : s.resultsReleased
     ? `Score: ${s.score} / ${s.maxPoints} points.`
-    : `${s.submittedCount} of ${s.questionCount} answers submitted. Saved drafts are not included. Your score will appear automatically after faculty publishes it or the run closes. You can also check below.`;
+    : `${s.submittedCount} of ${s.questionCount} answers submitted. Saved drafts are included, subject to remaining retries. Your score will appear automatically after faculty publishes it. You can also check below.`;
   $('save-status').textContent = 'Attempt finished. You cannot submit more answers.';
   $('timer-warning').classList.add('hidden');
   $('check-results').textContent = s.resultsReleased ? 'Refresh score' : 'Check for published score';

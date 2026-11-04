@@ -4,29 +4,47 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --experimental-sqlite src/server.mjs",
-    "dev": "node --watch --experimental-sqlite src/server.mjs",
-    "test": "node --experimental-sqlite --test",
+    "start": "node scripts/start-migration.mjs",
+    "dev": "node scripts/start-migration.mjs --watch",
+    "test": "node --import tsx --experimental-sqlite --test tests/*.test.mjs",
     "setup:coding": "node scripts/setup-coding-runtimes.mjs",
     "verify:coding": "node scripts/verify-coding-runtimes.mjs",
-    "preflight": "node --experimental-sqlite scripts/preflight.mjs",
-    "backup": "node --experimental-sqlite scripts/backup.mjs",
+    "preflight": "node --import tsx --experimental-sqlite scripts/preflight.mjs",
+    "backup": "node --import tsx --experimental-sqlite scripts/backup.mjs",
     "serve:local": "node scripts/serve-local.mjs",
     "prepare:local": "node scripts/prepare-local.mjs",
     "serve:preview": "node scripts/serve-preview.mjs",
-    "test:load": "node --experimental-sqlite scripts/load-test-local.mjs",
-    "import:week13": "node --experimental-sqlite scripts/import-week13.mjs",
-    "format": "prettier --write public/paper-copy.js public/password-toggle.js src/store-schema.mjs",
-    "format:check": "prettier --check public/paper-copy.js public/password-toggle.js src/store-schema.mjs"
+    "test:load": "node --import tsx --experimental-sqlite scripts/load-test-local.mjs",
+    "import:week13": "node --import tsx --experimental-sqlite scripts/import-week13.mjs",
+    "format": "prettier --write public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes \"src/**/*.mts\" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/web-template.mjs",
+    "format:check": "prettier --check public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes \"src/**/*.mts\" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/web-template.mjs",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "prestart": "npm run build",
+    "pretest": "npm run build",
+    "faculty": "node --import tsx --experimental-sqlite scripts/faculty.mjs",
+    "restore": "node --import tsx --experimental-sqlite scripts/restore.mjs",
+    "worker": "node --import tsx src/execution-worker.mts",
+    "syntax:check": "node scripts/check-syntax.mjs",
+    "verify:web": "node --import tsx scripts/verify-web.mts",
+    "check": "npm run typecheck && npm run syntax:check && npm run format:check && npm test"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "fastify": "^5.12.8",
     "fflate": "^0.8.3",
-    "pdfjs-dist": "^6.4.299"
+    "pdfjs-dist": "^6.4.299",
+    "tsx": "^4.23.15",
+    "vue": "^3.5.44"
   },
   "devDependencies": {
-    "prettier": "3.9.10"
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "prettier": "3.9.10",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5",
+    "vue-tsc": "^3.3.14"
   }
 }

@@ -3,4 +3,6 @@ node_modules/
 .env
 *.log
 /.playwright-cli/
-/output/playwright/
+/output/
+/public/assets/
+/artifacts/migration-phase*-tests.txt

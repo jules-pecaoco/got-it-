@@ -1,0 +1,13 @@
+
+> got-it@0.1.0 verify:coding
+> node scripts/verify-coding-runtimes.mjs
+
+javascript: input-dependent output verified
+python: input-dependent output verified
+php: input-dependent output verified
+sql: input-dependent output verified
+javascript: invalid code rejected
+python: invalid code rejected
+php: invalid code rejected
+sql: invalid code rejected
+Time/output bounds, non-root execution, and read-only root verified.

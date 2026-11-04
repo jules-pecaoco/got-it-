@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseTableCode } from '../public/table-code.js';
 import { validateCodeRule } from '../public/code-task.js';
+import { validateWebRule } from '../public/web-project.js';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 const asArray = value => Array.isArray(value) ? value : [];
@@ -51,6 +52,7 @@ function validInspectionState(config, value) {
 }
 
 export const validatorRegistry = Object.freeze({
+  web_project: () => { throw Object.assign(new Error('Web projects require isolated execution.'), { code: 'CODE_EXECUTION_REQUIRED', status: 422 }); },
   code_writing: () => { throw Object.assign(new Error('Coding answers require isolated execution.'), { code: 'CODE_EXECUTION_REQUIRED', status: 422 }); },
   single_choice: (submission, expected) => submission?.value === expected,
   multiple_choice: (submission, expected) => Array.isArray(submission?.value) && same([...new Set(submission.value)].sort(), [...expected].sort()),
@@ -138,7 +140,7 @@ export function validatePackage(pub, priv) {
         errors.push(`${a.id}: matching private grading criteria required.`); continue;
       }
       let ruleTotal = 0;
-      if (!['matching', 'data_inspection', 'datatable_code', 'code_writing'].includes(a.type) && rule.criteria.length !== 1) errors.push(`${a.id}: exactly one criterion required for this activity type.`);
+      if (!['matching', 'data_inspection', 'datatable_code', 'code_writing', 'web_project'].includes(a.type) && rule.criteria.length !== 1) errors.push(`${a.id}: exactly one criterion required for this activity type.`);
       for (const c of rule.criteria) {
         if (!c.id || ruleIds.has(c.id)) errors.push(`${a.id}: criterion ID missing or duplicated.`);
         ruleIds.add(c.id);
@@ -194,6 +196,7 @@ function containsAnswerKeys(value) {
 
 function validateActivityConfig(a, rule) {
   const errors = [], cfg = a.publicConfig ?? {}, first = rule.criteria[0]?.answer;
+  if (a.type === 'web_project') errors.push(...validateWebRule(cfg, rule));
   if (a.type === 'code_writing') {
     errors.push(...validateCodeRule(cfg, rule));
     if (own(a, 'tests')) errors.push('coding tests belong in the private grading rule.');

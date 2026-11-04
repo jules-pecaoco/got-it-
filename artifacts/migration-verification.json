@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-04",
+  "branch": "codex/assessment-migration",
+  "rollbackTag": "codex/pre-migration-2026-11-04",
+  "originalDataPreserved": true,
+  "automatedTests": {
+    "passed": 115,
+    "failed": 0
+  },
+  "checks": [
+    "TypeScript",
+    "JavaScript syntax",
+    "scoped Prettier",
+    "git diff whitespace"
+  ],
+  "simulatedLoad": {
+    "students": 80,
+    "verifiedScores": 80,
+    "queueDrained": true,
+    "realRuntimeCapacityMeasurement": false
+  },
+  "realRuntimes": [
+    "PHP",
+    "Python",
+    "JavaScript",
+    "SQLite SQL"
+  ],
+  "realWebChecks": [
+    "PHP HTTP",
+    "SQLite CRUD",
+    "static files",
+    "filesystem restriction",
+    "database snapshot recovery",
+    "database reset",
+    "cross-origin proxy",
+    "console bridge",
+    "cookie paths",
+    "expired preview rejection"
+  ],
+  "browserChecks": [
+    "logic editor",
+    "server draft restoration",
+    "sample results",
+    "disconnect/reconnect recovery",
+    "cross-origin PHP preview",
+    "preview JavaScript console"
+  ],
+  "rollbackDrill": {
+    "baselineLoads": true,
+    "migratedLoads": true,
+    "tablesCompared": 9,
+    "gradesCompared": 6,
+    "foreignKeyViolations": 0
+  },
+  "remainingGates": [
+    "Real 80-student Docker load: blocked by the existing 10 GB system/temp disk-space requirement; C: had approximately 2 GB free",
+    "Institutional deployment and HTTPS preview/worker host configuration",
+    "Representative full-duration proctored pilot",
+    "Comprehensive accessibility and security review"
+  ],
+  "deliberatelyDeferred": [
+    "PostgreSQL migration",
+    "full SPA rewrite",
+    "MySQL and framework hosting",
+    "automated full browser interaction grading"
+  ],
+  "notes": "Fastify compatibility controllers preserve existing APIs. New runtime/editor modules use TypeScript; existing workflows remain JavaScript. Intermediate phase logs are local diagnostics; migration-checks.txt is the final combined check."
+}
