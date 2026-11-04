@@ -1,5 +1,5 @@
 export function initializeStoreSchema(db) {
-  db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
   db.exec(`
       CREATE TABLE IF NOT EXISTS exams (
         exam_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
@@ -29,9 +29,10 @@ export function initializeStoreSchema(db) {
       );
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE, order_json TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE, token_expires_at TEXT, order_json TEXT NOT NULL,
         question_order_json TEXT NOT NULL DEFAULT '{}',
         started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, status TEXT NOT NULL,
+        results_published_at TEXT,
         UNIQUE (run_id,candidate_id), FOREIGN KEY (run_id,candidate_id) REFERENCES roster(run_id,candidate_id)
       );
       CREATE TABLE IF NOT EXISTS submissions (
@@ -82,6 +83,9 @@ export function initializeStoreSchema(db) {
         review_status TEXT NOT NULL, uploaded_at TEXT NOT NULL,
         FOREIGN KEY (exam_id,version) REFERENCES exams(exam_id,version)
       );
+      CREATE INDEX IF NOT EXISTS penalties_session_activity ON penalty_events(session_id,activity_id);
+      CREATE INDEX IF NOT EXISTS submissions_session_activity ON submissions(session_id,activity_id);
+      CREATE INDEX IF NOT EXISTS sessions_run ON sessions(run_id);
     `);
   if (
     db
@@ -132,6 +136,22 @@ export function initializeStoreSchema(db) {
       .some((column) => column.name === 'question_order_json')
   )
     db.exec("ALTER TABLE sessions ADD COLUMN question_order_json TEXT NOT NULL DEFAULT '{}'");
+  if (
+    !db
+      .prepare('PRAGMA table_info(sessions)')
+      .all()
+      .some((column) => column.name === 'results_published_at')
+  )
+    db.exec('ALTER TABLE sessions ADD COLUMN results_published_at TEXT');
+  if (
+    !db
+      .prepare('PRAGMA table_info(sessions)')
+      .all()
+      .some((column) => column.name === 'token_expires_at')
+  )
+    db.exec('ALTER TABLE sessions ADD COLUMN token_expires_at TEXT');
+  // Legacy tokens had no expiry. Require one rejoin while preserving the attempt.
+  db.exec("UPDATE sessions SET token_expires_at='1970-01-01T00:00:00.000Z' WHERE token_expires_at IS NULL");
   if (
     !db
       .prepare('PRAGMA table_info(submissions)')

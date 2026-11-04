@@ -1,0 +1,93 @@
+{
+  "reopenedGradedAttempt": {
+    "status": "in_progress",
+    "resultsReleased": true,
+    "scoreIncluded": true,
+    "score": 50,
+    "scoreAfterNewSubmission": 100
+  },
+  "sharedCredentials": {
+    "oldTokenRejectedAfterRejoin": true
+  },
+  "classroomSharedIp": {
+    "attemptedStudents": 12,
+    "joinedStudents": 10,
+    "statuses": [
+      {
+        "student": "NAT-1",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-2",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-3",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-4",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-5",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-6",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-7",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-8",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-9",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-10",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-11",
+        "preview": 429,
+        "join": null
+      },
+      {
+        "student": "NAT-12",
+        "preview": 429,
+        "join": null
+      }
+    ]
+  },
+  "publishedUnreachableQuestion": {
+    "validationErrors": [],
+    "submitStatus": 404,
+    "code": "NOT_FOUND"
+  },
+  "facultyLogout": {
+    "logoutEndpointStatus": 404,
+    "tokenStillAuthorized": true
+  },
+  "splitUtf8Body": {
+    "status": 200,
+    "expectedName": "Café",
+    "savedName": "Caf��",
+    "preserved": false
+  }
+}

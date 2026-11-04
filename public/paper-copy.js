@@ -85,6 +85,25 @@ export function appendPaperInput(doc, card, activity, config) {
       list.append(item);
     }
     card.append(list);
+  } else if (activity.type === 'code_writing') {
+    paragraph(`Write a ${config.language} solution.`);
+    for (const [index, sample] of config.samples.entries()) {
+      paragraph(`Example ${index + 1} — ${config.language === 'sql' ? 'Database setup' : 'Input'}`);
+      const input = doc.createElement('pre');
+      input.textContent = sample.input || '(no input)';
+      card.append(input);
+      paragraph('Expected output');
+      const output = doc.createElement('pre');
+      output.textContent = sample.output || '(empty output)';
+      card.append(output);
+    }
+    if (config.starterCode) {
+      paragraph('Starter code');
+      const pre = doc.createElement('pre');
+      pre.textContent = config.starterCode;
+      card.append(pre);
+    }
+    lines(14);
   } else if (activity.type === 'matching') {
     paragraph(`Match each item to one choice: ${(config.right || []).map((item) => item.label).join(' · ')}`);
     for (const item of config.left || [])

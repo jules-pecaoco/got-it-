@@ -2,15 +2,24 @@ import { parseTableCode } from './table-code.js';
 import { parseRoster } from './roster-import.js';
 import { answerText } from './answer-key.js';
 import { renderPrompt } from './prompt-code.js';
+import { appendCodeExamples, createCodeQuestionEditor } from './code-task-ui.js';
+import { questionTypes, positiveTypeCounts, typeCountTotal, validateQuestionMix } from './question-types.js';
+import { createMatchingEditor, createTableQuestionEditor } from './question-type-editors.js';
 import { beginRequestStatus } from './request-status.js';
+import { facultyRequestLabel } from './request-labels.js';
 import { icon } from './icons.js';
 import { appendPaperInput, distributePaperPoints } from './paper-copy.js';
+import { installPasswordToggles } from './password-toggle.js';
+import { attemptLabels, participationCounts, filterResultRows, localDateTime } from './ui-model.js';
+import { browserSessionHeaders, createRunAccessStore, clearLegacyCredentials } from './browser-session.js';
+
+installPasswordToggles();
 
 const $ = id => document.getElementById(id);
 const workflowIcons = { exams: 'activity', rules: 'rules', sources: 'source', review: 'review', classes: 'people', run: 'run', results: 'results' };
 for (const button of document.querySelectorAll('[data-step-link]')) button.prepend(icon(workflowIcons[button.dataset.stepLink]));
 const state = {
-  instructorToken: sessionStorage.getItem('instructorToken'),
+  instructorAuthenticated: false,
   step: sessionStorage.getItem('facultyStep') || 'exams',
   activityMode: 'library', validatedKey: null, validationErrors: [], validationBusy: false,
   validationEpoch: 0, publishBusy: false, runBusy: false,
@@ -21,7 +30,7 @@ const state = {
   editingClassId: '', pendingClassRoster: null, classBusy: false,
   classTable: null, editingStudentId: '',
   aiProposal: null, aiInput: null, aiEditors: [], aiReady: false, aiBusy: false,
-  aiSaveQueue: Promise.resolve()
+  aiSaveQueue: Promise.resolve(), exams: [], results: null, resultsEpoch: 0, aiReviewCursor: -1
 };
 
 const node = (tag, className, content) => {
@@ -31,6 +40,54 @@ const node = (tag, className, content) => {
   return element;
 };
 const clear = element => element.replaceChildren();
+const mixInputs = new Map();
+for (const type of questionTypes) {
+  const label = node('label', '', type.label), input = node('input');
+  input.type = 'number'; input.min = '0'; input.max = '20'; input.step = '1';
+  input.value = ['single_choice', 'true_false', 'matching', 'code_writing'].includes(type.id) ? '2' : '0';
+  label.append(input); $('ai-question-type-counts').append(label); mixInputs.set(type.id, input);
+  input.addEventListener('input', () => { syncQuestionMix(); updateAiApprovals(); renderWorkflowState(); });
+}
+const readQuestionMix = () => Object.fromEntries([...mixInputs].map(([type, input]) => [type, Number(input.value)]));
+function syncQuestionMix() {
+  const mixed = $('ai-question-mode').value === 'mixed';
+  $('ai-question-mix').hidden = !mixed; $('ai-questions').readOnly = mixed;
+  if (mixed) {
+    const total = typeCountTotal(readQuestionMix()); $('ai-questions').value = String(total);
+    $('ai-mix-total').textContent = `${total} questions selected · Total limit: 20.`;
+  }
+}
+const runAccess = createRunAccessStore();
+function loadSelectedRun() {
+  try { return localStorage.getItem('gotItSelectedRun') || ''; }
+  catch { return ''; }
+}
+function saveSelectedRun(runId) {
+  try { localStorage.setItem('gotItSelectedRun', runId); }
+  catch { /* Keep the current tab usable if browser storage is blocked. */ }
+}
+function loadRunAccess(runId) {
+  return runAccess.get(runId);
+}
+function saveRunAccess(runId, details) {
+  return runAccess.set(runId, details);
+}
+function renderRunAccess(runId) {
+  const run = state.runs.find(item => item.id === runId);
+  const panel = $('saved-run-access');
+  panel.classList.toggle('hidden', !run);
+  if (!run) return;
+  const saved = loadRunAccess(runId);
+  const studentUrl = new URL('/app/student', window.location.href);
+  studentUrl.searchParams.set('run', runId);
+  const linkLabel = ['localhost', '127.0.0.1'].includes(studentUrl.hostname)
+    ? 'Student activity (this computer only)' : 'Student activity';
+  $('saved-run-access-text').value = `${linkLabel}: ${saved?.url || studentUrl.href}\nRun ID: ${runId}${saved?.pin ? `\nRun PIN: ${saved.pin}` : ''}\nSign in with your School ID from the class roster.`;
+  $('saved-run-access-note').textContent = saved?.pin
+    ? 'Access details are available in this tab until you refresh or sign out. Copy them now.'
+    : 'This tab does not have the PIN. The server stores only its hash; enter a new PIN below if needed.';
+  $('run-pin-recovery').classList.toggle('hidden', !!saved?.pin);
+}
 
 const message = text => {
   const box = $('notice');
@@ -38,37 +95,15 @@ const message = text => {
   if (text) window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
 };
 
-function requestLabel(path, method) {
-  if (path.endsWith('/materials/extract')) return 'Extracting teaching material…';
-  if (path.endsWith('/ai/propose') || path.endsWith('/ai/generate')) return 'Generating questions…';
-  if (path.endsWith('/ai/approved-draft') || path.endsWith('/ai/draft')) return 'Saving activity draft…';
-  if (path.includes('/ai/check/')) return 'Checking source support…';
-  if (path.endsWith('/ai/inspect') || path.includes('/validate')) return 'Checking activity…';
-  if (path.endsWith('/publish')) return 'Publishing activity…';
-  if (path === '/api/instructor/runs' && method === 'POST') return 'Creating run…';
-  if (path.endsWith('/results')) return 'Loading results…';
-  if (path.endsWith('/export.csv')) return 'Preparing grade export…';
-  if (path.endsWith('/extend') || path.endsWith('/reopen')) return 'Updating student attempt…';
-  if (path.includes('/scores/')) return 'Saving score…';
-  if (path.includes('/proctor-access')) return method === 'GET' ? 'Loading proctor access…' : 'Updating proctor access…';
-  if (path.includes('/sources')) return method === 'GET' ? 'Loading teaching material…' : 'Saving source notes…';
-  if (path.includes('/classes')) return method === 'GET' ? 'Loading classes…' : 'Saving class…';
-  if (path.includes('/students/')) return 'Loading student answers…';
-  if (path === '/api/instructor/assessments' && method === 'GET') return 'Loading activities…';
-  if (path.includes('/assessments/')) return method === 'GET' ? 'Loading activity…' : 'Saving activity…';
-  return method === 'GET' ? 'Loading Faculty Studio…' : 'Saving changes…';
-}
-
 async function request(path, { method = 'GET', data, raw = false, silent = false } = {}) {
-  const finishStatus = silent ? () => {} : beginRequestStatus(requestLabel(path, method));
-  const headers = {};
+  const finishStatus = silent ? () => {} : beginRequestStatus(facultyRequestLabel(path, method));
+  const headers = browserSessionHeaders('instructor');
   if (data !== undefined) headers['Content-Type'] = 'application/json';
-  if (state.instructorToken) headers.Authorization = `Bearer ${state.instructorToken}`;
   try {
     const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
     if (raw && response.ok) return await response.blob();
     const result = await response.json();
-    if (!response.ok) throw new Error(`${result.message} (${result.code})`);
+    if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`), { status: response.status, code: result.code });
     return result.data;
   } finally { finishStatus(); }
 }
@@ -102,6 +137,9 @@ const aiGroupCount = () => $('ai-kind').value === 'ctf' ? Number($('ai-missions'
 const aiConfigMatches = () => state.aiInput && state.aiInput.title === $('ai-title').value.trim()
   && state.aiInput.subject === $('ai-subject').value.trim() && state.aiInput.kind === $('ai-kind').value
   && state.aiInput.difficulty === $('ai-difficulty').value
+  && (state.aiInput.questionMode || 'auto') === $('ai-question-mode').value
+  && (state.aiInput.programmingLanguage || 'auto') === $('ai-programming-language').value
+  && ($('ai-question-mode').value !== 'mixed' || JSON.stringify(positiveTypeCounts(state.aiInput.questionTypeCounts)) === JSON.stringify(positiveTypeCounts(readQuestionMix())))
   && state.aiInput.durationMinutes === Number($('ai-duration').value)
   && state.aiInput.questionCount === Number($('ai-questions').value)
   && state.aiInput.missionCount === aiGroupCount()
@@ -128,7 +166,7 @@ function setActivityMode(mode) {
 function stepAllowed(step) {
   if (step === 'exams') return true;
   if (step === 'classes') return true;
-  if (step === 'results') return state.runs.length > 0;
+  if (step === 'results') return true;
   if (state.activityMode === 'create' && ['rules', 'sources', 'review', 'run'].includes(step)) return false;
   if (step === 'run') return state.selectedExam?.status === 'published' && state.classes.length > 0;
   if (step === 'rules') return state.selectedExam?.status === 'draft' && !titleChanged();
@@ -151,6 +189,8 @@ function showStep(step) {
   }
   window.scrollTo({ top: 0, behavior: 'auto' });
   document.querySelector('[data-step-link][aria-current="step"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  $('faculty-mobile-nav').value = step;
+  if (['rules', 'sources'].includes(step)) document.querySelector('.activity-settings').open = true;
   if (state.libraryReady) {
     renderWorkflowState();
     if (step === 'review') {
@@ -158,6 +198,7 @@ function showStep(step) {
       if (state.selectedExam?.status === 'draft' && !state.validatedKey && !state.validationBusy)
         perform(validateCurrentDraft);
     }
+    if (step === 'results') perform(loadResults);
   }
 }
 
@@ -174,10 +215,14 @@ function renderWorkflowState() {
       : titleChanged() ? 'Save the activity name first.'
       : state.rulesDirty ? 'Save rule changes first.' : 'Select a draft activity first.' : '';
   }
-  $('selected-exam-title').textContent = state.step === 'exams' && state.activityMode === 'create'
+  const contextualRun = state.runs.find(run => run.id === $('results-run').value);
+  $('selected-exam-title').textContent = state.step === 'classes' ? 'Class workspace'
+    : state.step === 'results' ? contextualRun?.name || 'Run results'
+    : state.step === 'exams' && state.activityMode === 'create'
     ? 'New activity' : exam?.title || 'Select an activity';
   $('step-exams-title').textContent = state.activityMode === 'create' ? 'Create activity' : 'Activities';
-  $('selected-exam-meta').textContent = state.step === 'exams' && state.activityMode === 'create'
+  $('selected-exam-meta').textContent = ['classes', 'results'].includes(state.step) ? ''
+    : state.step === 'exams' && state.activityMode === 'create'
     ? '' : exam ? `${kindLabel(exam)}${difficultyLabel(exam)} · v${exam.version} · ${exam.status}` : '';
   $('clone-package').classList.toggle('hidden', !published);
   $('clone-package').disabled = !published;
@@ -201,7 +246,7 @@ function renderWorkflowState() {
     : !chosenClass.studentCount ? 'Add students to this class before creating a run.'
     : !$('run-name-field').value.trim() ? 'Name this run for your class.'
     : pin.length < 4 ? 'Enter an admission PIN of at least 4 characters.'
-    : !Number.isInteger(days) || days < 1 ? 'Enter a valid admission window.' : '';
+    : !Number.isInteger(days) || days < 1 || days > 365 ? 'Enter a joining window from 1 to 365 days.' : '';
   $('workflow-guidance').textContent = state.step === 'exams' && state.activityMode === 'create'
     ? state.aiProposal ? 'Review the generated questions and save your selection.' : 'Set up the activity and choose teaching material.'
     : state.step === 'classes'
@@ -213,8 +258,17 @@ function renderWorkflowState() {
     : state.step === 'review' ? published ? 'This version is published and locked.'
       : state.validationErrors.length ? 'Fix the issues shown with the questions.'
       : state.validatedKey === examKey(exam) ? 'Ready to publish.' : 'Checking this draft…'
-    : state.step === 'run' ? runIssue || 'Ready to create a run.' : 'Choose a run to view results.';
+    : state.step === 'run' ? runIssue || 'Ready to create a run.' : state.runs.length
+      ? 'Track participation, review answers, and control score visibility.' : 'Create a run to begin tracking results.';
   $('exam-title-input').disabled = !draft;
+  $('exam-title-editor').classList.toggle('hidden', !draft);
+  $('published-activity-summary').classList.toggle('hidden', !published);
+  if (published) {
+    const summary = $('published-activity-summary');
+    clear(summary);
+    summary.append(node('strong', '', exam.title), node('span', 'status-badge status-published', `Published · v${exam.version}`),
+      node('p', 'small', 'This version is ready to run. Create an editable copy to make changes.'));
+  }
   $('save-exam-title').disabled = !titleDirty || !title || title.length > 120;
   $('exam-title-help').textContent = !exam ? 'Select an activity first.'
     : draft ? 'This name appears to students and in Faculty.' : 'Published versions are locked. Create an editable copy to change the name.';
@@ -275,6 +329,7 @@ function renderWorkflowState() {
   else if (!materialFileReady($('ai-source').files[0])) generateHelp = 'Choose a supported teaching source (PDF, PPTX, TXT, or MD, up to 10 MB).';
   else if (!Number.isInteger(aiDuration) || aiDuration < 5 || aiDuration > 180) generateHelp = 'Set a duration from 5 to 180 minutes.';
   else if (!Number.isInteger(aiQuestions) || aiQuestions < 1 || aiQuestions > 20) generateHelp = 'Set 1–20 questions.';
+  else if ($('ai-question-mode').value === 'mixed' && validateQuestionMix(readQuestionMix(), aiQuestions).length) generateHelp = validateQuestionMix(readQuestionMix(), aiQuestions)[0];
   else if (!Number.isInteger(aiMissions) || aiMissions < 1 || aiMissions > 5) generateHelp = 'Set 1–5 missions.';
   else if (isCtf && aiQuestions < aiMissions) generateHelp = `You set ${aiMissions} missions, so choose at least ${aiMissions} questions (one per mission).`;
   else if (isCtf && aiQuestions > aiMissions * 4) generateHelp = `${aiMissions} missions can contain up to ${aiMissions * 4} questions total.`;
@@ -284,7 +339,53 @@ function renderWorkflowState() {
   if (state.aiBusy) $('ai-save').disabled = true;
   $('ai-save-row').classList.toggle('hidden', !state.aiProposal);
   $('ai-discard').classList.toggle('hidden', !state.aiProposal);
+  for (const option of $('faculty-mobile-nav').options) option.disabled = !state.libraryReady || !stepAllowed(option.value);
+  renderActivityWorkflow();
+  renderRunSummary();
+  $('results-empty').classList.toggle('hidden', state.runs.length > 0);
+  $('results-settings').classList.toggle('hidden', !state.runs.length);
 }
+
+function renderActivityWorkflow() {
+  const target = $('activity-workflow');
+  clear(target);
+  const creating = state.step === 'exams' && state.activityMode === 'create';
+  target.classList.toggle('hidden', ['classes', 'results'].includes(state.step) || (!state.selectedExam && !creating));
+  const published = !creating && state.selectedExam?.status === 'published';
+  const current = creating || state.step === 'exams' ? 0 : state.step === 'run' ? 3
+    : published || state.validatedKey ? 2 : 1;
+  for (const [index, [label, step]] of [['Draft', 'exams'], ['Review', 'review'], [published ? 'Published' : 'Publish', 'review'], ['Run', 'run']].entries()) {
+    const item = node('li', index < current || published && index < 3 ? 'is-complete' : '');
+    const button = node('button', '', `${index + 1} · ${label}`);
+    button.type = 'button'; button.disabled = !stepAllowed(step);
+    if (index === current) button.setAttribute('aria-current', 'step');
+    button.addEventListener('click', () => showStep(step));
+    item.append(button); target.append(item);
+  }
+}
+
+function renderRunSummary() {
+  const target = $('run-summary');
+  clear(target);
+  if (!state.examDetail || state.selectedExam?.status !== 'published') return;
+  const exam = state.examDetail.public;
+  const chosenClass = state.classes.find(item => item.id === $('run-class').value);
+  const days = Number($('run-duration-days').value);
+  target.append(node('h2', '', 'Before you create this run'),
+    node('strong', '', `${exam.title} · v${exam.version}`),
+    node('p', '', `${exam.settings.durationMinutes} minutes per student · ${chosenClass ? `${chosenClass.name} · ${chosenClass.studentCount} students` : 'Choose a class'}`));
+  if (Number.isInteger(days) && days >= 1 && days <= 365)
+    target.append(node('p', '', `Students may join until ${localDateTime(Date.now() + days * 86400_000)}. All attempts end by this time.`));
+  target.append(node('p', 'small', $('run-feedback-mode').value === 'graded'
+    ? 'Graded: scores stay hidden until you publish them or the run closes.'
+    : 'Practice: students see correctness and scores immediately.'),
+    node('p', 'small', $('run-shuffle-questions').checked ? 'Questions shuffled within each section or mission.' : 'Questions shown in the authored order.'));
+}
+
+$('faculty-mobile-nav').addEventListener('change', () => {
+  showStep($('faculty-mobile-nav').value);
+  $('faculty-mobile-nav').value = state.step;
+});
 
 for (const button of document.querySelectorAll('[data-step-link], [data-go-step]')) {
   button.addEventListener('click', () => showStep(button.dataset.stepLink || button.dataset.goStep));
@@ -300,7 +401,7 @@ async function loadConfig() {
 }
 
 function showInstructor() {
-  const hasToken = !!state.instructorToken;
+  const hasToken = state.instructorAuthenticated;
   $('instructor-login-panel').classList.toggle('hidden', hasToken);
   $('instructor-workspace').classList.toggle('hidden', !hasToken);
   $('instructor-logout').classList.toggle('hidden', !hasToken);
@@ -316,8 +417,8 @@ function showInstructor() {
       renderWorkflowState();
     }).catch(error => {
       if (error.message.includes('UNAUTHORIZED')) {
-        state.instructorToken = null;
-        sessionStorage.removeItem('instructorToken');
+        state.instructorAuthenticated = false;
+        runAccess.clear();
         showInstructor();
         message('Faculty session expired. Please sign in again.');
       } else {
@@ -330,20 +431,24 @@ function showInstructor() {
 $('instructor-login').addEventListener('submit', event => {
   event.preventDefault();
   perform(async () => {
-    const result = await request('/api/instructor/login', {
+    await request('/api/instructor/login', {
       method: 'POST',
       data: { password: $('instructor-password').value }
     });
-    state.instructorToken = result.token;
-    sessionStorage.setItem('instructorToken', result.token);
+    state.instructorAuthenticated = true;
     $('instructor-password').value = '';
     showInstructor();
     message('Faculty session authenticated.');
   });
 });
 
-$('instructor-logout').addEventListener('click', () => {
-  state.instructorToken = null;
+$('instructor-logout').addEventListener('click', () => perform(async () => {
+  await state.aiSaveQueue.catch(() => {});
+  try { await request('/api/instructor/logout', { method: 'POST' }); }
+  catch (error) { if (error.status !== 401) throw error; }
+  state.instructorAuthenticated = false;
+  runAccess.clear();
+  clearLegacyCredentials();
   state.pendingClassRoster = null;
   state.classes = [];
   state.selectedClassId = '';
@@ -370,10 +475,9 @@ $('instructor-logout').addEventListener('click', () => {
   $('proctor-share-text').value = '';
   $('proctor-share').classList.add('hidden');
   $('proctor-access').classList.add('hidden');
-  sessionStorage.removeItem('instructorToken');
   showStep('exams');
-  showInstructor();
-});
+  window.location.reload();
+}));
 
 $('new-activity').addEventListener('click', () => {
   setActivityMode('create');
@@ -406,6 +510,9 @@ $('copy-run-access').addEventListener('click', async () => {
 $('refresh-library').addEventListener('click', () => perform(refreshLibrary));
 
 async function loadAiStatus() {
+  request('/api/instructor/code/status', { silent: true }).then(result => {
+    $('coding-runtime-status').textContent = `${result.message} Coding questions show sample input and expected output.`;
+  }).catch(() => { $('coding-runtime-status').textContent = 'Coding runtime status unavailable. Coding questions include sample input and expected output.'; });
   try {
     const result = await request('/api/instructor/ai/status');
     state.aiReady = result.available;
@@ -444,8 +551,11 @@ async function loadAiWork() {
     'ai-title': saved.input.title, 'ai-subject': saved.input.subject,
     'ai-kind': saved.input.kind, 'ai-difficulty': saved.input.difficulty,
     'ai-duration': saved.input.durationMinutes, 'ai-questions': saved.input.questionCount,
-    'ai-missions': saved.input.missionCount, 'ai-custom-prompt': saved.input.customPrompt || ''
+    'ai-missions': saved.input.missionCount, 'ai-custom-prompt': saved.input.customPrompt || '',
+    'ai-question-mode': saved.input.questionMode || 'auto', 'ai-programming-language': saved.input.programmingLanguage || 'auto'
   })) $(id).value = String(value ?? '');
+  if (saved.input.questionMode === 'mixed') for (const [type, input] of mixInputs) input.value = String(saved.input.questionTypeCounts?.[type] ?? 0);
+  syncQuestionMix();
   $('ai-recovery-status').textContent = `Recovered preview · ${saved.input.source.filename}`;
   $('ai-status').textContent = 'Review answers and approve questions.';
   renderAiPreview(saved.proposal, new Set(saved.selected));
@@ -463,8 +573,8 @@ function questionEditor(activity, saveEdited) {
     return { label, input };
   };
   const type = field('Question type', 'select');
-  for (const value of ['single_choice', 'multiple_choice', 'true_false', 'text_entry', 'numeric_entry', 'sequencing']) {
-    const option = node('option', '', value.replaceAll('_', ' ')); option.value = value; type.input.append(option);
+  for (const { id, label } of questionTypes) {
+    const option = node('option', '', label); option.value = id; type.input.append(option);
   }
   type.input.value = [...type.input.options].some(option => option.value === activity.type) ? activity.type : 'single_choice';
   const prompt = field('Question · fence code with ```python, ```php, ```sql, or ```javascript', 'textarea'); prompt.input.value = activity.prompt || ''; prompt.input.required = true;
@@ -481,16 +591,24 @@ function questionEditor(activity, saveEdited) {
   const unit = field('Unit'); unit.input.value = activity.answer?.unit ?? '';
   const quote = field('Source quote · optional', 'textarea'); quote.input.value = activity.evidenceQuote || '';
   const location = field('Slide or page · optional'); location.input.value = activity.location || '';
+  const coding = createCodeQuestionEditor(activity); form.append(coding.element);
+  const matching = createMatchingEditor(activity); form.append(matching.element);
+  const table = createTableQuestionEditor(activity); form.append(table.element);
   const sync = () => {
     const value = type.input.value;
     options.label.hidden = !['single_choice', 'multiple_choice', 'sequencing'].includes(value);
     options.input.required = !options.label.hidden;
-    answer.label.hidden = ['true_false', 'numeric_entry'].includes(value);
+    coding.element.hidden = value !== 'code_writing';
+    matching.element.hidden = value !== 'matching';
+    table.element.hidden = !['data_inspection', 'datatable_code'].includes(value); table.setType(value);
+    for (const editor of [coding, matching, table]) for (const control of editor.element.querySelectorAll('input,select,textarea,button')) control.disabled = editor.element.hidden;
+    answer.label.hidden = ['true_false', 'numeric_entry', 'code_writing', 'matching', 'data_inspection', 'datatable_code'].includes(value);
     answer.input.required = !answer.label.hidden;
     truth.label.hidden = value !== 'true_false';
     for (const item of [numericValue, tolerance, unit]) {
       item.label.hidden = value !== 'numeric_entry';
-      item.input.required = value === 'numeric_entry';
+      item.input.required = value === 'numeric_entry' && item !== unit;
+      item.input.disabled = value !== 'numeric_entry';
     }
     answer.label.firstChild.textContent = value === 'single_choice'
       ? 'Correct option text · match one option exactly' : 'Correct answer · one per line for multiple answers';
@@ -514,6 +632,12 @@ function questionEditor(activity, saveEdited) {
         : value === 'numeric_entry' ? { value: Number(numericValue.input.value),
           tolerance: Number(tolerance.input.value), unit: unit.input.value.trim() }
           : value === 'single_choice' ? answer.input.value.trim() : lines(answer.input.value);
+      if (value === 'code_writing') {
+        Object.assign(edited, coding.value());
+        delete edited.answer;
+      }
+      if (value === 'matching') { Object.assign(edited, matching.value()); delete edited.answer; }
+      if (['data_inspection', 'datatable_code'].includes(value)) Object.assign(edited, table.value(value));
       save.disabled = true;
       try { await saveEdited(edited); } finally { save.disabled = false; }
     });
@@ -546,7 +670,8 @@ function updateAiApprovals() {
     if (selected > 4) overLimit = true;
   }
   const word = groupWord(state.aiInput || { kind: $('ai-kind').value });
-  const count = `${approvedMissions} ${word}${approvedMissions === 1 ? '' : 's'} · ${approvedQuestions} question${approvedQuestions === 1 ? '' : 's'} approved`;
+  const totalQuestions = state.aiEditors.reduce((sum, editor) => sum + editor.questions.length, 0);
+  const count = `${approvedQuestions} of ${totalQuestions} questions approved · ${approvedMissions} ${word}${approvedMissions === 1 ? '' : 's'}`;
   const average = selectedScores.length === approvedQuestions && selectedScores.length
     ? ` · ${Math.round(selectedScores.reduce((sum, score) => sum + score, 0) / selectedScores.length)}% source match (AI estimate)` : '';
   $('ai-selection').textContent = !state.aiProposal ? '' : overLimit ? `${count}. Limit: 4 questions per ${word}.`
@@ -556,23 +681,62 @@ function updateAiApprovals() {
   if (state.aiProposal && !setupMatches)
     $('ai-selection').textContent = `Setup changed. Generate a new preview before saving. ${count}${average}.`;
   $('ai-save').disabled = !approvedQuestions || overLimit || approvedMissions > 5 || !setupMatches;
+  $('ai-next-unreviewed').disabled = approvedQuestions === totalQuestions;
+  for (const editor of state.aiEditors) for (const question of editor.questions)
+    question.card.classList.toggle('is-approved', question.checkbox.checked);
+}
+
+$('ai-next-unreviewed').addEventListener('click', () => {
+  const questions = state.aiEditors.flatMap(editor => editor.questions);
+  for (let offset = 1; offset <= questions.length; offset++) {
+    const index = (state.aiReviewCursor + offset) % questions.length;
+    const question = questions[index];
+    if (question.checkbox.checked) continue;
+    state.aiReviewCursor = index;
+    question.section.open = true;
+    question.card.focus({ preventScroll: true });
+    question.card.scrollIntoView({ block: 'start', behavior: 'auto' });
+    break;
+  }
+});
+
+async function mutateAiDesign(change, openMissionIndex) {
+  if (state.aiBusy) return;
+  const design = { ...structuredClone(state.aiProposal.design), missions: (Array.isArray(state.aiProposal.design?.missions) ? state.aiProposal.design.missions : []).map(mission =>
+    ({ ...structuredClone(mission), activities: structuredClone(Array.isArray(mission?.activities) ? mission.activities : []) })) };
+  const approved = new Set([...selectedAiQuestions()].map(key => {
+    const [mission, question] = key.split(':').map(Number); return design.missions[mission]?.activities[question];
+  }));
+  change(design);
+  const selected = new Set(design.missions.flatMap((mission, mi) => mission.activities.flatMap((question, qi) => approved.has(question) ? [`${mi}:${qi}`] : [])));
+  state.aiBusy = true;
+  const controls = [...$('ai-preview').querySelectorAll('button,input,select,textarea')].map(control => [control, control.disabled]);
+  for (const [control] of controls) control.disabled = true;
+  try {
+    state.aiProposal = await request('/api/instructor/ai/inspect', { method: 'POST', data: { ...state.aiInput, design } });
+    renderAiPreview(state.aiProposal, selected, openMissionIndex); queueAiWorkSave();
+  } finally {
+    for (const [control, disabled] of controls) if (control.isConnected) control.disabled = disabled;
+    state.aiBusy = false; updateAiApprovals(); renderWorkflowState();
+  }
 }
 
 function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
   const target = $('ai-preview');
   clear(target);
   state.aiEditors = [];
+  state.aiReviewCursor = -1;
   target.append(node('h2', '', 'Review questions'));
   target.append(node('p', 'ai-score', `Source match: ${proposal.sourceMatchPercent === null ? 'unavailable' : `${proposal.sourceMatchPercent}%`} · AI estimate`));
-  target.append(node('p', 'small', 'Review the questions and answers. You decide what to approve.'));
+  target.append(node('p', 'small', 'Change any question type, add your own questions, or rearrange the draft. Approve the questions you want to keep.'));
   const word = groupWord(state.aiInput);
   if (proposal.missions.length !== state.aiInput.missionCount)
-    target.append(node('p', 'ai-issue', `AI returned ${proposal.missions.length} ${word}s; you requested ${state.aiInput.missionCount}.`));
+    target.append(node('p', 'small', `Preview: ${proposal.missions.length} ${word}s. Originally requested: ${state.aiInput.missionCount}. You may keep your edited layout.`));
   const generatedQuestions = proposal.missions.reduce((total, group) => total + group.questions.length, 0);
   if (generatedQuestions !== state.aiInput.questionCount)
-    target.append(node('p', 'ai-issue', `AI returned ${generatedQuestions} questions; you requested ${state.aiInput.questionCount}.`));
+    target.append(node('p', 'small', `Preview: ${generatedQuestions} questions. Originally requested: ${state.aiInput.questionCount}. You may approve a different count.`));
   for (const [missionIndex, rawMission] of (Array.isArray(proposal.design?.missions) ? proposal.design.missions : []).entries()) {
-    const mission = rawMission && typeof rawMission === 'object' ? rawMission : {};
+    const mission = { ...(rawMission && typeof rawMission === 'object' ? rawMission : {}), activities: Array.isArray(rawMission?.activities) ? rawMission.activities : [] };
     const inspection = proposal.missions[missionIndex];
     const section = node('details', 'ai-mission');
     section.open = missionIndex === openMissionIndex;
@@ -584,12 +748,22 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
     missionCheckbox.type = 'checkbox';
     approval.append(missionCheckbox, node('span', '', 'Approve all questions'));
     section.append(approval);
+    const groupActions = node('div', 'button-row');
+    const addQuestion = node('button', '', 'Add question'); addQuestion.type = 'button'; addQuestion.disabled = mission.activities.length >= 4;
+    addQuestion.addEventListener('click', () => perform(() => mutateAiDesign(design => {
+      design.missions[missionIndex].activities.push({ type: 'single_choice', prompt: '', options: ['Option A', 'Option B'], answer: 'Option A',
+        sourceMatchPercent: null, sourceMatchReason: 'Added by faculty.' });
+    }, missionIndex)));
+    const removeSection = node('button', 'text-button', `Remove ${word}`); removeSection.type = 'button';
+    removeSection.addEventListener('click', () => perform(() => mutateAiDesign(design => { design.missions.splice(missionIndex, 1); }, Math.max(0, missionIndex - 1))));
+    groupActions.append(addQuestion, removeSection); section.append(groupActions);
     if (mission.story) section.append(node('p', 'small', mission.story));
     const editor = { mission: missionCheckbox, summary, heading, questions: [] };
     for (const [questionIndex, rawActivity] of (Array.isArray(mission.activities) ? mission.activities : []).entries()) {
       const activity = rawActivity && typeof rawActivity === 'object' ? rawActivity : {};
       const result = inspection.questions[questionIndex];
       const card = node('div', 'ai-question');
+      card.tabIndex = -1;
       const questionApproval = node('label', 'ai-approval');
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
@@ -598,15 +772,48 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
       checkbox.checked = eligible && selected.has(`${missionIndex}:${questionIndex}`);
       questionApproval.append(checkbox, node('span', '', `Approve question ${questionIndex + 1}`));
       card.append(questionApproval);
-      card.append(node('p', 'small', String(activity.type || 'Unknown type').replaceAll('_', ' ')));
+      card.append(node('p', 'small', questionTypes.find(type => type.id === activity.type)?.label || activity.type || 'Choose a type'));
       card.append(renderPrompt(activity.prompt || 'No question prompt', 'ai-prompt'));
-      if (Array.isArray(activity.options)) {
+      if (Array.isArray(activity.options) && activity.options.length) {
         const options = node('ol', 'ai-options');
         for (const option of activity.options) options.append(node('li', '', option));
         card.append(options);
       }
-      card.append(node('p', 'ai-answer', `Correct answer: ${answerPreview(activity.answer)}`));
-      card.append(node('p', 'ai-score', `Source match: ${result.sourceMatchPercent === null ? 'unavailable' : `${result.sourceMatchPercent}%`}`));
+      if (activity.type === 'code_writing' && result.ready) {
+        appendCodeExamples(card, activity);
+        const reference = node('details', 'ai-evidence'); reference.append(node('summary', '', 'Reference solution and grading tests'));
+        reference.append(renderPrompt(`\`\`\`${activity.language}\n${activity.referenceCode || ''}\n\`\`\``));
+        activity.tests.forEach((test, index) => {
+          reference.append(node('p', 'small', `Grading test ${index + 1} · Input`), node('pre', '', test.input || '(no input)'),
+            node('p', 'small', 'Expected output'), node('pre', '', test.output || '(empty output)'));
+        });
+        card.append(reference);
+        const check = node('button', '', 'Check reference solution'); check.type = 'button';
+        const checked = node('p', 'small'); checked.setAttribute('role', 'status');
+        check.addEventListener('click', () => perform(async () => {
+          check.disabled = true; checked.textContent = 'Checking reference solution…';
+          try {
+            const samples = [];
+            for (let offset = 0; offset < activity.tests.length; offset += 3) {
+              const config = { language: activity.language, starterCode: '', samples: activity.tests.slice(offset, offset + 3), comparison: activity.comparison };
+              const result = await request('/api/instructor/code/preview', { method: 'POST', data: { config, value: activity.referenceCode } });
+              samples.push(...result.samples);
+            }
+            checked.textContent = samples.every(sample => sample.matches) ? 'Reference solution passes all tests.'
+              : samples.map((sample, index) => `Test ${index + 1}: ${sample.matches ? 'passed' : `failed. ${sample.error || sample.output}`}`).join('\n');
+          } finally { check.disabled = false; }
+        }));
+        card.append(check, checked);
+      } else if (activity.type === 'matching') {
+        card.append(node('p', 'ai-answer', 'Correct matching pairs · faculty only'));
+        for (const pair of activity.pairs || []) card.append(node('p', 'small', `${pair.left} → ${pair.right}`));
+      } else if (['data_inspection', 'datatable_code'].includes(activity.type)) {
+        card.append(node('p', 'small', 'Table data'), node('pre', 'table-question-preview', (activity.table?.rows || []).map(row =>
+          (activity.table?.columns || []).map(column => `${column.label}: ${row[column.id]}`).join(' · ')).join('\n')));
+        card.append(node('p', 'ai-answer', 'Target settings · faculty only'), node('pre', 'table-question-preview',
+          Object.entries(activity.answer || {}).map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`).join('\n')));
+      } else card.append(node('p', 'ai-answer', `Correct answer: ${answerPreview(activity.answer)}`));
+      card.append(node('p', 'ai-score', `Source match: ${result.sourceMatchPercent === null ? 'unavailable' : `${result.sourceMatchPercent}%`} · AI estimate`));
       if (!result.ready) card.append(node('p', 'ai-issue', result.issue));
       if (result.sourceMatchReason || result.evidence?.quote) {
         const evidence = node('details', 'ai-evidence');
@@ -620,16 +827,22 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
       }
       if (!eligible) card.append(node('p', 'small', 'Question format needs correction before saving.'));
       card.append(questionEditor(activity, async edited => {
-        const nextDesign = structuredClone(state.aiProposal.design);
-        nextDesign.missions[missionIndex].activities[questionIndex] = edited;
-        const next = await request('/api/instructor/ai/inspect', { method: 'POST',
-          data: { ...state.aiInput, design: nextDesign } });
-        state.aiProposal = next;
-        renderAiPreview(next, new Set(selectedAiQuestions()), missionIndex);
-        queueAiWorkSave();
+        await mutateAiDesign(design => { design.missions[missionIndex].activities[questionIndex] = edited; }, missionIndex);
         message('Question updated. Check its format and answer before approval.');
       }));
-      editor.questions.push({ checkbox, eligible, ready: result.ready, sourceMatchPercent: result.sourceMatchPercent, activity });
+      const questionActions = node('div', 'button-row');
+      for (const [label, transform, disabled] of [
+        ['Move up', items => { [items[questionIndex - 1], items[questionIndex]] = [items[questionIndex], items[questionIndex - 1]]; }, questionIndex === 0],
+        ['Move down', items => { [items[questionIndex + 1], items[questionIndex]] = [items[questionIndex], items[questionIndex + 1]]; }, questionIndex === mission.activities.length - 1],
+        ['Duplicate question', items => items.splice(questionIndex + 1, 0, structuredClone(items[questionIndex])), mission.activities.length >= 4],
+        ['Remove question', items => items.splice(questionIndex, 1), false]
+      ]) {
+        const button = node('button', 'text-button', label); button.type = 'button'; button.disabled = disabled;
+        button.addEventListener('click', () => perform(() => mutateAiDesign(design => transform(design.missions[missionIndex].activities), missionIndex)));
+        questionActions.append(button);
+      }
+      card.append(questionActions);
+      editor.questions.push({ checkbox, card, section, eligible, ready: result.ready, sourceMatchPercent: result.sourceMatchPercent, activity });
       checkbox.addEventListener('change', () => { updateAiApprovals(); queueAiWorkSave(); });
       section.append(card);
     }
@@ -641,6 +854,9 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
     state.aiEditors.push(editor);
     target.append(section);
   }
+  const addSection = node('button', '', `Add ${word}`); addSection.type = 'button'; addSection.disabled = (proposal.design?.missions?.length ?? 0) >= 5;
+  addSection.addEventListener('click', () => perform(() => mutateAiDesign(design => { design.missions.push({ title: `New ${word}`, activities: [] }); }, proposal.design.missions.length)));
+  target.append(addSection);
   updateAiApprovals();
 }
 
@@ -658,6 +874,8 @@ $('ai-generate').addEventListener('click', () => perform(async () => {
     const input = {
       title: $('ai-title').value.trim(), subject: $('ai-subject').value.trim(),
       kind: $('ai-kind').value, difficulty: $('ai-difficulty').value,
+      questionMode: $('ai-question-mode').value, programmingLanguage: $('ai-programming-language').value,
+      ...($('ai-question-mode').value === 'mixed' ? { questionTypeCounts: positiveTypeCounts(readQuestionMix()) } : {}),
       durationMinutes: Number($('ai-duration').value), questionCount: Number($('ai-questions').value),
       missionCount: aiGroupCount(), customPrompt: $('ai-custom-prompt').value.trim(), source
     };
@@ -877,9 +1095,65 @@ async function loadClasses() {
   renderWorkflowState();
 }
 
+function renderActivityLibrary() {
+  const term = $('activity-search').value.trim().toLocaleLowerCase();
+  const status = $('activity-status').value, type = $('activity-type').value;
+  const matches = exam => (!term || `${exam.title} ${exam.subject || ''}`.toLocaleLowerCase().includes(term)) &&
+    (status === 'all' || exam.status === status) && (type === 'all' || kindOf(exam) === type);
+  const active = state.exams.filter(exam => !exam.archivedAt);
+  const latest = new Map();
+  for (const exam of active) if (exam.status === 'published' && !latest.has(exam.examId)) latest.set(exam.examId, exam.version);
+  const current = active.filter(exam => exam.status === 'draft' || exam.version === latest.get(exam.examId));
+  const history = state.exams.filter(exam => !current.includes(exam));
+  clear($('exam-library')); clear($('exam-history-list'));
+  const open = async (exam, destination) => {
+    const unsaved = titleChanged() || state.rulesDirty || $('package-json').value.trim() !== state.packageBaseline;
+    if (unsaved && !window.confirm('Open this activity and discard unsaved edits to the current activity?')) return;
+    state.selectedExam = exam; state.sources = []; invalidateValidation();
+    await refreshLibrary(); await loadSources();
+    showStep(destination === 'run' && !state.classes.length ? 'classes' : destination);
+  };
+  const renderRow = (exam, target) => {
+    const row = node('article', 'list-row');
+    row.classList.toggle('selected', examKey(exam) === examKey(state.selectedExam));
+    const text = node('div', 'library-item-copy');
+    text.append(node('strong', '', exam.title), node('span', '', `${kindLabel(exam)}${difficultyLabel(exam)} · v${exam.version}`),
+      node('span', `status-badge status-${exam.archivedAt ? 'archived' : exam.status}`, exam.archivedAt ? 'Archived draft' : exam.status === 'draft' ? 'Draft' : 'Published'));
+    const actions = node('div', 'button-row');
+    if (!exam.archivedAt) {
+      const view = node('button', '', exam.status === 'draft' ? 'Continue draft' : 'View activity');
+      view.type = 'button'; view.addEventListener('click', () => perform(() => open(exam, 'review'))); actions.append(view);
+      if (exam.status === 'published' && latest.get(exam.examId) === exam.version) {
+        const run = node('button', 'primary', 'Create run'); run.type = 'button';
+        run.addEventListener('click', () => perform(() => open(exam, 'run'))); actions.append(run);
+      }
+    }
+    if (exam.status === 'draft') {
+      const archive = node('button', 'text-button', exam.archivedAt ? 'Restore' : 'Archive'); archive.type = 'button';
+      archive.addEventListener('click', () => perform(async () => {
+        await request(`/api/instructor/assessments/${exam.examId}/${exam.version}/${exam.archivedAt ? 'restore' : 'archive'}`, { method: 'POST' });
+        state.sources = []; await refreshLibrary(); await loadSources();
+        message(exam.archivedAt ? 'Draft restored.' : 'Draft archived.');
+      })); actions.append(archive);
+    }
+    row.append(text, actions); target.append(row);
+  };
+  const visible = current.filter(matches), visibleHistory = history.filter(matches);
+  visible.forEach(exam => renderRow(exam, $('exam-library')));
+  if (!visible.length) $('exam-library').append(node('p', 'empty-state', current.length ? 'No activities match these filters. Try another name or clear the filters.' : 'Create your first activity to get started.'));
+  visibleHistory.forEach(exam => renderRow(exam, $('exam-history-list')));
+  $('activity-match-count').textContent = `${visible.length} of ${current.length} current activities`;
+  $('exam-history').hidden = !visibleHistory.length;
+  $('exam-history').querySelector('summary').textContent = `Older and archived versions (${visibleHistory.length})`;
+}
+
+for (const id of ['activity-search', 'activity-status', 'activity-type'])
+  $(id).addEventListener(id === 'activity-search' ? 'input' : 'change', renderActivityLibrary);
+
 async function refreshLibrary() {
   const exams = await request('/api/instructor/assessments');
   const runs = await request('/api/instructor/runs');
+  state.exams = exams;
   state.runs = runs;
   const active = exams.filter(exam => !exam.archivedAt);
   const latestPublished = new Map();
@@ -895,50 +1169,9 @@ async function refreshLibrary() {
   if (state.selectedExam) sessionStorage.setItem('facultyExamKey', examKey(state.selectedExam));
   else sessionStorage.removeItem('facultyExamKey');
   if (examKey(state.selectedExam) !== previousExam) invalidateValidation();
-  clear($('exam-library'));
-  clear($('exam-history-list'));
+  renderActivityLibrary();
 
-  const renderRow = (e, target) => {
-    const row = node('div', 'list-row');
-    row.classList.toggle('selected', state.selectedExam?.examId === e.examId && state.selectedExam?.version === e.version);
-    const text = node('div');
-    text.append(node('strong', '', e.title), node('span', '', `${kindLabel(e)}${difficultyLabel(e)} · v${e.version} · ${e.archivedAt ? 'archived draft' : e.status}`));
-    const actions = node('div', 'button-row');
-    if (!e.archivedAt) {
-      const select = node('button', '', examKey(e) === examKey(state.selectedExam) ? 'Selected' : 'Select');
-      select.type = 'button';
-      select.disabled = examKey(e) === examKey(state.selectedExam);
-      select.addEventListener('click', () => perform(async () => {
-        state.selectedExam = e;
-        state.sources = [];
-        invalidateValidation();
-        await refreshLibrary();
-        await loadSources();
-      }));
-      actions.append(select);
-    }
-    if (e.status === 'draft') {
-      const toggle = node('button', '', e.archivedAt ? 'Restore' : 'Archive');
-      toggle.type = 'button';
-      toggle.addEventListener('click', () => perform(async () => {
-        await request(`/api/instructor/assessments/${e.examId}/${e.version}/${e.archivedAt ? 'restore' : 'archive'}`, { method: 'POST' });
-        state.sources = [];
-        await refreshLibrary();
-        await loadSources();
-        message(e.archivedAt ? 'Draft restored.' : 'Draft archived.');
-      }));
-      actions.append(toggle);
-    }
-    row.append(text, actions);
-    target.append(row);
-  };
-  for (const e of current) renderRow(e, $('exam-library'));
-  if (!current.length) $('exam-library').append(node('p', 'small', 'No current activities.'));
-  for (const e of history) renderRow(e, $('exam-history-list'));
-  $('exam-history').hidden = history.length === 0;
-  $('exam-history').querySelector('summary').textContent = `Older and archived versions (${history.length})`;
-
-  const previousRun = $('results-run').value;
+  const previousRun = $('results-run').value || loadSelectedRun();
   clear($('results-run'));
   for (const run of runs) {
     const option = node('option', '', `${run.name} · v${run.version} · ${run.id.slice(0, 8)}`);
@@ -967,32 +1200,62 @@ async function refreshLibrary() {
   await loadClasses();
   renderWorkflowState();
   await perform(loadProctorAccess);
+  if (state.libraryReady && state.step === 'results') await loadResults();
 }
 
 function syncRunName() {
-  const run = state.runs.find(item => item.id === $('results-run').value);
+  const runId = $('results-run').value;
+  const run = state.runs.find(item => item.id === runId);
   $('results-run-name').value = run?.name || '';
   $('results-feedback-mode').textContent = run
     ? `${run.feedbackMode === 'graded' ? 'Graded' : 'Practice'} feedback · ${run.shuffleQuestions ? 'Questions shuffled within groups' : 'Question order fixed'}` : '';
+  $('publish-all-scores').classList.toggle('hidden', run?.feedbackMode !== 'graded');
+  $('publish-all-scores').disabled = state.results?.runId !== runId || !participationCounts(state.results.rows).readyToPublish;
+  renderRunAccess(runId);
 }
 
 $('results-run').addEventListener('change', () => {
+  if ($('results-run').value) saveSelectedRun($('results-run').value);
   syncRunName();
-  clear($('results-table'));
+  state.results = null; state.resultsEpoch++; state.publicationNotice = null;
+  clear($('results-table')); clear($('results-summary'));
+  $('results-publication-message').textContent = '';
+  $('results-status').value = 'all'; $('results-visibility').value = 'all'; $('results-search').value = '';
   $('student-review').classList.add('hidden');
   clear($('student-review-questions'));
   $('proctor-share-text').value = '';
   $('proctor-share').classList.add('hidden');
   perform(loadProctorAccess);
   renderWorkflowState();
+  perform(loadResults);
 });
+
+$('copy-saved-run-access').addEventListener('click', async () => {
+  const field = $('saved-run-access-text');
+  try { await navigator.clipboard.writeText(field.value); message('Student access details copied.'); }
+  catch { field.focus(); field.select(); document.execCommand('copy'); message('Student access details copied.'); }
+});
+$('reset-run-pin').addEventListener('click', () => perform(async () => {
+  const runId = $('results-run').value;
+  const pin = $('run-pin-recovery-value').value;
+  if (!runId) throw new Error('Select a run first.');
+  if (pin.length < 4 || pin.length > 80) throw new Error('Enter a PIN from 4 to 80 characters.');
+  await request(`/api/instructor/runs/${runId}/pin`, { method: 'PUT', data: { pin } });
+  const studentUrl = new URL('/app/student', window.location.href);
+  studentUrl.searchParams.set('run', runId);
+  saveRunAccess(runId, { url: studentUrl.href, pin });
+  $('run-pin-recovery-value').value = '';
+  renderRunAccess(runId);
+  message('Admission PIN updated. Copy the access details before refreshing or signing out.');
+}));
 
 for (const id of ['exam-title-input', 'results-run-name', 'package-json', 'new-package-json', 'run-name-field', 'run-pin-field', 'run-duration-days',
   'ai-title', 'ai-subject', 'ai-duration', 'ai-questions', 'ai-missions', 'ai-custom-prompt'])
   $(id).addEventListener('input', () => { renderWorkflowState(); if (state.aiProposal) updateAiApprovals(); });
 $('source-file').addEventListener('change', renderWorkflowState);
-for (const id of ['ai-source', 'ai-kind', 'ai-difficulty'])
-  $(id).addEventListener('change', () => { renderWorkflowState(); if (state.aiProposal) updateAiApprovals(); });
+for (const id of ['run-feedback-mode', 'run-shuffle-questions']) $(id).addEventListener('change', renderWorkflowState);
+for (const id of ['ai-source', 'ai-kind', 'ai-difficulty', 'ai-question-mode', 'ai-programming-language'])
+  $(id).addEventListener('change', () => { syncQuestionMix(); renderWorkflowState(); if (state.aiProposal) updateAiApprovals(); });
 
 $('save-run-name').addEventListener('click', () => perform(async () => {
   const runId = $('results-run').value;
@@ -1411,6 +1674,7 @@ function renderReview() {
     for (const activity of mission.activities ?? []) {
       const card = node('article', 'review-question');
       card.append(renderPrompt(activity.prompt, 'ai-prompt'));
+      if (activity.type === 'code_writing') appendCodeExamples(card, activity.publicConfig);
       const choices = activity.publicConfig?.options || activity.publicConfig?.items;
       if (Array.isArray(choices) && choices.length) {
         const list = node('ol', 'ai-options');
@@ -1553,7 +1817,7 @@ $('create-run').addEventListener('click', () => perform(async () => {
   const classId = $('run-class').value;
   if (!state.classes.some(item => item.id === classId)) throw new Error('Choose a saved class first.');
   const days = Number($('run-duration-days').value);
-  if (!Number.isInteger(days) || days < 1) throw new Error('Enter the number of days the run stays open.');
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw new Error('Enter a joining window from 1 to 365 days.');
   const payload = {
     examId: exam.examId, version: exam.version, name: $('run-name-field').value.trim(), pin: $('run-pin-field').value,
     feedbackMode: $('run-feedback-mode').value,
@@ -1572,15 +1836,35 @@ $('create-run').addEventListener('click', () => perform(async () => {
     const linkLabel = ['localhost', '127.0.0.1'].includes(studentUrl.hostname)
       ? 'Student activity (this computer only)' : 'Student activity';
     $('run-access-text').value = `${linkLabel}: ${studentUrl.href}\nRun ID: ${result.id}\nRun PIN: ${payload.pin}\nSign in with your School ID from the class roster.`;
+    const accessSaved = saveRunAccess(result.id, { url: studentUrl.href, pin: payload.pin });
     $('run-access').classList.remove('hidden');
-    message('Run created.');
+    message(accessSaved ? 'Run created.' : 'Run created, but browser storage is unavailable. Copy the access details now.');
     await refreshLibrary();
     $('results-run').value = result.id;
+    saveSelectedRun(result.id);
     syncRunName();
   } finally { state.runBusy = false; renderWorkflowState(); }
 }));
 
 $('load-results').addEventListener('click', () => perform(loadResults));
+$('publish-all-scores').addEventListener('click', () => perform(async () => {
+  const runId = $('results-run').value;
+  if (!runId) throw new Error('Select a run.');
+  if (!window.confirm('Publish scores for every student who has completed this run? Students still in progress will keep their scores hidden.')) return;
+  const button = $('publish-all-scores');
+  button.disabled = true;
+  try {
+    const result = await request(`/api/instructor/runs/${runId}/publish-scores`, { method: 'POST' });
+    const latest = await loadResults();
+    const stillHidden = latest.rows.filter(row => row.sessionId && !row.resultsReleased &&
+      ['submitted', 'expired'].includes(row.status)).length;
+    if (stillHidden) throw new Error('The server did not confirm the score release. Restart the app server and retry.');
+    publicationMessage(`Published ${result.publishedCount} completed ${result.publishedCount === 1 ? 'score' : 'scores'}. These students can now view their results.`, runId);
+  } catch (error) {
+    button.disabled = false;
+    throw error;
+  }
+}));
 
 async function loadProctorAccess() {
   const runId = $('results-run').value;
@@ -1601,13 +1885,16 @@ async function loadProctorAccess() {
 $('issue-proctor').addEventListener('click', () => perform(async () => {
   const runId = $('results-run').value;
   if (!runId || state.proctorBusy) return;
+  const code = $('proctor-code-field').value.trim();
+  if (code.length < 8 || code.length > 100) throw new Error('Choose a proctor code from 8 to 100 characters.');
   if ($('issue-proctor').textContent === 'Replace access code' &&
     !window.confirm('Replace this code? Signed-in proctors will lose access.')) return;
   state.proctorBusy = true;
   $('issue-proctor').disabled = true;
   $('revoke-proctor').disabled = true;
   try {
-    const access = await request(`/api/instructor/runs/${runId}/proctor-access`, { method: 'POST' });
+    const access = await request(`/api/instructor/runs/${runId}/proctor-access`, { method: 'POST', data: { code } });
+    $('proctor-code-field').value = '';
     await loadProctorAccess();
     if ($('results-run').value !== runId) return;
     const url = new URL('/app/proctor', window.location.href);
@@ -1755,40 +2042,132 @@ $('close-student-review').addEventListener('click', () => {
 
 async function loadResults() {
   const runId = $('results-run').value;
-  if (!runId) throw new Error('Select a run.');
-  const result = await request(`/api/instructor/runs/${runId}/results`);
-  const target = $('results-table');
-  clear(target);
-  const label = result.name === result.title ? `${result.title} · v${result.version}`
-    : `${result.name} · ${result.title} v${result.version}`;
-  target.append(node('p', 'small', `${label}${result.className ? ` · ${result.className}` : ''} · Maximum ${result.maxPoints} pts`));
-  const wrap = node('div', 'table-wrap'), table = node('table');
-  const head = node('thead'), tr = node('tr');
-  for (const label of ['Candidate', 'Section', 'Status', 'Score', 'Answers', 'Recovery']) tr.append(node('th', '', label));
-  head.append(tr);
-  table.append(head);
-  const tbody = node('tbody');
-  for (const row of result.rows) {
-    const line = node('tr');
-    for (const cell of [`${row.displayName} (${row.candidateId})`, row.section, row.status, `${row.score} / ${result.maxPoints}`]) {
-      line.append(node('td', '', cell));
+  const epoch = ++state.resultsEpoch;
+  if (!runId) {
+    state.results = null;
+    clear($('results-summary')); clear($('results-table'));
+    $('results-filters').classList.add('hidden');
+    $('publish-all-scores').classList.add('hidden');
+    $('results-publication-message').textContent = '';
+    return null;
+  }
+  $('results-table').setAttribute('aria-busy', 'true');
+  $('load-results').disabled = true;
+  $('publish-all-scores').disabled = true;
+  try {
+    const result = await request(`/api/instructor/runs/${runId}/results`);
+    if (epoch === state.resultsEpoch && $('results-run').value === runId) {
+      state.results = result;
+      renderResults();
     }
-    const answerCell = node('td');
-    const reviewButton = node('button', '', 'Review');
-    reviewButton.type = 'button'; reviewButton.disabled = !row.sessionId;
+    return result;
+  } catch (error) {
+    if (epoch === state.resultsEpoch) {
+      state.results = null;
+      clear($('results-table')); clear($('results-summary'));
+      $('results-table').append(node('p', 'inline-error', 'Results could not be loaded. Select Refresh results to try again.'));
+      $('results-filters').classList.add('hidden');
+    }
+    throw error;
+  } finally {
+    if (epoch === state.resultsEpoch) {
+      $('results-table').setAttribute('aria-busy', 'false');
+      $('load-results').disabled = false;
+    }
+  }
+}
+
+function publicationMessage(text, runId = $('results-run').value) {
+  state.publicationNotice = { runId, text };
+  if ($('results-run').value === runId) $('results-publication-message').textContent = text;
+}
+
+function renderResults() {
+  const result = state.results;
+  if (!result || result.runId !== $('results-run').value) return;
+  const runId = result.runId;
+  const counts = participationCounts(result.rows);
+  const summary = $('results-summary'); clear(summary);
+  for (const [key, label] of [...Object.entries(attemptLabels), ['hidden', 'Scores hidden']]) {
+    const card = node('button', 'summary-stat'); card.type = 'button';
+    card.dataset.status = key;
+    card.append(node('strong', '', counts[key]), node('span', '', label));
+    card.setAttribute('aria-pressed', String(key === 'hidden'
+      ? $('results-visibility').value === 'hidden'
+      : $('results-status').value === key && $('results-visibility').value === 'all'));
+    card.addEventListener('click', () => {
+      const active = card.getAttribute('aria-pressed') === 'true';
+      $('results-status').value = !active && key !== 'hidden' ? key : 'all';
+      $('results-visibility').value = !active && key === 'hidden' ? 'hidden' : 'all';
+      renderResults();
+      $('results-summary').querySelector(`[data-status="${key}"]`)?.focus();
+    }); summary.append(card);
+  }
+  $('results-filters').classList.remove('hidden');
+  const publishAll = $('publish-all-scores');
+  publishAll.classList.toggle('hidden', result.feedbackMode !== 'graded');
+  publishAll.textContent = `Publish ${counts.readyToPublish} completed ${counts.readyToPublish === 1 ? 'score' : 'scores'}`;
+  publishAll.disabled = !counts.readyToPublish;
+  $('results-publication-message').textContent = state.publicationNotice?.runId === runId ? state.publicationNotice.text
+    : result.feedbackMode === 'practice' ? 'Practice run · Students see scores immediately.'
+    : counts.readyToPublish ? `${counts.readyToPublish} completed ${counts.readyToPublish === 1 ? 'score is' : 'scores are'} ready to publish.`
+    : counts.hidden ? 'Scores for students still in progress stay hidden until they finish and you publish, or the run closes.'
+    : 'No completed scores are waiting to be published.';
+  const target = $('results-table'); clear(target);
+  const rows = filterResultRows(result.rows, {
+    search: $('results-search').value, status: $('results-status').value, visibility: $('results-visibility').value
+  });
+  target.append(node('p', 'small', `${rows.length} of ${result.rows.length} students${result.className ? ` · ${result.className}` : ''} · Maximum ${result.maxPoints} points`));
+  const wrap = node('div', 'table-wrap results-table-wrap');
+  wrap.tabIndex = 0; wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Student results. Scroll horizontally for more columns.');
+  const table = node('table', 'results-data-table');
+  const caption = node('caption', 'sr-only', `${result.name} · ${result.title} v${result.version}`); table.append(caption);
+  const head = node('thead'), tr = node('tr');
+  for (const label of ['Student', 'Section', 'Attempt', 'Score', 'Score visibility', 'Actions']) {
+    const th = node('th', '', label); th.scope = 'col'; tr.append(th);
+  }
+  head.append(tr); table.append(head);
+  const tbody = node('tbody');
+  for (const row of rows) {
+    const line = node('tr');
+    const identity = node('th', 'student-identity'); identity.scope = 'row';
+    identity.append(node('strong', '', row.displayName), node('small', '', row.candidateId));
+    const attempt = node('td'); attempt.append(node('span', `status-badge status-${row.status}`, attemptLabels[row.status] || row.status));
+    line.append(identity, node('td', '', row.section), attempt, node('td', 'score-cell', row.sessionId ? `${row.score} / ${result.maxPoints}` : '—'));
+    const releaseCell = node('td');
+    const visible = !!row.sessionId && row.resultsReleased;
+    releaseCell.append(node('span', `status-badge ${visible ? 'status-published' : ''}`, !row.sessionId ? 'No attempt' : visible ? 'Visible to student' : 'Hidden'));
+    if (row.sessionId && !row.resultsReleased && ['submitted', 'expired'].includes(row.status)) {
+      const publish = node('button', 'text-button', 'Publish score'); publish.type = 'button';
+      publish.setAttribute('aria-label', `Publish score for ${row.displayName}`);
+      publish.addEventListener('click', () => perform(async () => {
+        publish.disabled = true; publish.textContent = 'Publishing score…';
+        try {
+          await request(`/api/instructor/runs/${runId}/students/${encodeURIComponent(row.candidateId)}/publish-scores`, { method: 'POST' });
+          const latest = await loadResults();
+          if (!latest.rows.find(item => item.candidateId === row.candidateId)?.resultsReleased)
+            throw new Error('The server did not confirm the score release. Refresh results and retry.');
+          publicationMessage(`Score published for ${row.displayName}. It is now visible to this student.`, runId);
+        } catch (error) {
+          publish.disabled = false; publish.textContent = 'Publish score'; throw error;
+        }
+      })); releaseCell.append(publish);
+    }
+    line.append(releaseCell);
+    const actionCell = node('td', 'result-row-actions');
+    const reviewButton = node('button', '', 'Review answers'); reviewButton.type = 'button'; reviewButton.disabled = !row.sessionId;
+    reviewButton.setAttribute('aria-label', `Review answers for ${row.displayName}`);
     reviewButton.addEventListener('click', () => perform(async () => {
       const review = await request(`/api/instructor/runs/${runId}/students/${encodeURIComponent(row.candidateId)}`);
-      renderStudentReview(review);
-      $('student-review').scrollIntoView({ block: 'start' });
-    }));
-    answerCell.append(reviewButton); line.append(answerCell);
-    const recoveryCell = node('td');
+      if ($('results-run').value !== runId) return;
+      renderStudentReview(review); $('student-review').scrollIntoView({ block: 'start' });
+    })); actionCell.append(reviewButton);
     const runOpen = Date.now() < Date.parse(result.closesAt);
     const canExtend = row.sessionId && runOpen && ['in_progress', 'expired'].includes(row.status);
     const canReopen = row.sessionId && runOpen && ['submitted', 'expired'].includes(row.status);
     if (canExtend || canReopen) {
-      const details = node('details', 'student-recovery');
-      details.append(node('summary', '', 'Recovery'));
+      const details = node('details', 'student-recovery row-more');
+      const more = node('summary', '', 'More'); more.setAttribute('aria-label', `More actions for ${row.displayName}`); details.append(more);
       const addForm = (action, label) => {
         const form = node('form', 'recovery-form');
         const minutesLabel = node('label', '', 'Minutes');
@@ -1818,15 +2197,20 @@ async function loadResults() {
       };
       if (canExtend) addForm('extend', 'Add time');
       if (canReopen) addForm('reopen', 'Reopen attempt');
-      recoveryCell.append(details);
-    } else recoveryCell.append(node('span', 'small', '—'));
-    line.append(recoveryCell);
-    tbody.append(line);
+
+      actionCell.append(details);
+    }
+    line.append(actionCell); tbody.append(line);
   }
-  table.append(tbody);
-  wrap.append(table);
-  target.append(wrap);
+  if (!rows.length) {
+    const row = node('tr'), cell = node('td', 'empty-state', result.rows.length ? 'No students match these filters.' : 'No students in this run.');
+    cell.colSpan = 6; row.append(cell); tbody.append(row);
+  }
+  table.append(tbody); wrap.append(table); target.append(wrap);
 }
+
+for (const id of ['results-search', 'results-status', 'results-visibility'])
+  $(id).addEventListener(id === 'results-search' ? 'input' : 'change', renderResults);
 
 $('export-results').addEventListener('click', () => perform(async () => {
   const runId = $('results-run').value;
@@ -1841,4 +2225,8 @@ $('export-results').addEventListener('click', () => perform(async () => {
 }));
 
 await perform(loadConfig);
+try {
+  await request('/api/instructor/session', { silent: true });
+  state.instructorAuthenticated = true;
+} catch { /* Sign in to start a new faculty session. */ }
 showInstructor();

@@ -4,8 +4,10 @@
   --warm-paper: #F8F6F0;
   --dark-ink: #242722;
   --border-muted: #dcd8ce;
+  --surface: #fffefa;
+  --border-control: #999f96;
   --radius: 0px;
-  font-family: Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--dark-ink);
   background: var(--warm-paper);
 }
@@ -28,8 +30,8 @@ button, input, select, textarea {
 
 button {
   cursor: pointer;
-  background: var(--warm-paper);
-  border: 1px solid var(--dark-ink);
+  background: var(--surface);
+  border: 1px solid var(--border-control);
   padding: 0.6rem 0.95rem;
   font-weight: 600;
   transition: background-color 0.15s ease;
@@ -40,7 +42,7 @@ button:hover, button:focus-visible {
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
@@ -142,9 +144,9 @@ h3 {
 }
 
 .card {
-  border: 1px solid var(--dark-ink);
+  border: 1px solid var(--border-muted);
   padding: 1.5rem;
-  background: var(--warm-paper);
+  background: var(--surface);
 }
 
 .card h2 {
@@ -189,18 +191,36 @@ label {
   display: grid;
   gap: 0.35rem;
   font-weight: 600;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
 }
 
 .check-row { display: flex; align-items: center; gap: 0.55rem; }
 .check-row input { flex: 0 0 auto; margin: 0; }
 
 input, select, textarea {
-  border: 1px solid var(--dark-ink);
-  background: var(--warm-paper);
+  border: 1px solid var(--border-control);
+  background: var(--surface);
   padding: 0.55rem 0.75rem;
   min-width: 0;
 }
+
+.password-field { position: relative; display: flex; width: 100%; min-width: 0; }
+.password-field input { width: 100%; padding-inline-end: 2.8rem; }
+.password-toggle {
+  position: absolute;
+  inset-block: 1px;
+  inset-inline-end: 1px;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  padding: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--dark-ink);
+}
+.password-toggle:hover,
+.password-toggle:focus-visible { background: var(--solar-yellow); }
+.password-toggle .ui-icon { width: 1.15rem; height: 1.15rem; }
 
 textarea {
   width: 100%;
@@ -275,7 +295,7 @@ input[type="checkbox"], input[type="radio"] {
 }
 
 .small {
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   color: #444;
 }
 
@@ -335,7 +355,7 @@ input[type="checkbox"], input[type="radio"] {
 
 .faculty-main {
   min-width: 0;
-  max-width: 1100px;
+  max-width: 1400px;
   width: 100%;
   padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 3rem;
 }
@@ -579,8 +599,8 @@ table {
 
 th, td {
   text-align: left;
-  border-bottom: 1px solid var(--dark-ink);
-  padding: 0.55rem;
+  border-bottom: 1px solid var(--border-muted);
+  padding: 0.75rem;
 }
 
 th {
@@ -1155,3 +1175,14 @@ details.json-collapse[open] summary {
   .exam-footer-actions { margin-left: auto; }
   .finish-early[open] { max-width: 190px; }
 }
+
+.coding-examples,.coding-results { display:grid; gap:1rem; }
+.coding-sample { border:1px solid var(--border, #d7d4cc); padding:1rem; min-width:0; }
+.coding-sample pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#f5f4ef; padding:.75rem; color:#242c26; user-select:text; }
+.coding-error { color:#9b2929; white-space:pre-wrap; overflow-wrap:anywhere; }
+
+[hidden] { display: none !important; }
+.matching-editor-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:.75rem; align-items:end; }
+.table-question-preview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:24rem; overflow:auto; }
+#ai-question-mix { min-width:0; padding:1rem; border:1px solid var(--border-muted); }
+@media (max-width:600px) { .matching-editor-row { grid-template-columns:minmax(0,1fr); } }

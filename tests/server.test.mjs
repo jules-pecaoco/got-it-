@@ -6,6 +6,7 @@ import { zipSync, strToU8 } from 'fflate';
 process.env.NODE_ENV = 'test';
 process.env.DATA_FILE = ':memory:';
 process.env.DEMO_MODE = '1';
+process.env.INSTRUCTOR_PASSWORD = 'demo-instructor';
 const { server, store } = await import('../src/server.mjs');
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -16,6 +17,86 @@ const call = async (path, { method = 'GET', data, token, headers: extraHeaders =
   return { response, payload: response.headers.get('content-type')?.includes('json') ? await response.json() : await response.text() };
 };
 test.after(() => { server.close(); store.close(); });
+
+test('coding HTTP routes protect private tests, ignore forged expected output, and preserve graded feedback', async () => {
+  const source = { filename: 'coding.md', content: 'Read two integers and print their sum. Use standard input and output and handle negative values and zero. Verify more than one pair of numbers.' };
+  const generated = buildGeneratedPackage({ title: 'Coding HTTP check', subject: 'Python', kind: 'activity', durationMinutes: 30, missionCount: 1, source },
+    { missions: [{ title: 'Sum', activities: [{ type: 'code_writing', language: 'python', prompt: 'Read two integers. Print their sum.',
+      starterCode: '# TODO: read and add', samples: [{ input: '2 3', output: '5' }], comparison: { mode: 'whitespace' },
+      referenceCode: 'a,b=map(int,input().split())\nprint(a+b)', tests: [{ input: '2 3', output: '5' }, { input: '-8 1', output: '-7' }],
+      evidenceQuote: 'Read two integers and print their sum.', location: 'Source' }] }] });
+  store.importDraft(generated.public, generated.private); store.addSource(generated.public.examId, 1, source); store.publish(generated.public.examId, 1);
+  const run = store.createRun({ examId: generated.public.examId, version: 1, pin: '2468', feedbackMode: 'graded',
+    opensAt: new Date(Date.now() - 1000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
+    roster: [{ candidateId: 'CODE-HTTP', displayName: 'Code Student', section: 'A' }] });
+  const joined = (await call('/api/auth/student/join', { method: 'POST', data: { runId: run.id, candidateId: 'CODE-HTTP', pin: '2468' } })).payload.data;
+  const path = '/api/me/activities/m1-q1';
+  assert.equal((await call(`${path}/preview`, { method: 'POST', data: { value: 'solution' } })).response.status, 401);
+  assert.equal((await call('/api/instructor/code/preview', { method: 'POST', token: joined.token, data: {} })).response.status, 401);
+  const originalRunner = store.codeRunner;
+  let calls = 0;
+  store.codeRunner = async (_language, _code, input) => { calls++; return { output: String(input.split(' ').map(Number).reduce((a,b) => a+b)), error: '', succeeded: true }; };
+  try {
+    const mission = (await call('/api/me/missions/mission-1', { token: joined.token })).payload.data;
+    assert.doesNotMatch(JSON.stringify(mission), /referenceCode|"criteria"|-8 1/);
+    const preview = await call(`${path}/preview`, { method: 'POST', token: joined.token, data: { value: 'solution', config: { samples: [{ input: '-8 1', output: 'fake' }] } } });
+    assert.equal(preview.response.status, 200); assert.equal(preview.payload.data.samples[0].expectedOutput, '5'); assert.equal(calls, 1);
+    assert.doesNotMatch(JSON.stringify(preview.payload), /-8 1/);
+    const submitted = await call(`${path}/submit`, { method: 'POST', token: joined.token, data: { value: 'solution', output: 'forged' }, headers: { 'Idempotency-Key': 'coding-http-request-0001' } });
+    assert.equal(submitted.response.status, 200); assert.equal(submitted.payload.data.saved, true);
+    assert.equal(submitted.payload.data.score, undefined); assert.equal(submitted.payload.data.result, undefined); assert.equal(calls, 3);
+    assert.equal(store.score(joined.session.id), 10);
+    const queued = await call(`${path}/submit`, { method: 'POST', token: joined.token, data: { value: 'solution' }, headers: { Prefer: 'respond-async', 'Idempotency-Key': 'coding-http-queued-0002' } });
+    assert.equal(queued.response.status, 202);
+    const jobPath = `/api/me/coding-jobs/${queued.payload.data.jobId}`;
+    assert.equal((await call(jobPath)).response.status, 401);
+    let job;
+    for (let tries = 0; tries < 100; tries++) {
+      job = await call(jobPath, { token: joined.token });
+      if (job.payload.data.status === 'done') break;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(job.payload.data.status, 'done');
+    assert.equal(job.payload.data.result.saved, true); assert.equal(job.payload.data.result.score, undefined);
+    await call('/api/me/finalize', { method: 'POST', token: joined.token, data: {} });
+    assert.equal((await call(`${path}/preview`, { method: 'POST', token: joined.token, data: { value: 'solution' } })).response.status, 403);
+  } finally { store.codeRunner = originalRunner; }
+});
+
+test('public assets revalidate while readiness and API responses remain uncached', async () => {
+  const first = await fetch(base + '/student.js');
+  assert.equal(first.status, 200); const etag = first.headers.get('etag'); assert.ok(etag);
+  const cached = await fetch(base + '/student.js', { headers: { 'If-None-Match': etag } });
+  assert.equal(cached.status, 304);
+  const ready = await fetch(base + '/api/ready'); assert.equal(ready.status, 200); assert.equal(ready.headers.get('cache-control'), 'no-store');
+});
+
+test('student readiness validates access without starting a timer or rotating an existing session', async () => {
+  const run = store.createRun({
+    examId: 'garden-demo', version: 1, name: 'Readiness check', pin: '7291', feedbackMode: 'graded',
+    opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 3600_000).toISOString(),
+    roster: [{ candidateId: 'READY-001', displayName: 'Readiness Student', section: 'QA' }]
+  });
+  const credentials = { runId: run.id, candidateId: 'READY-001', pin: '7291' };
+  const preview = await call('/api/auth/student/preview', { method: 'POST', data: credentials });
+  assert.equal(preview.response.status, 200);
+  assert.equal(preview.payload.data.status, 'not_started');
+  assert.equal(preview.payload.data.feedbackMode, 'graded');
+  assert.equal(preview.payload.data.questionCount, 2);
+  assert.equal(preview.payload.data.durationMinutes, store.getExam('garden-demo', 1).public.settings.durationMinutes);
+  assert.doesNotMatch(JSON.stringify(preview.payload.data), /gradingRuleId|"answer"|"rules"|"token"|"startedAt"|"deadlineAt"/);
+  assert.equal(store.results(run.id).rows[0].sessionId, null);
+  assert.equal((await call('/api/auth/student/preview', { method: 'POST', data: { ...credentials, pin: 'wrong' } })).response.status, 401);
+  const joined = (await call('/api/auth/student/join', { method: 'POST', data: credentials })).payload.data;
+  const resumed = (await call('/api/auth/student/preview', { method: 'POST', data: credentials })).payload.data;
+  assert.equal(resumed.resumed, true);
+  assert.equal(resumed.status, 'in_progress');
+  const session = (await call('/api/me/session', { token: joined.token })).payload.data;
+  assert.equal(session.deadlineAt, joined.session.deadlineAt);
+  assert.equal(session.startedAt, joined.session.startedAt);
+  assert.equal(session.submittedCount, 0);
+  assert.equal(session.questionCount, 2);
+});
 
 test('candidate API protects private rules, persists score and finalizes', async () => {
   const demo = (await call('/api/demo')).payload.data;
@@ -115,6 +196,68 @@ test('graded runs save answers without revealing results until the run closes', 
   assert.equal(released.payload.data.score, 50);
   const resumed = await call('/api/auth/student/join', { method: 'POST', data: { runId, candidateId: 'G-001', pin: '4321' } });
   assert.equal(resumed.payload.data.session.score, 50);
+});
+
+test('individual and bulk score publication reach students before run close without releasing active attempts', async () => {
+  const instructor = store.loginInstructor('demo-instructor', 'demo-instructor').token;
+  const run = store.createRun({
+    examId: 'garden-demo', version: 1, name: 'Published score visibility', pin: '4321', feedbackMode: 'graded',
+    opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 3600_000).toISOString(),
+    roster: ['FINISHED', 'EXPIRED', 'ACTIVE', 'UNSTARTED'].map(candidateId => ({ candidateId, displayName: candidateId, section: 'QA' }))
+  });
+  const candidates = {};
+  for (const candidateId of ['FINISHED', 'EXPIRED', 'ACTIVE']) {
+    const joined = await call('/api/auth/student/join', { method: 'POST', data: { runId: run.id, candidateId, pin: '4321' } });
+    assert.equal(joined.response.status, 200);
+    candidates[candidateId] = joined.payload.data;
+  }
+  const finished = candidates.FINISHED;
+  const mission = (await call(`/api/me/missions/${finished.session.order[0].id}`, { token: finished.token })).payload.data;
+  const activity = mission.activities[0];
+  const answer = await call(`/api/me/activities/${activity.id}/submit`, {
+    method: 'POST', token: finished.token,
+    data: activity.type === 'numeric_entry' ? { value: 12, unit: 'm2' } : { value: 'b' }
+  });
+  assert.equal(answer.response.status, 200);
+  await call('/api/me/finalize', { method: 'POST', token: finished.token });
+  store.db.prepare('UPDATE sessions SET deadline_at=? WHERE id=?')
+    .run(new Date(Date.now() - 1000).toISOString(), candidates.EXPIRED.session.id);
+  for (const { token } of Object.values(candidates)) {
+    const hidden = (await call('/api/me/results', { token })).payload.data;
+    assert.equal(hidden.resultsReleased, false);
+    assert.equal(Object.hasOwn(hidden, 'score'), false);
+  }
+
+  const publishPath = `/api/instructor/runs/${run.id}/students/FINISHED/publish-scores`;
+  assert.equal((await call(publishPath, { method: 'POST', token: finished.token })).response.status, 401);
+  assert.equal((await call(`/api/instructor/runs/${run.id}/students/ACTIVE/publish-scores`, { method: 'POST', token: instructor })).response.status, 409);
+  assert.equal((await call(`/api/instructor/runs/${run.id}/students/UNSTARTED/publish-scores`, { method: 'POST', token: instructor })).response.status, 404);
+  assert.equal((await call(publishPath, { method: 'POST', token: instructor })).payload.data.resultsReleased, true);
+  for (const path of ['/api/me/results', '/api/me/session']) {
+    const visible = (await call(path, { token: finished.token })).payload.data;
+    assert.equal(visible.resultsReleased, true);
+    assert.equal(visible.score, 50);
+  }
+  const resumed = await call('/api/auth/student/join', { method: 'POST', data: { runId: run.id, candidateId: 'FINISHED', pin: '4321' } });
+  assert.equal(resumed.payload.data.resumed, true);
+  assert.equal(resumed.payload.data.session.score, 50);
+  assert.equal(resumed.payload.data.session.deadlineAt, finished.session.deadlineAt);
+
+  const bulkPath = `/api/instructor/runs/${run.id}/publish-scores`;
+  assert.equal((await call(bulkPath, { method: 'POST', token: instructor })).payload.data.publishedCount, 1);
+  const expired = (await call('/api/me/results', { token: candidates.EXPIRED.token })).payload.data;
+  assert.equal(expired.status, 'expired');
+  assert.equal(expired.resultsReleased, true);
+  assert.equal(expired.score, 0);
+  const active = (await call('/api/me/results', { token: candidates.ACTIVE.token })).payload.data;
+  assert.equal(active.resultsReleased, false);
+  assert.equal(Object.hasOwn(active, 'score'), false);
+  assert.equal((await call(bulkPath, { method: 'POST', token: instructor })).payload.data.publishedCount, 0);
+
+  await call(`/api/instructor/runs/${run.id}/students/FINISHED/scores/${activity.id}`, {
+    method: 'PUT', token: instructor, data: { points: 25, reason: 'Reviewed partial credit' }
+  });
+  assert.equal((await call('/api/me/results', { token: resumed.payload.data.token })).payload.data.score, 25);
 });
 
 test('instructor results and CSV show roster identity and server score', async () => {
@@ -253,7 +396,7 @@ test('student and faculty endpoints are separate and the panel is removed', asyn
   assert.match(faculty.payload, /id="ai-questions"/);
   assert.match(faculty.payload, /Package JSON/);
   assert.match(faculty.payload, /Answer key \(faculty only\)/);
-  assert.match(faculty.payload, /aria-label="Faculty workflow"/);
+  assert.match(faculty.payload, /aria-label="Faculty workspace"/);
   assert.match(faculty.payload, /id="proctor-access"/);
   for (const step of ['exams', 'rules', 'sources', 'review', 'classes', 'run', 'results'])
     assert.match(faculty.payload, new RegExp(`data-step="${step}"`));
@@ -274,7 +417,7 @@ test('faculty-issued proctor codes allow only read-only monitoring of their run'
   const runId = runs[0].id;
   const accessPath = `/api/instructor/runs/${runId}/proctor-access`;
   assert.equal((await call(accessPath)).response.status, 401);
-  const issued = await call(accessPath, { method: 'POST', token: instructor });
+  const issued = await call(accessPath, { method: 'POST', token: instructor, data: { code: 'monitor-first-test-code' } });
   assert.equal(issued.response.status, 200);
   const code = issued.payload.data.code;
   assert.ok(code.length >= 20);
@@ -290,7 +433,7 @@ test('faculty-issued proctor codes allow only read-only monitoring of their run'
   assert.equal((await call('/api/instructor/runs', { token: proctor })).response.status, 401);
   assert.equal((await call('/api/me/session', { token: proctor })).response.status, 401);
   assert.equal((await call(accessPath, { method: 'DELETE', token: proctor })).response.status, 401);
-  const replacement = await call(accessPath, { method: 'POST', token: instructor });
+  const replacement = await call(accessPath, { method: 'POST', token: instructor, data: { code: 'monitor-replacement-test-code' } });
   assert.notEqual(replacement.payload.data.code, code);
   assert.equal((await call('/api/proctor/run', { token: proctor })).response.status, 401);
   assert.equal((await call('/api/auth/proctor/join', { method: 'POST', data: { runId, code } })).response.status, 401);

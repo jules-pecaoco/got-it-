@@ -156,7 +156,7 @@ test('proctor access is scoped to a run and exposes progress without answers or 
   const { store, run } = setup('garden');
   try {
     assert.equal(store.proctorAccess(run.id).enabled, false);
-    const access = store.issueProctorAccess(run.id);
+    const access = store.issueProctorAccess(run.id, 'monitor-first-code');
     assert.equal(store.proctorAccess(run.id).enabled, true);
     assert.throws(() => store.loginProctor(run.id, '4242'), /Invalid run ID or proctor code/);
     const proctor = store.loginProctor(run.id, access.code);
@@ -174,13 +174,28 @@ test('proctor access is scoped to a run and exposes progress without answers or 
     assert.equal(view.counts.in_progress, 1);
     assert.equal(view.rows.find(row => row.candidateId === 'A').answeredCount, 1);
     assert.ok(view.rows.find(row => row.candidateId === 'A').lastSubmissionAt);
-    const replacement = store.issueProctorAccess(run.id);
+    const replacement = store.issueProctorAccess(run.id, 'monitor-replacement-code');
     assert.throws(() => store.requireProctor(proctor.token), /sign-in required/);
     assert.throws(() => store.loginProctor(run.id, access.code), /Invalid run ID or proctor code/);
     assert.equal(store.requireProctor(store.loginProctor(run.id, replacement.code).token), run.id);
     store.revokeProctorAccess(run.id);
     assert.equal(store.proctorAccess(run.id).enabled, false);
     assert.throws(() => store.loginProctor(run.id, replacement.code), /Invalid run ID or proctor code/);
+  } finally { store.close(); }
+});
+
+test('readiness reports effective question retry rules and rejects a closed run before creating an attempt', () => {
+  const { store, run } = setup('garden');
+  try {
+    const credentials = { runId: run.id, candidateId: 'A', pin: '4242' };
+    const preview = store.previewJoin(credentials);
+    assert.equal(preview.retryPolicies.reduce((sum, policy) => sum + policy.questionCount, 0), preview.questionCount);
+    assert.ok(preview.availableSeconds > 0);
+    assert.throws(() => store.previewJoin({ ...credentials, candidateId: 'not-in-roster' }), /Invalid run/);
+    assert.equal(store.results(run.id).rows.find(row => row.candidateId === 'A').sessionId, null);
+    store.db.prepare('UPDATE runs SET closes_at=? WHERE id=?').run(new Date(Date.now() - 1000).toISOString(), run.id);
+    assert.throws(() => store.previewJoin(credentials), /not open/);
+    assert.equal(store.results(run.id).rows.find(row => row.candidateId === 'A').sessionId, null);
   } finally { store.close(); }
 });
 

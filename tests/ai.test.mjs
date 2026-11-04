@@ -155,7 +155,7 @@ test('generated citations are corrected to the slide containing the exact passag
 });
 
 test('unsupported generated question is repaired before the draft is returned', async () => {
-  const invalid = { missions: [{ title: 'Code attempt', activities: [{ ...design.missions[0].activities[0], type: 'datatable_code' }] }] };
+  const invalid = { missions: [{ title: 'Code attempt', activities: [{ ...design.missions[0].activities[0], type: 'essay' }] }] };
   let calls = 0;
   const fetcher = async (...args) => provider(++calls === 1 ? invalid : design)(...args);
   const draft = await generateExam(request, { apiKey: 'test-key', fetcher });
@@ -166,7 +166,7 @@ test('unsupported generated question is repaired before the draft is returned', 
 
 test('one bad question can be omitted while valid questions remain in every mission', async () => {
   const mixed = { missions: [{ title: 'Mixed', activities: [
-    { ...design.missions[0].activities[0], type: 'datatable_code' },
+    { ...design.missions[0].activities[0], type: 'essay' },
     design.missions[0].activities[0]
   ] }] };
   const draft = await generateExam(request, { apiKey: 'test-key', fetcher: provider(mixed) });
@@ -178,7 +178,7 @@ test('one bad question can be omitted while valid questions remain in every miss
 test('faculty preview keeps invalid questions visible for individual review', async () => {
   const invalid = { missions: [{ title: 'Review', activities: [
     { ...design.missions[0].activities[0], sourceMatchPercent: 95 },
-    { ...design.missions[0].activities[0], type: 'datatable_code' },
+    { ...design.missions[0].activities[0], type: 'essay' },
     { ...design.missions[0].activities[0], evidenceQuote: 'Invented quote about the lesson.', sourceMatchPercent: 35 }
   ] }] };
   const preview = await proposeExam(request, { apiKey: 'test-key', fetcher: provider(invalid) });
@@ -200,6 +200,6 @@ test('faculty can approve a low-match question without supplying a quote rationa
   assert.match(approved.public.missions[0].activities[1].manualRationale, /Faculty approved/);
   assert.deepEqual(validatePackage(approved.public, approved.private), []);
   assert.throws(() => buildApprovedPackage({ ...request, missions: [{ ...design.missions[0], activities: [
-    { ...design.missions[0].activities[0], type: 'datatable_code' }
+    { ...design.missions[0].activities[0], type: 'essay' }
   ] }] }), /unsupported type/);
 });

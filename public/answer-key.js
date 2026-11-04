@@ -3,6 +3,8 @@ export function answerText(activity, rule) {
   const criteria = rule.criteria || [];
   const first = criteria[0]?.answer;
   const option = id => config.options?.find(item => item.id === id)?.label ?? String(id);
+  if (activity.type === 'code_writing') return `Language: ${config.language}\n\nReference solution:\n${rule.referenceCode}\n\n` +
+    criteria.map((test, index) => `Test ${index + 1} (${test.points} points)\nInput:\n${test.answer.input}\nExpected output:\n${test.answer.output}`).join('\n\n');
   if (activity.type === 'single_choice') return option(first);
   if (activity.type === 'multiple_choice') return first.map(option).join(', ');
   if (activity.type === 'true_false') return first ? 'True' : 'False';
@@ -29,13 +31,13 @@ export function answerText(activity, rule) {
     if (activity.type === 'datatable_code') {
       const index = id => config.columns.findIndex(column => column.id === id);
       lines.push('', 'One valid script:',
-        `const table = new DataTable('${config.selector}', {`,
-        `  paging: true, searching: true, ordering: true,`,
+        `const table = new DataTable(${JSON.stringify(config.selector)}, {`,
+        `  paging: ${values.flags.paging}, searching: ${values.flags.searching}, ordering: ${values.flags.ordering},`,
         `  pageLength: ${values.page_length}, lengthMenu: [${values.length_menu.join(', ')}],`,
         `  order: [${values.order.map(item => `[${index(item.column)}, '${item.direction}']`).join(', ')}]`,
         '});',
-        `table.search('${values.global_search}').draw();`,
-        ...(values.column_search ? [`table.column(${index(values.column_search.column)}).search('${values.column_search.term}').draw();`] : []));
+        `table.search(${JSON.stringify(values.global_search)}).draw();`,
+        ...(values.column_search ? [`table.column(${index(values.column_search.column)}).search(${JSON.stringify(values.column_search.term)}).draw();`] : []));
     }
     return lines.join('\n');
   }

@@ -1,17 +1,26 @@
 import { parseTableCode } from './table-code.js';
 import { normalizeSyntax, syntaxLanguages, tokenizeCode } from './code-highlight.js';
 import { renderPrompt } from './prompt-code.js';
+import { renderCodingQuestion } from './code-task-ui.js';
 import { beginRequestStatus } from './request-status.js';
+import { studentRequestLabel } from './request-labels.js';
 import { icon } from './icons.js';
+import { installPasswordToggles } from './password-toggle.js';
+import { retryPolicyText, localDateTime } from './ui-model.js';
+import { browserSessionHeaders, randomId } from './browser-session.js';
+
+installPasswordToggles();
 
 const $ = id => document.getElementById(id);
 const state = {
-  candidateToken: sessionStorage.getItem('candidateToken'),
+  candidateAccess: randomId(),
   session: null,
   mission: null,
   joining: false,
   finalizing: false,
-  fullscreenFallback: false
+  resultsRefreshing: false,
+  fullscreenFallback: false,
+  readiness: null, draftEditors: new Map(), timerWarnings: new Set()
 };
 
 const node = (tag, className, content) => {
@@ -56,27 +65,40 @@ const message = text => {
   if (text) window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
 };
 
-function requestLabel(path, method) {
-  if (path === '/api/auth/student/join') return 'Starting your session…';
-  if (path.endsWith('/submit')) return 'Saving your answer…';
-  if (path.endsWith('/draft')) return 'Saving your draft…';
-  if (path === '/api/me/finalize') return 'Finishing your attempt…';
-  if (path.includes('/missions/')) return 'Loading questions…';
-  if (path === '/api/me/session' || path === '/api/me/results') return 'Loading your attempt…';
-  return method === 'GET' ? 'Loading…' : 'Saving changes…';
-}
-
 async function request(path, { method = 'GET', data, headers: extraHeaders = {}, silent = false } = {}) {
-  const finishStatus = silent ? () => {} : beginRequestStatus(requestLabel(path, method));
-  const headers = { ...extraHeaders };
+  const finishStatus = silent ? () => {} : beginRequestStatus(studentRequestLabel(path));
+  const headers = { ...browserSessionHeaders('candidate'), ...extraHeaders };
+  if (/^\/api\/me\/activities\/[^/]+\/preview$/.test(path)) headers.Prefer = 'respond-async';
   if (data !== undefined) headers['Content-Type'] = 'application/json';
-  if (state.candidateToken) headers.Authorization = `Bearer ${state.candidateToken}`;
   try {
-    const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
-    const result = await response.json();
-    if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`),
-      { status: response.status, code: result.code });
-    return result.data;
+    const storageKey = `gotit:job:${state.session?.id}:${path}`;
+    let job;
+    if (headers.Prefer === 'respond-async') {
+      try { const saved = JSON.parse(sessionStorage.getItem(storageKey)); if (saved?.payload === JSON.stringify(data)) job = saved; } catch { /* Storage is optional. */ }
+    }
+    let value;
+    if (!job) {
+      const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
+      const result = await response.json();
+      if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`), { status: response.status, code: result.code });
+      value = result.data;
+      if (!value?.jobId) return value;
+      job = { jobId: value.jobId, payload: JSON.stringify(data) };
+      if (path.endsWith('/submit') && state.session) state.session.pendingCodingCount = 1;
+      try { sessionStorage.setItem(storageKey, JSON.stringify(job)); } catch { /* Optional. */ }
+    }
+    let delay = 1000;
+    while (true) {
+      value = await request(`/api/me/coding-jobs/${encodeURIComponent(job.jobId)}`, { silent: true });
+      if (value.status === 'done' || value.status === 'failed') {
+        try { sessionStorage.removeItem(storageKey); } catch { /* Optional. */ }
+        if (value.error) throw Object.assign(new Error(value.error.message), { code: value.error.code });
+        return value.result;
+      }
+      if (!silent) message(value.status === 'queued' ? (path.endsWith('/submit') ? 'Coding submission queued. Your on-time receipt is saved.' : 'Sample tests queued…') : 'Running coding tests…');
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(4000, delay + 500);
+    }
   } finally { finishStatus(); }
 }
 
@@ -101,45 +123,140 @@ $('join-form').addEventListener('submit', event => {
     const button = $('join-form').querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-    const runId = $('join-run').value.trim();
-    const joined = await request('/api/auth/student/join', {
+    const details = await request('/api/auth/student/preview', {
       method: 'POST',
-      data: {
-        runId,
-        candidateId: $('candidate-id').value.trim(),
-        pin: $('run-pin').value
-      }
+      data: admissionCredentials()
     });
-    state.candidateToken = joined.token;
-    sessionStorage.setItem('candidateToken', joined.token);
-    state.session = joined.session;
-    state.fullscreenFallback = false;
-    message(joined.resumed ? 'Session resumed. Progress and deadline restored.' : 'Session started.');
-    await showExam();
+    state.readiness = details;
+    renderReadiness(details);
     } finally { state.joining = false; button.disabled = false; }
   });
 });
 
-function leaveSession() {
+function admissionCredentials() {
+  return { runId: $('join-run').value.trim(), candidateId: $('candidate-id').value.trim(), pin: $('run-pin').value };
+}
+
+function renderReadiness(details) {
+  $('join-panel').classList.add('hidden');
+  $('readiness-panel').classList.remove('hidden');
+  $('readiness-title').textContent = details.title;
+  $('readiness-candidate').textContent = `${details.displayName} · ${details.section} · ${details.runName}`;
+  const summary = $('readiness-summary'); clear(summary);
+  const word = details.kind === 'ctf' ? 'missions' : 'sections';
+  summary.append(node('strong', '', `${details.durationMinutes} minutes · ${details.questionCount} questions · ${details.sectionCount} ${word}`),
+    node('p', 'small', `Run closes ${localDateTime(details.closesAt)}. All attempts end by this time.`));
+  const rules = $('readiness-rules'); clear(rules);
+  for (const policy of details.retryPolicies)
+    rules.append(node('li', '', `${details.retryPolicies.length > 1 ? `${policy.questionCount} questions: ` : ''}${retryPolicyText(policy)}`));
+  rules.append(node('li', '', 'Drafts save automatically. Submit each answer to include it in your attempt; a saved draft is not a submission.'),
+    node('li', '', details.feedbackMode === 'graded'
+      ? 'Scores and correctness stay hidden until faculty publishes your score or the run closes.'
+      : 'Practice activity: you see correctness and scores after submitting each answer.'));
+  const completed = details.resumed && details.status !== 'in_progress';
+  $('begin-attempt').textContent = completed ? 'View attempt and results' : details.resumed ? 'Resume timed attempt' : 'Begin timed attempt';
+  $('begin-attempt').dataset.allowFallback = 'false';
+  $('readiness-error').textContent = '';
+  $('readiness-timing').textContent = completed ? 'Your attempt has ended. Opening results does not start another attempt.'
+    : details.resumed ? `Your existing timer is already running, with about ${Math.floor(details.availableSeconds / 60)} minutes remaining. Resuming keeps your original deadline.`
+    : details.availableSeconds < details.durationMinutes * 60
+      ? `The run closes soon. You will have at most ${Math.floor(details.availableSeconds / 60)} minutes, rather than the full ${details.durationMinutes} minutes. Your timer has not started.`
+      : 'Your timer has not started. Begin when you are ready.';
+  $('readiness-fullscreen').classList.toggle('hidden', completed);
+  $('readiness-fullscreen').textContent = document.fullscreenEnabled
+    ? 'The activity uses fullscreen. Your timer begins after you select Begin timed attempt and continues if you leave the page.'
+    : 'Fullscreen is unavailable in this browser. You can continue here. Your timer begins when you start and continues if you leave the page.';
+  $('readiness-title').focus();
+}
+
+$('readiness-back').addEventListener('click', () => {
+  state.readiness = null;
+  $('readiness-panel').classList.add('hidden'); $('join-panel').classList.remove('hidden');
+  $('candidate-id').focus();
+});
+
+$('begin-attempt').addEventListener('click', () => perform(async () => {
+  if (state.joining || !state.readiness) return;
+  const button = $('begin-attempt');
+  state.joining = true; button.disabled = true;
+  try {
+    const active = !state.readiness.resumed || state.readiness.status === 'in_progress';
+    state.fullscreenFallback = false;
+    if (active && !document.fullscreenElement) {
+      if (document.fullscreenEnabled && button.dataset.allowFallback !== 'true') {
+        try { await document.documentElement.requestFullscreen(); }
+        catch {
+          $('readiness-error').textContent = 'Fullscreen could not open. You may continue without fullscreen in this browser.';
+          button.dataset.allowFallback = 'true';
+          button.textContent = state.readiness.resumed ? 'Resume without fullscreen' : 'Begin without fullscreen';
+          return;
+        }
+      } else state.fullscreenFallback = true;
+    }
+    const joined = await request('/api/auth/student/join', { method: 'POST', data: admissionCredentials() });
+    state.candidateAccess = randomId();
+    state.session = joined.session;
+    state.timerWarnings.clear();
+    $('timer-warning').classList.add('hidden');
+    $('readiness-panel').classList.add('hidden');
+    message(joined.resumed ? 'Session resumed. Progress and deadline restored.' : 'Session started.');
+    await showExam();
+  } catch (error) {
+    $('readiness-error').textContent = error.message;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  } finally { state.joining = false; button.disabled = false; }
+}));
+
+async function flushDrafts() {
+  const results = await Promise.allSettled([...state.draftEditors.values()].map(editor => editor.flush()));
+  return results.every(result => result.status === 'fulfilled' && result.value !== false);
+}
+
+function confirmUnsubmittedEdits() {
+  const revised = [...state.draftEditors.values()].filter(editor => editor.revised).length;
+  return !revised || window.confirm(`${revised} ${revised === 1 ? 'answer has' : 'answers have'} changes you have not submitted. Your previous submissions still count. Leave these changes behind?`);
+}
+
+function updateSaveStatus() {
+  const editors = [...state.draftEditors.values()];
+  const failed = editors.filter(editor => editor.status === 'failed').length;
+  const pending = editors.some(editor => ['unsaved', 'saving'].includes(editor.status));
+  const drafts = editors.filter(editor => editor.status === 'draft').length;
+  const submitted = editors.filter(editor => editor.status === 'submitted').length;
+  $('save-status').textContent = failed ? `${failed} ${failed === 1 ? 'draft could' : 'drafts could'} not be saved. Retry beside the question.`
+    : pending ? 'You have unsubmitted changes. Check the status beside each answer.'
+    : drafts ? `This section: ${drafts} saved ${drafts === 1 ? 'draft' : 'drafts'}. Submit each answer to include it in your attempt.`
+    : submitted ? `This section: ${submitted} ${submitted === 1 ? 'answer' : 'answers'} submitted${submitted === editors.length ? '. You can continue.' : ` · ${editors.length - submitted} not submitted.`}`
+    : 'Drafts save automatically. Submit each answer to include it in your attempt.';
+}
+
+async function leaveSession() {
+  if (!await flushDrafts()) { message('Some drafts could not be saved. Retry saving before leaving.'); return; }
+  if (!confirmUnsubmittedEdits()) return;
+  try { await request('/api/me/logout', { method: 'POST' }); }
+  catch (error) { if (error.status !== 401) throw error; }
   if (document.fullscreenElement === document.documentElement) document.exitFullscreen().catch(() => {});
-  state.candidateToken = null;
+  state.candidateAccess = null;
   state.session = null;
   state.mission = null;
-  sessionStorage.removeItem('candidateToken');
+  state.draftEditors.clear();
   $('exam-panel').classList.add('hidden');
   $('join-panel').classList.remove('hidden');
   syncFullscreenGate();
 }
-$('candidate-exit').addEventListener('click', leaveSession);
-$('fullscreen-exit').addEventListener('click', leaveSession);
+$('candidate-exit').addEventListener('click', () => perform(leaveSession));
+$('fullscreen-exit').addEventListener('click', () => perform(leaveSession));
 
 async function finalizeAttempt() {
   if (state.finalizing || state.session?.status !== 'in_progress') return;
+  if (!await flushDrafts()) { message('Some drafts could not be saved. Retry saving before finishing.'); return; }
   const remaining = state.session.order.filter(m => !m.completed).length;
   const word = state.session.kind === 'ctf' ? 'mission' : 'section';
-  const prompt = remaining
+  const unanswered = state.session.questionCount - state.session.submittedCount;
+  const draftNote = ` ${unanswered} ${unanswered === 1 ? 'question has' : 'questions have'} no submitted answer. Saved drafts and unsubmitted changes are not included in your score.`;
+  const prompt = (remaining
     ? `Finish now with ${remaining} unfinished ${word}${remaining === 1 ? '' : 's'}? You cannot submit more answers.`
-    : 'Finish this attempt? You cannot submit more answers.';
+    : 'Finish this attempt? You cannot submit more answers.') + draftNote;
   if (!window.confirm(prompt)) return;
   state.finalizing = true;
   $('finalize').disabled = true;
@@ -152,11 +269,38 @@ async function finalizeAttempt() {
 }
 $('finalize').addEventListener('click', () => perform(finalizeAttempt));
 $('finalize-early').addEventListener('click', () => perform(finalizeAttempt));
-$('check-results').addEventListener('click', () => perform(async () => {
-  state.session = await request('/api/me/session');
-  renderExamHeader();
-  renderCompletion();
-}));
+async function refreshResults({ background = false } = {}) {
+  if (!state.candidateAccess || !state.session || state.session.status === 'in_progress' || state.resultsRefreshing) return;
+  const access = state.candidateAccess, sessionId = state.session.id;
+  state.resultsRefreshing = true;
+  $('check-results').disabled = true;
+  try {
+    const session = await request('/api/me/results', { silent: background });
+    // A response from an attempt that the student has left must not reopen it.
+    if (state.candidateAccess !== access || state.session?.id !== sessionId) return;
+    const wasReleased = state.session.resultsReleased;
+    state.session = session;
+    renderExamHeader();
+    if (session.status !== 'in_progress') renderCompletion();
+    else await showExam();
+    if (session.resultsReleased && !wasReleased) message('Your score has been published.');
+    else if (!background && !session.resultsReleased) message('Your score has not been published yet. This page checks automatically; you can also check again.');
+  } finally {
+    state.resultsRefreshing = false;
+    $('check-results').disabled = false;
+  }
+}
+$('check-results').addEventListener('click', () => perform(refreshResults));
+$('refresh-score').addEventListener('click', () => perform(refreshResults));
+
+function checkForPublishedResults() {
+  if (document.hidden || (state.session?.feedbackMode !== 'graded' && !state.session?.pendingCodingCount)) return;
+  // Keep the last known result on a background failure; manual checks report errors.
+  refreshResults({ background: true }).catch(() => {});
+}
+window.setInterval(checkForPublishedResults, 15000);
+window.addEventListener('focus', checkForPublishedResults);
+document.addEventListener('visibilitychange', checkForPublishedResults);
 $('continue-mission').addEventListener('click', () => perform(async () => {
   const next = state.session?.order.find(item => item.unlocked && !item.completed);
   if (!next) return;
@@ -185,7 +329,9 @@ function renderExamHeader() {
   $('exam-title').textContent = s.title;
   $('exam-description').textContent = s.description || '';
   $('candidate-name').textContent = `${s.displayName} (${s.section})`;
-  $('score').textContent = s.resultsReleased ? `${s.score} / ${s.maxPoints} pts` : 'Score after run closes';
+  $('score').textContent = s.resultsReleased ? `${s.score} / ${s.maxPoints} pts` : 'Score hidden';
+  // Scores can only be published after an attempt ends; the completion screen provides refresh.
+  $('refresh-score').classList.add('hidden');
   renderFlow();
   updateTimer();
 }
@@ -197,6 +343,7 @@ function renderFlow() {
   const word = s.kind === 'ctf' ? 'mission' : 'section';
   $('exam-progress').textContent = `${completed} of ${total} ${word}${total === 1 ? '' : 's'} complete`;
   const active = s.status === 'in_progress';
+  $('exam-panel').classList.toggle('attempt-active', active);
   const current = s.order.find(item => item.id === state.mission?.id);
   const next = s.order.find(item => item.unlocked && !item.completed);
   const canContinue = active && current?.completed && next && next.id !== current.id;
@@ -218,6 +365,14 @@ function updateTimer() {
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor(remaining / 1000) % 60;
   $('timer').textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  $('timer').classList.toggle('timer-urgent', remaining > 0 && remaining <= 60000);
+  for (const threshold of [300000, 60000]) {
+    if (remaining > 0 && remaining <= threshold && !state.timerWarnings.has(threshold)) {
+      state.timerWarnings.add(threshold);
+      $('timer-warning').textContent = `${threshold === 60000 ? 'Less than 1 minute' : 'Less than 5 minutes'} remaining. Submit your answers before time ends. Saved drafts do not count as submissions.`;
+      $('timer-warning').classList.remove('hidden');
+    }
+  }
   if (remaining === 0 && state.session.status === 'in_progress') {
     state.session.status = 'expired';
     renderCompletion();
@@ -227,6 +382,8 @@ window.setInterval(updateTimer, 1000);
 
 function renderMissionList() {
   clear($('mission-list'));
+  clear($('mobile-mission-select'));
+  document.querySelector('.mobile-mission-nav').firstChild.textContent = state.session.kind === 'ctf' ? 'Current mission' : 'Current section';
   state.session.order.forEach((m, i) => {
     const button = node('button', 'mission-button', `${String(i + 1).padStart(2, '0')} · ${m.title}`);
     button.type = 'button';
@@ -235,6 +392,9 @@ function renderMissionList() {
     button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'step');
     const status = m.completed ? 'Completed' : active ? 'Current' : m.unlocked ? 'Available' : 'Locked';
+    const option = node('option', '', `${i + 1} · ${m.title} · ${status}`);
+    option.value = m.id; option.disabled = !m.unlocked; option.selected = active;
+    $('mobile-mission-select').append(option);
     const stateLabel = node('small', 'mission-state');
     stateLabel.append(icon(m.completed ? 'complete' : active ? 'current' : m.unlocked ? 'available' : 'locked'), document.createTextNode(status));
     button.append(stateLabel);
@@ -244,12 +404,27 @@ function renderMissionList() {
 }
 
 async function loadMission(id) {
+  if (state.mission && state.mission.id !== id) {
+    if (!await flushDrafts()) { message('Some drafts could not be saved. Retry beside the question before switching sections.'); return; }
+    if (!confirmUnsubmittedEdits()) { $('mobile-mission-select').value = state.mission.id; return; }
+  }
   state.mission = await request(`/api/me/missions/${encodeURIComponent(id)}`);
+  state.draftEditors.clear();
   renderMissionList();
   renderMission();
   renderFlow();
+  updateSaveStatus();
   syncFullscreenGate();
 }
+
+$('mobile-mission-select').addEventListener('change', () => perform(() => loadMission($('mobile-mission-select').value)));
+
+window.addEventListener('beforeunload', event => {
+  if (state.session?.status !== 'in_progress') return;
+  if ([...state.draftEditors.values()].some(editor => ['unsaved', 'saving', 'failed'].includes(editor.status))) {
+    event.preventDefault(); event.returnValue = '';
+  }
+});
 
 function renderMission() {
   const mission = state.mission;
@@ -624,6 +799,11 @@ function renderActivity(a, preview = false) {
     };
   } else if (a.type === 'data_inspection') {
     readValue = renderInspection(form, a);
+  } else if (a.type === 'code_writing') {
+    readValue = renderCodingQuestion(form, a, value => request(preview ? '/api/instructor/code/preview'
+      : `/api/me/activities/${encodeURIComponent(a.id)}/preview`, {
+        method: 'POST', data: preview ? { config: cfg, value } : { value }
+      }));
   } else if (a.type === 'datatable_code') {
     readValue = renderCode(form, a);
   }
@@ -636,9 +816,19 @@ function renderActivity(a, preview = false) {
 
   const feedback = node('div', 'activity-feedback');
   feedback.setAttribute('role', 'status');
+  const answerState = node('p', 'answer-state');
+  answerState.setAttribute('role', 'status');
+  const retrySave = node('button', 'text-button hidden', 'Retry saving draft'); retrySave.type = 'button';
 
   let draftTimer;
   let draftRequest = Promise.resolve();
+  let draftDirty = false, draftRevision = 0, submitting = false;
+  let saveState = a.lastSubmission ? 'submitted' : a.lastDraft ? 'draft' : 'empty';
+  function setAnswerState(status, text) {
+    saveState = status; answerState.dataset.state = status; answerState.textContent = text;
+    retrySave.classList.toggle('hidden', status !== 'failed');
+    updateSaveStatus();
+  }
   const readDraftSubmission = () => {
     try {
       const read = readValue();
@@ -655,54 +845,86 @@ function renderActivity(a, preview = false) {
     }
   };
   if (!preview) {
+    state.draftEditors.set(a.id, {
+      get revised() { return draftDirty && a.attemptsUsed > 0; },
+      get status() { return saveState; },
+      flush: saveDraft
+    });
     form.addEventListener('input', scheduleDraft);
     form.addEventListener('change', scheduleDraft);
+    setAnswerState(saveState, saveState === 'submitted' ? 'Answer submitted · Included in your attempt'
+      : saveState === 'draft' ? 'Draft saved · Submit this answer to include it in your attempt' : 'No answer submitted');
   }
   function scheduleDraft() {
     clearTimeout(draftTimer);
-    draftTimer = setTimeout(() => {
-      const snapshot = readDraftSubmission();
-      draftRequest = request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: snapshot })
-        .then(() => { $('save-status').textContent = 'Draft saved'; })
-        .catch(error => { $('save-status').textContent = error.message; });
-    }, 600);
+    draftDirty = true; draftRevision++;
+    setAnswerState('unsaved', a.attemptsUsed > 0
+      ? 'Changes not submitted · Your previous submission still counts'
+      : 'Draft not saved yet · Not submitted');
+    if (!a.attemptsUsed) draftTimer = setTimeout(saveDraft, 1500);
   }
+  async function saveDraft() {
+    clearTimeout(draftTimer);
+    if (submitting || a.attemptsUsed > 0) return true;
+    if (!draftDirty) return draftRequest;
+    const snapshot = readDraftSubmission(), revision = draftRevision;
+    draftDirty = false;
+    setAnswerState('saving', 'Saving draft… · Not submitted');
+    draftRequest = draftRequest.then(async () => {
+      try {
+        await request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: snapshot, silent: true });
+        if (revision === draftRevision && !a.attemptsUsed) setAnswerState('draft', 'Draft saved · Submit this answer to include it in your attempt');
+        return true;
+      } catch {
+        if (revision === draftRevision && !a.attemptsUsed) {
+          draftDirty = true;
+          setAnswerState('failed', 'Draft could not be saved · Your answer is still on this page. Retry saving.');
+        }
+        return false;
+      }
+    });
+    return draftRequest;
+  }
+  retrySave.addEventListener('click', () => perform(saveDraft));
 
   form.addEventListener('submit', event => {
     event.preventDefault();
     (async () => {
+      if (!preview && submit.disabled) return;
       let read;
       try { read = readValue(); }
       catch (error) { feedback.textContent = error.message; return; }
+      const submittedRevision = draftRevision;
       if (preview) {
         feedback.textContent = 'Preview response captured.';
         return;
       }
+      submit.disabled = true;
       clearTimeout(draftTimer);
       await draftRequest;
       const value = a.type === 'numeric_entry' ? read.number : read;
       const submission = a.type === 'numeric_entry' ? { value, unit: read.unit } : { value };
-      draftRequest = request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: submission }).catch(() => {});
-      await draftRequest;
+      if (!a.attemptsUsed) await saveDraft();
       const retryStorageKey = `gotit:submission:${state.session.id}:${a.id}`;
       let retryRecord;
       try { retryRecord = JSON.parse(sessionStorage.getItem(retryStorageKey) || 'null'); } catch { retryRecord = null; }
       if (!retryRecord || retryRecord.payload !== JSON.stringify(submission)) {
-        retryRecord = { key: crypto.randomUUID(), payload: JSON.stringify(submission) };
+        retryRecord = { key: randomId(), payload: JSON.stringify(submission) };
         sessionStorage.setItem(retryStorageKey, JSON.stringify(retryRecord));
       }
       submit.disabled = true;
-      feedback.textContent = 'Checking…';
+      submitting = true;
+      feedback.textContent = 'Submitting answer…';
       try {
         const result = await request(`/api/me/activities/${encodeURIComponent(a.id)}/submit`, {
-          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key }
+          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key, ...(a.type === 'code_writing' ? { Prefer: 'respond-async' } : {}) }
         });
         sessionStorage.removeItem(retryStorageKey);
         a.attemptsUsed = result.attemptNumber;
         a.attemptsRemaining = result.attemptsRemaining;
         updateAttemptInfo();
-        const outcome = result.duplicate ? 'Answer was already saved.'
-          : state.session.feedbackMode === 'graded' ? 'Answer saved.'
+        const outcome = result.duplicate ? 'Answer was already submitted.'
+          : state.session.feedbackMode === 'graded' ? 'Answer submitted.'
           : result.result === 'correct' ? 'Correct.' : result.result === 'partially_correct' ? 'Partially correct.' : 'Incorrect.';
         const cost = result.penaltyApplied && !result.duplicate
           ? ` Retry cost: ${result.penaltyApplied.points} points and ${result.penaltyApplied.seconds} seconds.` : '';
@@ -710,7 +932,10 @@ function renderActivity(a, preview = false) {
         state.session = await request('/api/me/session');
         renderExamHeader();
         renderMissionList();
-        $('save-status').textContent = `Answer saved at ${new Date().toLocaleTimeString()}`;
+        if (draftRevision === submittedRevision) {
+          draftDirty = false;
+          setAnswerState('submitted', `Answer submitted at ${new Date().toLocaleTimeString()} · Included in your attempt`);
+        } else setAnswerState('unsaved', 'Changes not submitted · Your previous submission still counts');
       } catch (error) {
         feedback.textContent = error.message;
         if (error.code === 'SESSION_CLOSED') {
@@ -718,6 +943,7 @@ function renderActivity(a, preview = false) {
           renderCompletion();
         }
       } finally {
+        submitting = false;
         submit.disabled = state.session.status !== 'in_progress' || a.attemptsRemaining === 0;
       }
     })().catch(error => {
@@ -726,7 +952,7 @@ function renderActivity(a, preview = false) {
     });
   });
 
-  card.append(form, feedback);
+  card.append(form, answerState, retrySave, feedback);
   return card;
 }
 
@@ -736,10 +962,15 @@ function renderCompletion() {
   $('exam-footer').classList.add('hidden');
   $('completion-panel').classList.remove('hidden');
   $('completion-title').textContent = s.status === 'submitted' ? 'Attempt submitted' : 'Time ended';
-  $('completion-summary').textContent = s.resultsReleased
+  $('completion-summary').textContent = s.pendingCodingCount
+    ? `${s.pendingCodingCount} coding submission is waiting for grading. Your on-time receipt is saved. This page checks for the result automatically.`
+    : s.resultsReleased
     ? `Score: ${s.score} / ${s.maxPoints} points.`
-    : 'Responses saved. Results are available after the run closes.';
-  $('check-results').classList.toggle('hidden', s.resultsReleased);
+    : `${s.submittedCount} of ${s.questionCount} answers submitted. Saved drafts are not included. Your score will appear automatically after faculty publishes it or the run closes. You can also check below.`;
+  $('save-status').textContent = 'Attempt finished. You cannot submit more answers.';
+  $('timer-warning').classList.add('hidden');
+  $('check-results').textContent = s.resultsReleased ? 'Refresh score' : 'Check for published score';
+  $('check-results').classList.toggle('hidden', s.feedbackMode !== 'graded' && !s.pendingCodingCount);
   renderFlow();
   syncFullscreenGate();
 }
@@ -747,11 +978,10 @@ function renderCompletion() {
 await perform(loadConfig);
 const runFromLink = new URLSearchParams(location.search).get('run');
 if (runFromLink && /^[a-f0-9-]{36}$/.test(runFromLink)) $('join-run').value = runFromLink;
-if (state.candidateToken) {
+if (state.candidateAccess) {
   try { await showExam(); }
   catch (error) {
-    state.candidateToken = null;
-    sessionStorage.removeItem('candidateToken');
-    message('Sign in to resume this attempt.');
+    state.candidateAccess = null;
+    if (error.status !== 401) message('Sign in to resume this attempt.');
   }
 }

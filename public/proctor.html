@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Got It! · Proctor</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/ui-refinements.css">
   <script type="module" src="/proctor.js"></script>
 </head>
 <body>
@@ -13,7 +14,7 @@
     <button type="button" id="proctor-logout" class="hidden text-button">Sign out</button>
   </header>
   <div id="request-status" class="request-status hidden" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
-    <span class="request-spinner" aria-hidden="true"></span><span id="request-status-text">Loading…</span>
+    <span class="request-spinner" aria-hidden="true"></span><span id="request-status-text">Loading proctor settings…</span>
   </div>
   <main>
     <div id="notice" role="status" aria-live="polite"></div>
@@ -46,7 +47,7 @@
         </select></label>
       </div>
       <p id="proctor-match-count" class="small"></p>
-      <div class="table-wrap proctor-table-wrap">
+      <div class="table-wrap proctor-table-wrap" tabindex="0" role="region" aria-label="Student participation. Scroll horizontally for more columns.">
         <table class="proctor-table">
           <thead><tr>
             <th scope="col">Student</th><th scope="col">Section</th><th scope="col">Status</th>

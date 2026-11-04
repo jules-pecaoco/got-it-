@@ -1,0 +1,93 @@
+{
+  "reopenedGradedAttempt": {
+    "status": "in_progress",
+    "resultsReleased": false,
+    "scoreIncluded": false,
+    "scoreIncludedAfterNewSubmission": false
+  },
+  "sharedCredentials": {
+    "oldTokenRejectedAfterRejoin": true
+  },
+  "classroomSharedIp": {
+    "attemptedStudents": 12,
+    "joinedStudents": 12,
+    "statuses": [
+      {
+        "student": "NAT-1",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-2",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-3",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-4",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-5",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-6",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-7",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-8",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-9",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-10",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-11",
+        "preview": 200,
+        "join": 200
+      },
+      {
+        "student": "NAT-12",
+        "preview": 200,
+        "join": 200
+      }
+    ]
+  },
+  "publishedUnreachableQuestion": {
+    "validationErrors": [
+      "Activity IDs must use 1–80 letters, digits, or hyphens."
+    ],
+    "publicationRejected": true
+  },
+  "facultyLogout": {
+    "logoutEndpointStatus": 200,
+    "tokenStillAuthorized": false
+  },
+  "splitUtf8Body": {
+    "status": 200,
+    "expectedName": "Café",
+    "savedName": "Café",
+    "preserved": true
+  }
+}

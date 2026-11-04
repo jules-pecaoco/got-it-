@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseTableCode } from '../public/table-code.js';
+import { validateCodeRule } from '../public/code-task.js';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 const asArray = value => Array.isArray(value) ? value : [];
@@ -19,12 +20,12 @@ export function inspectRows(config, state) {
   const search = normalize(state?.globalSearch);
   const order = Array.isArray(state?.order) ? state.order : [];
   let rows = [...(config.rows ?? [])];
-  if (search) rows = rows.filter(row => [...columns].some(column => normalize(row[column]).includes(search)));
+  if (search && state?.flags?.searching !== false) rows = rows.filter(row => [...columns].some(column => normalize(row[column]).includes(search)));
   for (const [column, term] of Object.entries(state?.columnSearch ?? {})) {
-    if (columns.has(column) && normalize(term)) rows = rows.filter(row => normalize(row[column]).includes(normalize(term)));
+    if (state?.flags?.searching !== false && columns.has(column) && normalize(term)) rows = rows.filter(row => normalize(row[column]).includes(normalize(term)));
   }
   rows.sort((left, right) => {
-    for (const item of order) {
+    for (const item of state?.flags?.ordering === false ? [] : order) {
       if (!columns.has(item.column) || !['asc', 'desc'].includes(item.direction)) continue;
       const sign = item.direction === 'desc' ? -1 : 1;
       const compared = String(left[item.column] ?? '').localeCompare(String(right[item.column] ?? ''), 'en', { numeric: true });
@@ -34,7 +35,7 @@ export function inspectRows(config, state) {
   });
   const pageLength = Number.isInteger(state?.pageLength) && state.pageLength > 0 ? state.pageLength : 1;
   const pageIndex = Number.isInteger(state?.pageIndex) && state.pageIndex >= 0 ? state.pageIndex : 0;
-  return { filteredCount: rows.length, visible: rows.slice(pageIndex * pageLength, (pageIndex + 1) * pageLength) };
+  return { filteredCount: rows.length, visible: state?.flags?.paging === false ? rows : rows.slice(pageIndex * pageLength, (pageIndex + 1) * pageLength) };
 }
 
 function validInspectionState(config, value) {
@@ -50,6 +51,7 @@ function validInspectionState(config, value) {
 }
 
 export const validatorRegistry = Object.freeze({
+  code_writing: () => { throw Object.assign(new Error('Coding answers require isolated execution.'), { code: 'CODE_EXECUTION_REQUIRED', status: 422 }); },
   single_choice: (submission, expected) => submission?.value === expected,
   multiple_choice: (submission, expected) => Array.isArray(submission?.value) && same([...new Set(submission.value)].sort(), [...expected].sort()),
   true_false: (submission, expected) => submission?.value === expected,
@@ -65,7 +67,7 @@ export const validatorRegistry = Object.freeze({
     if (expected.kind === 'global_search') return normalize(value.globalSearch) === normalize(expected.value);
     if (expected.kind === 'column_search') return normalize(value.columnSearch?.[expected.value.column]) === normalize(expected.value.term);
     if (expected.kind === 'order') return same(value.order, expected.value);
-    if (expected.kind === 'visible_ids') return same(inspectRows(config, value).visible.map(row => row.id), expected.value);
+    if (expected.kind === 'visible_ids') return same(inspectRows(config, { ...value, flags: undefined }).visible.map(row => row.id), expected.value);
     return false;
   },
   datatable_code: (submission, expected, activity) => {
@@ -107,6 +109,7 @@ export function validatePackage(pub, priv) {
     const m = missions[i];
     if (!m || typeof m !== 'object') { errors.push(`Mission ${i + 1} is invalid.`); continue; }
     if (!m.id || missionIds.has(m.id)) errors.push(`Mission ID ${m.id ?? '(missing)'} is missing or duplicated.`);
+    if (typeof m.id !== 'string' || !/^[A-Za-z0-9-]{1,80}$/.test(m.id)) errors.push('Mission IDs must use 1–80 letters, digits, or hyphens.');
     missionIds.add(m.id);
     if (m.fixedLast && i !== missions.length - 1) errors.push(`${m.id}: fixedLast mission must be last.`);
     if (m.fixedLast && m.shuffleGroup) errors.push(`${m.id}: fixedLast mission cannot be shuffled.`);
@@ -118,6 +121,7 @@ export function validatePackage(pub, priv) {
     for (const a of asArray(m.activities)) {
       if (!a || typeof a !== 'object') { errors.push(`${m.id}: invalid activity.`); continue; }
       if (!a.id || activityIds.has(a.id)) errors.push(`Activity ID ${a.id ?? '(missing)'} is missing or duplicated.`);
+      if (typeof a.id !== 'string' || !/^[A-Za-z0-9-]{1,80}$/.test(a.id)) errors.push('Activity IDs must use 1–80 letters, digits, or hyphens.');
       activityIds.add(a.id);
       if (!activityTypes.has(a.type)) errors.push(`${a.id}: unsupported activity type ${a.type}.`);
       if (!Number.isInteger(a.maxPoints) || a.maxPoints < 0) errors.push(`${a.id}: invalid maxPoints.`);
@@ -134,7 +138,7 @@ export function validatePackage(pub, priv) {
         errors.push(`${a.id}: matching private grading criteria required.`); continue;
       }
       let ruleTotal = 0;
-      if (!['matching', 'data_inspection', 'datatable_code'].includes(a.type) && rule.criteria.length !== 1) errors.push(`${a.id}: exactly one criterion required for this activity type.`);
+      if (!['matching', 'data_inspection', 'datatable_code', 'code_writing'].includes(a.type) && rule.criteria.length !== 1) errors.push(`${a.id}: exactly one criterion required for this activity type.`);
       for (const c of rule.criteria) {
         if (!c.id || ruleIds.has(c.id)) errors.push(`${a.id}: criterion ID missing or duplicated.`);
         ruleIds.add(c.id);
@@ -185,11 +189,15 @@ export function validatePackage(pub, priv) {
 function containsAnswerKeys(value) {
   if (!value || typeof value !== 'object') return false;
   return Object.entries(value).some(([key, item]) =>
-    /^(answer|answers|correct|correctAnswer|expected|solution|privateGrading)$/i.test(key) || containsAnswerKeys(item));
+    /^(answer|answers|correct|correctAnswer|expected|solution|referenceCode|privateTests|privateGrading)$/i.test(key) || containsAnswerKeys(item));
 }
 
 function validateActivityConfig(a, rule) {
   const errors = [], cfg = a.publicConfig ?? {}, first = rule.criteria[0]?.answer;
+  if (a.type === 'code_writing') {
+    errors.push(...validateCodeRule(cfg, rule));
+    if (own(a, 'tests')) errors.push('coding tests belong in the private grading rule.');
+  }
   const options = asArray(cfg.options);
   if (['single_choice', 'multiple_choice'].includes(a.type)) {
     if (options.length < 2 || options.some(x => !x?.id || !x?.label) || new Set(options.map(x => x.id)).size !== options.length) errors.push('at least two unique labeled options required.');
@@ -220,6 +228,7 @@ function validateActivityConfig(a, rule) {
       : ['page_length', ...(kinds.has('page_index') ? ['page_index'] : []), 'global_search', ...(kinds.has('column_search') ? ['column_search'] : []), 'order', 'visible_ids'];
     if (rule.criteria.length !== requiredKinds.length || !same([...kinds].sort(), [...requiredKinds].sort())) errors.push(`${a.type} needs one of each required criterion kind.`);
     const target = {
+      ...(a.type === 'datatable_code' ? { flags: rule.criteria.find(c => c.answer?.kind === 'flags')?.answer.value } : {}),
       pageLength: rule.criteria.find(c => c.answer?.kind === 'page_length')?.answer.value,
       globalSearch: rule.criteria.find(c => c.answer?.kind === 'global_search')?.answer.value,
       columnSearch: (() => { const value = rule.criteria.find(c => c.answer?.kind === 'column_search')?.answer.value; return value?.column ? { [value.column]: value.term } : {}; })(),

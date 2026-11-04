@@ -5,10 +5,19 @@
   "type": "module",
   "scripts": {
     "start": "node --experimental-sqlite src/server.mjs",
+    "dev": "node --watch --experimental-sqlite src/server.mjs",
     "test": "node --experimental-sqlite --test",
+    "setup:coding": "node scripts/setup-coding-runtimes.mjs",
+    "verify:coding": "node scripts/verify-coding-runtimes.mjs",
+    "preflight": "node --experimental-sqlite scripts/preflight.mjs",
+    "backup": "node --experimental-sqlite scripts/backup.mjs",
+    "serve:local": "node scripts/serve-local.mjs",
+    "prepare:local": "node scripts/prepare-local.mjs",
+    "serve:preview": "node scripts/serve-preview.mjs",
+    "test:load": "node --experimental-sqlite scripts/load-test-local.mjs",
     "import:week13": "node --experimental-sqlite scripts/import-week13.mjs",
-    "format": "prettier --write public/paper-copy.js src/store-schema.mjs",
-    "format:check": "prettier --check public/paper-copy.js src/store-schema.mjs"
+    "format": "prettier --write public/paper-copy.js public/password-toggle.js src/store-schema.mjs",
+    "format:check": "prettier --check public/paper-copy.js public/password-toggle.js src/store-schema.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

@@ -2,14 +2,18 @@ const activeRequests = new Map();
 let nextRequestId = 0;
 let hideTimer = null;
 
-export function beginRequestStatus(label = 'Loading…') {
+function updateStatusText(text) {
+  text.textContent = [...new Set(activeRequests.values())].join(' · ');
+}
+
+export function beginRequestStatus(label) {
   const status = document.getElementById('request-status');
   const text = document.getElementById('request-status-text');
   if (!status || !text) return () => {};
   const id = ++nextRequestId;
   activeRequests.set(id, label);
   clearTimeout(hideTimer);
-  text.textContent = activeRequests.size === 1 ? label : 'Working…';
+  updateStatusText(text);
   status.classList.remove('hidden');
   status.setAttribute('aria-busy', 'true');
   let ended = false;
@@ -18,7 +22,7 @@ export function beginRequestStatus(label = 'Loading…') {
     ended = true;
     activeRequests.delete(id);
     if (activeRequests.size) {
-      text.textContent = activeRequests.size === 1 ? activeRequests.values().next().value : 'Working…';
+      updateStatusText(text);
       return;
     }
     hideTimer = window.setTimeout(() => {

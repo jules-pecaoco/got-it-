@@ -3,28 +3,105 @@
   "$id": "https://example.invalid/ctf-examination-studio/private.schema.json",
   "title": "CTF Examination Studio private grading rules",
   "type": "object",
-  "required": ["rules"],
+  "required": [
+    "rules"
+  ],
   "properties": {
     "rules": {
       "type": "object",
       "additionalProperties": {
         "type": "object",
-        "required": ["type", "criteria"],
+        "required": [
+          "type",
+          "criteria"
+        ],
         "properties": {
-          "type": { "enum": ["single_choice", "multiple_choice", "true_false", "text_entry", "numeric_entry", "matching", "sequencing", "data_inspection", "datatable_code"] },
+          "type": {
+            "enum": [
+              "single_choice",
+              "multiple_choice",
+              "true_false",
+              "text_entry",
+              "numeric_entry",
+              "matching",
+              "sequencing",
+              "data_inspection",
+              "datatable_code",
+              "code_writing"
+            ]
+          },
           "criteria": {
-            "type": "array", "minItems": 1,
+            "type": "array",
+            "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["id", "points", "answer"],
+              "required": [
+                "id",
+                "points",
+                "answer"
+              ],
               "properties": {
-                "id": { "type": "string", "minLength": 1 },
-                "points": { "type": "integer", "minimum": 1 },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "points": {
+                  "type": "integer",
+                  "minimum": 1
+                },
                 "answer": {}
               }
             }
+          },
+          "referenceCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "code_writing"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "referenceCode"
+              ],
+              "properties": {
+                "criteria": {
+                  "minItems": 2,
+                  "maxItems": 6,
+                  "items": {
+                    "properties": {
+                      "answer": {
+                        "type": "object",
+                        "required": [
+                          "input",
+                          "output"
+                        ],
+                        "properties": {
+                          "input": {
+                            "type": "string",
+                            "maxLength": 16000
+                          },
+                          "output": {
+                            "type": "string",
+                            "maxLength": 16000
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   }

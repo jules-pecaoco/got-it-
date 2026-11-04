@@ -3,56 +3,212 @@
   "$id": "https://example.invalid/faculty-studio/public.schema.json",
   "title": "Got It! public package",
   "type": "object",
-  "required": ["schemaVersion", "examId", "version", "title", "subject", "settings", "missions"],
+  "required": [
+    "schemaVersion",
+    "examId",
+    "version",
+    "title",
+    "subject",
+    "settings",
+    "missions"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0" },
-    "examId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$" },
-    "version": { "type": "integer", "minimum": 1 },
-    "title": { "type": "string", "minLength": 1 },
-    "subject": { "type": "string", "minLength": 1 },
-    "kind": { "enum": ["activity", "quiz", "test", "exam", "ctf"] },
-    "difficulty": { "enum": ["easy", "medium", "hard"] },
-    "description": { "type": "string" },
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "examId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,63}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "activity",
+        "quiz",
+        "test",
+        "exam",
+        "ctf"
+      ]
+    },
+    "difficulty": {
+      "enum": [
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "description": {
+      "type": "string"
+    },
     "settings": {
       "type": "object",
-      "required": ["durationMinutes", "coreMaxPoints", "bonusMaxPoints"],
+      "required": [
+        "durationMinutes",
+        "coreMaxPoints",
+        "bonusMaxPoints"
+      ],
       "properties": {
-        "durationMinutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
-        "coreMaxPoints": { "type": "integer", "minimum": 1 },
-        "bonusMaxPoints": { "type": "integer", "minimum": 0 },
-        "shuffleOrderOnly": { "const": true }
+        "durationMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "coreMaxPoints": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bonusMaxPoints": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shuffleOrderOnly": {
+          "const": true
+        }
       }
     },
     "missions": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "title", "maxPoints", "activities"],
+        "required": [
+          "id",
+          "title",
+          "maxPoints",
+          "activities"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "title": { "type": "string", "minLength": 1 },
-          "story": { "type": "string" },
-          "shuffleGroup": { "type": "string" },
-          "dependsOn": { "type": "array", "items": { "type": "string" } },
-          "fixedLast": { "type": "boolean" },
-          "maxPoints": { "type": "integer", "minimum": 0 },
-          "retryPolicy": { "$ref": "#/$defs/retryPolicy" },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{1,80}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "story": {
+            "type": "string"
+          },
+          "shuffleGroup": {
+            "type": "string"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fixedLast": {
+            "type": "boolean"
+          },
+          "maxPoints": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retryPolicy": {
+            "$ref": "#/$defs/retryPolicy"
+          },
           "activities": {
-            "type": "array", "minItems": 1,
+            "type": "array",
+            "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["id", "type", "prompt", "publicConfig", "maxPoints", "gradingRuleId"],
+              "required": [
+                "id",
+                "type",
+                "prompt",
+                "publicConfig",
+                "maxPoints",
+                "gradingRuleId"
+              ],
               "properties": {
-                "id": { "type": "string", "minLength": 1 },
-                "type": { "enum": ["single_choice", "multiple_choice", "true_false", "text_entry", "numeric_entry", "matching", "sequencing", "data_inspection", "datatable_code"] },
-                "prompt": { "type": "string", "minLength": 1 },
-                "publicConfig": { "type": "object" },
-                "maxPoints": { "type": "integer", "minimum": 0 },
-                "retryPolicy": { "$ref": "#/$defs/retryPolicy" },
-                "gradingRuleId": { "type": "string", "minLength": 1 },
-                "sourceRefs": { "type": "array", "items": { "type": "object", "required": ["file", "pageOrSlide"], "properties": { "file": { "type": "string" }, "pageOrSlide": { "type": "string" } } } },
-                "manualRationale": { "type": "string" }
-              }
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9-]{1,80}$"
+                },
+                "type": {
+                  "enum": [
+                    "single_choice",
+                    "multiple_choice",
+                    "true_false",
+                    "text_entry",
+                    "numeric_entry",
+                    "matching",
+                    "sequencing",
+                    "data_inspection",
+                    "datatable_code",
+                    "code_writing"
+                  ]
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "publicConfig": {
+                  "type": "object"
+                },
+                "maxPoints": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "retryPolicy": {
+                  "$ref": "#/$defs/retryPolicy"
+                },
+                "gradingRuleId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sourceRefs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "file",
+                      "pageOrSlide"
+                    ],
+                    "properties": {
+                      "file": {
+                        "type": "string"
+                      },
+                      "pageOrSlide": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "manualRationale": {
+                  "type": "string"
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "type": {
+                        "const": "code_writing"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "publicConfig": {
+                        "$ref": "#/$defs/codeConfig"
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
         }
@@ -62,11 +218,118 @@
   "$defs": {
     "retryPolicy": {
       "type": "object",
-      "required": ["maxRetries", "pointPenalty", "timePenaltySeconds"],
+      "required": [
+        "maxRetries",
+        "pointPenalty",
+        "timePenaltySeconds"
+      ],
       "properties": {
-        "maxRetries": { "type": ["integer", "null"], "minimum": 0, "maximum": 99 },
-        "pointPenalty": { "type": "integer", "minimum": 0 },
-        "timePenaltySeconds": { "type": "integer", "minimum": 0 }
+        "maxRetries": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 99
+        },
+        "pointPenalty": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timePenaltySeconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "codeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "starterCode",
+        "samples",
+        "comparison"
+      ],
+      "properties": {
+        "language": {
+          "enum": [
+            "php",
+            "python",
+            "sql",
+            "javascript"
+          ]
+        },
+        "starterCode": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": [
+              "input",
+              "output"
+            ],
+            "properties": {
+              "input": {
+                "type": "string",
+                "maxLength": 16000
+              },
+              "output": {
+                "type": "string",
+                "maxLength": 16000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "comparison": {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "exact",
+                "whitespace",
+                "numeric"
+              ]
+            },
+            "absoluteTolerance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "relativeTolerance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "mode": {
+                    "const": "numeric"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "absoluteTolerance",
+                  "relativeTolerance"
+                ]
+              }
+            }
+          ],
+          "additionalProperties": false
+        }
       }
     }
   }

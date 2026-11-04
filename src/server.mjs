@@ -1,22 +1,19 @@
 import http from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, extname, normalize } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { join, extname, normalize } from 'node:path';
+import { randomUUID, createHash } from 'node:crypto';
 import { Store } from './store.mjs';
 import { aiAvailable, generateExam, proposeExam, inspectProposal, buildApprovedPackage, checkSourceSupport, validateGeneratedDraft } from './ai.mjs';
 import { extractMaterial } from './materials.mjs';
+import { loadConfig } from './config.mjs';
+import { RateLimiter } from './rate-limit.mjs';
+import { accessToken, browserSession, clearBrowserSession, checkRequestOrigin } from './http-session.mjs';
+import { codingStatus, previewCode } from './code-runner.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const envFile = join(root, '.env');
-if (existsSync(envFile)) process.loadEnvFile(envFile);
-const dataFile = process.env.DATA_FILE || join(root, 'data', 'studio.sqlite');
-const demoMode = process.env.DEMO_MODE !== '0';
-const platformLabel = process.env.PLATFORM_LABEL || 'Got It!';
-const platformTagline = process.env.PLATFORM_TAGLINE || 'Gotta Catch Ed All';
-const instructorPassword = process.env.INSTRUCTOR_PASSWORD || (demoMode ? 'demo-instructor' : '');
+const { root, dataFile, demoMode, platformLabel, platformTagline, instructorPassword, publicOrigin } = loadConfig();
 if (!instructorPassword) throw new Error('INSTRUCTOR_PASSWORD is required when DEMO_MODE=0.');
 const store = new Store(dataFile);
+const assetCache = new Map();
 
 function seedDemo() {
   for (const name of ['archives', 'garden']) {
@@ -49,26 +46,39 @@ function csv(res, body) {
   res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="gradebook.csv"', 'Cache-Control': 'no-store' });
   res.end(body);
 }
-function token(req) { return /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1]; }
 async function body(req, maxLength = 1_000_000) {
-  let raw = '';
+  const chunks = [];
+  let bytes = 0;
   for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > maxLength) throw Object.assign(new Error('Request body is too large.'), { code: 'TOO_LARGE', status: 413 });
+    bytes += chunk.length;
+    if (bytes > maxLength) throw Object.assign(new Error('Request body is too large.'), { code: 'TOO_LARGE', status: 413 });
+    chunks.push(chunk);
   }
+  let raw;
+  try { raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+  catch { throw Object.assign(new Error('Request body must use valid UTF-8.'), { code: 'INVALID_JSON', status: 400 }); }
   try { return raw ? JSON.parse(raw) : {}; }
   catch { throw Object.assign(new Error('Invalid JSON.'), { code: 'INVALID_JSON', status: 400 }); }
 }
-const rate = new Map();
-function limit(key, max, windowMs = 60_000) {
-  const now = Date.now();
-  const state = rate.get(key) ?? { start: now, count: 0 };
-  if (now - state.start >= windowMs) { state.start = now; state.count = 0; }
-  state.count++;
-  rate.set(key, state);
-  if (state.count > max) throw Object.assign(new Error('Too many requests. Please wait before retrying.'), {
-    code: 'RATE_LIMITED', status: 429, retryAfter: Math.ceil((state.start + windowMs - now) / 1000)
-  });
+const rate = new RateLimiter();
+const limit = (key, max, windowMs) => rate.consume(key, max, windowMs);
+function studentAdmission(req, input, preview) {
+  const ip = req.socket.remoteAddress;
+  const identity = createHash('sha256').update(JSON.stringify([input?.runId, input?.candidateId])).digest('hex');
+  const accountKey = `join-failed:${identity}`, ipKey = `join-failed-ip:${ip}`;
+  rate.check(accountKey, 10);
+  rate.check(ipKey, 200);
+  try {
+    const result = preview ? store.previewJoin(input) : store.join(input);
+    rate.clear(accountKey);
+    return result;
+  } catch (err) {
+    if (err.code === 'UNAUTHORIZED') {
+      rate.consume(accountKey, 10);
+      rate.consume(ipKey, 200);
+    }
+    throw err;
+  }
 }
 const csvCell = value => {
   let text = String(value ?? '');
@@ -89,6 +99,10 @@ const error = (res, requestId, err) => json(res, err.status ?? 500, {
 async function api(req, res, url, requestId) {
   const path = url.pathname, method = req.method;
   if (method === 'GET' && path === '/api/health') return send(res, requestId, { status: 'ok', demoMode });
+  if (method === 'GET' && path === '/api/ready') {
+    store.db.prepare('SELECT 1').get();
+    return send(res, requestId, { status: 'ready' });
+  }
   if (method === 'GET' && path === '/api/config') return send(res, requestId, { platformLabel, platformTagline, demoMode });
   if (method === 'GET' && path === '/api/demo') {
     if (!demoMode || process.env.NODE_ENV !== 'test')
@@ -101,21 +115,33 @@ async function api(req, res, url, requestId) {
   }
   if (method === 'POST' && path === '/api/instructor/login') {
     limit(`admin-login:${req.socket.remoteAddress}`, 10);
-    return send(res, requestId, store.loginInstructor((await body(req)).password, instructorPassword));
+    return send(res, requestId, browserSession(req, res, 'instructor', store.loginInstructor((await body(req)).password, instructorPassword), publicOrigin));
   }
   if (method === 'POST' && path === '/api/auth/proctor/join') {
     limit(`proctor-login:${req.socket.remoteAddress}`, 10);
     const input = await body(req);
-    return send(res, requestId, store.loginProctor(input.runId, input.code));
+    return send(res, requestId, browserSession(req, res, 'proctor', store.loginProctor(input.runId, input.code), publicOrigin));
   }
   if (path.startsWith('/api/proctor/')) {
-    const proctorToken = token(req);
+    const proctorToken = accessToken(req, 'proctor');
     const runId = store.requireProctor(proctorToken);
     if (method === 'GET' && path === '/api/proctor/run') return send(res, requestId, store.proctorView(runId));
-    if (method === 'POST' && path === '/api/proctor/logout') return send(res, requestId, store.logoutProctor(proctorToken));
+    if (method === 'POST' && path === '/api/proctor/logout') {
+      const result = store.logoutProctor(proctorToken);
+      clearBrowserSession(req, res, 'proctor', publicOrigin);
+      return send(res, requestId, result);
+    }
   }
   if (path.startsWith('/api/instructor/')) {
-    store.requireInstructor(token(req));
+    const instructorToken = accessToken(req, 'instructor');
+    store.requireInstructor(instructorToken);
+    if (method === 'GET' && path === '/api/instructor/session') return send(res, requestId, { authenticated: true });
+    if (method === 'GET' && path === '/api/instructor/system') return send(res, requestId, { uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), coding: store.codingQueue.stats() });
+    if (method === 'POST' && path === '/api/instructor/logout') {
+      const result = store.logoutInstructor(instructorToken);
+      clearBrowserSession(req, res, 'instructor', publicOrigin);
+      return send(res, requestId, result);
+    }
     if (method === 'POST' && path === '/api/instructor/materials/extract') {
       const input = await body(req, 15_000_000);
       if (typeof input.base64 !== 'string' || input.base64.length > 13_400_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64))
@@ -124,10 +150,16 @@ async function api(req, res, url, requestId) {
     }
     if (method === 'GET' && path === '/api/instructor/ai/status')
       return send(res, requestId, { available: aiAvailable(), model: process.env.GEMINI_MODEL || 'gemini-3.5-flash' });
+    if (method === 'GET' && path === '/api/instructor/code/status') return send(res, requestId, await codingStatus());
+    if (method === 'POST' && path === '/api/instructor/code/preview') {
+      limit(`code-preview:instructor:${instructorToken}`, 12);
+      const input = await body(req, 500_000);
+      return send(res, requestId, await previewCode(input.config, input.value, store.codeRunner));
+    }
     if (path === '/api/instructor/ai/proposal') {
-      if (method === 'GET') return send(res, requestId, store.getAiProposal(token(req)));
-      if (method === 'PUT') return send(res, requestId, store.saveAiProposal(token(req), await body(req)));
-      if (method === 'DELETE') return send(res, requestId, store.deleteAiProposal(token(req)));
+      if (method === 'GET') return send(res, requestId, store.getAiProposal(instructorToken));
+      if (method === 'PUT') return send(res, requestId, store.saveAiProposal(instructorToken, await body(req)));
+      if (method === 'DELETE') return send(res, requestId, store.deleteAiProposal(instructorToken));
     }
     if (method === 'POST' && path === '/api/instructor/ai/inspect')
       return send(res, requestId, inspectProposal(await body(req)));
@@ -219,9 +251,18 @@ async function api(req, res, url, requestId) {
     }
     if (method === 'GET' && path === '/api/instructor/runs') return send(res, requestId, store.listRuns());
     if (method === 'POST' && path === '/api/instructor/runs') return send(res, requestId, store.createRun(await body(req)), 201);
+    const runPinPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/pin$/.exec(path);
+    if (method === 'PUT' && runPinPath)
+      return send(res, requestId, store.resetRunPin(runPinPath[1], (await body(req)).pin));
     const recoveryPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/(extend|reopen)$/.exec(path);
     if (method === 'POST' && recoveryPath) return send(res, requestId,
       store.recoverStudent(recoveryPath[1], recoveryPath[2], await body(req), recoveryPath[3]));
+    const publishAllResultsPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/publish-scores$/.exec(path);
+    if (method === 'POST' && publishAllResultsPath)
+      return send(res, requestId, store.publishCompletedResults(publishAllResultsPath[1]));
+    const publishStudentResultsPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/publish-scores$/.exec(path);
+    if (method === 'POST' && publishStudentResultsPath)
+      return send(res, requestId, store.publishStudentResults(publishStudentResultsPath[1], publishStudentResultsPath[2]));
     const studentReviewPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})(?:\/scores\/([A-Za-z0-9-]+))?$/.exec(path);
     if (studentReviewPath) {
       const [, runId, candidateId, activityId] = studentReviewPath;
@@ -235,7 +276,7 @@ async function api(req, res, url, requestId) {
     if (proctorAccessPath) {
       const runId = proctorAccessPath[1];
       if (method === 'GET') return send(res, requestId, store.proctorAccess(runId));
-      if (method === 'POST') return send(res, requestId, store.issueProctorAccess(runId));
+      if (method === 'POST') return send(res, requestId, store.issueProctorAccess(runId, (await body(req)).code));
       if (method === 'DELETE') return send(res, requestId, store.revokeProctorAccess(runId));
     }
     const runPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/(name|results|export.csv)$/.exec(path);
@@ -247,12 +288,25 @@ async function api(req, res, url, requestId) {
     }
     if (method === 'GET' && path === '/api/instructor/audit') return send(res, requestId, store.auditLog());
   }
-  if (method === 'POST' && path === '/api/auth/student/join') {
-    limit(`join:${req.socket.remoteAddress}`, 20);
-    return send(res, requestId, store.join(await body(req)));
+  if (method === 'POST' && (path === '/api/auth/student/join' || path === '/api/auth/student/preview')) {
+    // Socket address is intentional: forwarded headers are not trusted. Allow a full
+    // 500-student class behind NAT/proxy; credential failures have separate limits.
+    limit(`join-requests:${req.socket.remoteAddress}`, 5000);
+    const input = await body(req);
+    const preview = path.endsWith('/preview');
+    const result = studentAdmission(req, input, preview);
+    return send(res, requestId, preview ? result : browserSession(req, res, 'candidate', result, publicOrigin));
   }
   if (path.startsWith('/api/me/')) {
-    const sessionId = store.requireCandidate(token(req));
+    const candidateToken = accessToken(req, 'candidate');
+    const sessionId = store.requireCandidate(candidateToken);
+    const jobPath = /^\/api\/me\/coding-jobs\/([a-f0-9-]{36})$/.exec(path);
+    if (method === 'GET' && jobPath) return send(res, requestId, store.codingQueue.view(sessionId, jobPath[1]));
+    if (method === 'POST' && path === '/api/me/logout') {
+      const result = store.logoutCandidate(candidateToken);
+      clearBrowserSession(req, res, 'candidate', publicOrigin);
+      return send(res, requestId, result);
+    }
     if (method === 'GET' && (path === '/api/me/session' || path === '/api/me/results')) return send(res, requestId, store.sessionView(sessionId));
     if (method === 'GET' && path === '/api/me/missions/current') {
       const state = store.progress(sessionId);
@@ -264,7 +318,16 @@ async function api(req, res, url, requestId) {
     const activityPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/submit$/.exec(path);
     if (method === 'POST' && activityPath) {
       limit(`submit:${sessionId}:${activityPath[1]}`, 6);
-      return send(res, requestId, store.submit(sessionId, activityPath[1], await body(req), req.headers['idempotency-key'] ?? null));
+      if (req.headers.prefer === 'respond-async' && store.context(sessionId).exam.public.missions.some(m => m.activities.some(a => a.id === activityPath[1] && a.type === 'code_writing'))) {
+        return send(res, requestId, store.queueCode(sessionId, activityPath[1], 'submit', await body(req, 110_000), req.headers['idempotency-key']), 202);
+      }
+      return send(res, requestId, await store.submitAnswer(sessionId, activityPath[1], await body(req, 110_000), req.headers['idempotency-key'] ?? null));
+    }
+    const codePreviewPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/preview$/.exec(path);
+    if (method === 'POST' && codePreviewPath) {
+      limit(`code-preview:${sessionId}`, 12);
+      if (req.headers.prefer === 'respond-async') return send(res, requestId, store.queueCode(sessionId, codePreviewPath[1], 'preview', await body(req, 110_000), req.headers['idempotency-key']), 202);
+      return send(res, requestId, await store.previewCode(sessionId, codePreviewPath[1], await body(req, 110_000)));
     }
     const draftPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/draft$/.exec(path);
     if (method === 'PUT' && draftPath) return send(res, requestId, store.saveDraft(sessionId, draftPath[1], await body(req, 110_000)));
@@ -282,7 +345,10 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'");
   try {
     const url = new URL(req.url, 'http://localhost');
-    if (url.pathname.startsWith('/api/')) return await api(req, res, url, requestId);
+    if (url.pathname.startsWith('/api/')) {
+      checkRequestOrigin(req, publicOrigin);
+      return await api(req, res, url, requestId);
+    }
     let path = url.pathname;
     if (path === '/' || path === '' || path === '/index.html') path = '/student.html';
     else if (path === '/app/student' || path === '/app/student/') path = '/student.html';
@@ -292,9 +358,21 @@ const server = http.createServer(async (req, res) => {
     if (normalized.includes('..') || !staticTypes[extname(normalized)]) throw Object.assign(new Error('Not found.'), { code: 'NOT_FOUND', status: 404 });
     const file = join(root, 'public', normalized);
     if (!file.startsWith(join(root, 'public')) || !existsSync(file)) throw Object.assign(new Error('Not found.'), { code: 'NOT_FOUND', status: 404 });
-    res.writeHead(200, { 'Content-Type': staticTypes[extname(file)], 'Cache-Control': 'no-store' });
-    res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
-  } catch (err) { error(res, requestId, err); }
+    const info = statSync(file), cached = assetCache.get(file);
+    let asset = cached;
+    if (!cached || cached.mtime !== info.mtimeMs || cached.size !== info.size) {
+      const bytes = readFileSync(file);
+      asset = { bytes, mtime: info.mtimeMs, size: info.size, etag: '"' + createHash('sha256').update(bytes).digest('hex') + '"' };
+      assetCache.set(file, asset);
+    }
+    const headers = { 'Content-Type': staticTypes[extname(file)], 'Cache-Control': 'private, no-cache', ETag: asset.etag };
+    if (req.headers['if-none-match'] === asset.etag) { res.writeHead(304, headers); return res.end(); }
+    res.writeHead(200, headers);
+    res.end(req.method === 'HEAD' ? undefined : asset.bytes);
+  } catch (err) {
+    if (!err.status || err.status >= 500) console.error(JSON.stringify({ level: 'error', requestId, method: req.method, path: req.url?.split('?')[0], code: err.code || 'INTERNAL_ERROR', message: err.message }));
+    error(res, requestId, err);
+  }
 });
 
 if (process.env.NODE_ENV !== 'test') {

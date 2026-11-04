@@ -1,8 +1,14 @@
 import { beginRequestStatus } from './request-status.js';
+import { proctorRequestLabel } from './request-labels.js';
 import { icon } from './icons.js';
+import { installPasswordToggles } from './password-toggle.js';
+import { localDateTime } from './ui-model.js';
+import { browserSessionHeaders } from './browser-session.js';
+
+installPasswordToggles();
 
 const $ = id => document.getElementById(id);
-const state = { token: sessionStorage.getItem('proctorToken'), view: null, loading: false, timer: null };
+const state = { authenticated: true, view: null, loading: false, timer: null };
 const labels = { registered: 'Not started', in_progress: 'In progress', submitted: 'Submitted', expired: 'Time ended' };
 const statusIcons = { registered: 'registered', in_progress: 'progress', submitted: 'submitted', expired: 'expired' };
 const node = (tag, className, content) => {
@@ -14,17 +20,9 @@ const node = (tag, className, content) => {
 const timeText = value => value ? new Date(value).toLocaleString() : '—';
 const message = value => { $('notice').textContent = value || ''; };
 
-function requestLabel(path, method) {
-  if (path === '/api/auth/proctor/join') return 'Signing in…';
-  if (path === '/api/proctor/run') return 'Loading run monitor…';
-  if (path === '/api/proctor/logout') return 'Signing out…';
-  return method === 'GET' ? 'Loading…' : 'Saving changes…';
-}
-
 async function request(path, { method = 'GET', data, silent = false } = {}) {
-  const finishStatus = silent ? () => {} : beginRequestStatus(requestLabel(path, method));
-  const headers = {};
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  const finishStatus = silent ? () => {} : beginRequestStatus(proctorRequestLabel(path));
+  const headers = browserSessionHeaders('proctor');
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   try {
     const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
@@ -66,6 +64,7 @@ function renderRows() {
   if (!view) return;
   const term = $('proctor-search').value.trim().toLowerCase();
   const filter = $('proctor-filter').value;
+  for (const card of $('proctor-counts').querySelectorAll('button')) card.setAttribute('aria-pressed', String(card.dataset.status === filter));
   const rows = view.rows.filter(row => (filter === 'all' || row.status === filter) &&
     (!term || `${row.displayName} ${row.candidateId} ${row.section}`.toLowerCase().includes(term)));
   $('proctor-match-count').textContent = `${rows.length} of ${view.rows.length} students`;
@@ -99,20 +98,24 @@ function renderRows() {
 function renderRun() {
   const view = state.view;
   $('proctor-run-name').textContent = view.name;
-  $('proctor-run-meta').textContent = `${view.name === view.activityTitle ? '' : `${view.activityTitle} · `}v${view.version}${view.className ? ` · ${view.className}` : ''} · Closes ${timeText(view.closesAt)}`;
+  $('proctor-run-meta').textContent = `${view.name === view.activityTitle ? '' : `${view.activityTitle} · `}v${view.version}${view.className ? ` · ${view.className}` : ''} · Closes ${localDateTime(view.closesAt)}`;
   $('proctor-update').textContent = `Updated ${timeText(view.updatedAt)} · refreshes every 15 seconds`;
   const counts = $('proctor-counts');
   counts.replaceChildren();
   for (const key of ['registered', 'in_progress', 'submitted', 'expired']) {
-    const card = node('div', 'proctor-count');
+    const card = node('button', 'proctor-count'); card.type = 'button'; card.dataset.status = key;
+    card.addEventListener('click', () => {
+      $('proctor-filter').value = $('proctor-filter').value === key ? 'all' : key;
+      renderRows();
+    });
     card.append(icon(statusIcons[key]), node('strong', '', view.counts[key]), node('span', '', labels[key]));
     counts.append(card);
   }
   renderRows();
 }
 
-async function loadRun({ background = false } = {}) {
-  if (state.loading || !state.token) return;
+async function loadRun({ background = false, restoring = false } = {}) {
+  if (state.loading || !state.authenticated) return;
   state.loading = true;
   state.lastRefresh = Date.now();
   $('proctor-refresh').disabled = true;
@@ -124,11 +127,13 @@ async function loadRun({ background = false } = {}) {
     message('');
   } catch (error) {
     if (error.status === 401) {
-      state.token = null;
-      sessionStorage.removeItem('proctorToken');
+      state.authenticated = false;
       showLogin();
-      message('Proctor access ended. Sign in with a current code.');
+      if (!restoring) message('Proctor access ended. Sign in with a current code.');
     } else {
+      $('proctor-update').textContent = state.view
+        ? `Refresh failed · Last updated ${timeText(state.view.updatedAt)}. Retrying automatically.`
+        : 'Run status is unavailable. Select Refresh to try again.';
       message(`Could not refresh the run: ${error.message}`);
     }
   } finally {
@@ -145,8 +150,7 @@ $('proctor-login').addEventListener('submit', async event => {
   try {
     const joined = await request('/api/auth/proctor/join', { method: 'POST',
       data: { runId: $('proctor-run-id').value.trim(), code: $('proctor-code').value } });
-    state.token = joined.token;
-    sessionStorage.setItem('proctorToken', joined.token);
+    state.authenticated = true;
     await loadRun();
   } catch (error) { message(error.message); }
   finally { button.disabled = false; }
@@ -156,9 +160,9 @@ $('proctor-refresh').addEventListener('click', loadRun);
 $('proctor-search').addEventListener('input', renderRows);
 $('proctor-filter').addEventListener('change', renderRows);
 $('proctor-logout').addEventListener('click', async () => {
-  try { await request('/api/proctor/logout', { method: 'POST' }); } catch { /* clear local session */ }
-  state.token = null;
-  sessionStorage.removeItem('proctorToken');
+  try { await request('/api/proctor/logout', { method: 'POST' }); }
+  catch (error) { if (error.status !== 401) { message('Sign-out could not reach the server. Please retry.'); return; } }
+  state.authenticated = false;
   showLogin();
   message('Signed out.');
 });
@@ -171,5 +175,5 @@ try {
   $('platform-label').textContent = config.platformLabel;
   $('platform-tagline').textContent = config.platformTagline || 'Gotta Catch Ed All';
 } catch { /* use default label */ }
-if (state.token) await loadRun();
+if (state.authenticated) await loadRun({ restoring: true });
 else showLogin();
