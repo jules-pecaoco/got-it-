@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/store.mjs';
-import { removeDemoAssessments } from '../src/maintenance.mjs';
+import { removeDemoAssessments, removeUnusedDrafts } from '../src/maintenance.mjs';
 import { initializeStoreSchema } from '../src/store-schema.mjs';
 
 test('shared configuration loads .env independently of cwd, keeps explicit overrides and the in-memory sentinel', () => {
@@ -32,8 +32,8 @@ test('shared configuration loads .env independently of cwd, keeps explicit overr
 test('demo cleanup removes all dependent records and retains unrelated assessments', () => {
   const store = new Store(':memory:');
   try {
-    const pub = JSON.parse(readFileSync(new URL('../examples/garden/public-exam.json', import.meta.url)));
-    const priv = JSON.parse(readFileSync(new URL('../examples/garden/private-grading.json', import.meta.url)));
+    const pub = JSON.parse(readFileSync(new URL('./fixtures/garden/public-exam.json', import.meta.url)));
+    const priv = JSON.parse(readFileSync(new URL('./fixtures/garden/private-grading.json', import.meta.url)));
     pub.missions.forEach(mission => { delete mission.shuffleGroup; });
     pub.missions[0].activities[0].retryPolicy = { maxRetries: 2, pointPenalty: 1, timePenaltySeconds: 0 };
     store.importDraft(pub, priv);
@@ -60,11 +60,32 @@ test('demo cleanup removes all dependent records and retains unrelated assessmen
   } finally { store.close(); }
 });
 
+test('draft cleanup removes unused drafts and sources while preserving published versions and answer drafts', () => {
+  const store = new Store(':memory:');
+  try {
+    const pub = JSON.parse(readFileSync(new URL('./fixtures/garden/public-exam.json', import.meta.url)));
+    const priv = JSON.parse(readFileSync(new URL('./fixtures/garden/private-grading.json', import.meta.url)));
+    store.importDraft(pub, priv); store.publish(pub.examId, pub.version);
+    store.importDraft({ ...pub, examId: 'unused-draft' }, priv);
+    store.addSource('unused-draft', 1, { filename: 'notes.txt', content: 'Temporary source' });
+    const run = store.createRun({ examId: pub.examId, version: 1, pin: '4242', opensAt: new Date(Date.now() - 1000).toISOString(),
+      closesAt: new Date(Date.now() + 600000).toISOString(), roster: [{ candidateId: 'A', displayName: 'Alex', section: 'S' }] });
+    const joined = store.join({ runId: run.id, candidateId: 'A', pin: '4242' });
+    const activity = store.missionView(joined.session.id, joined.session.order[0].id).activities[0];
+    store.saveDraft(joined.session.id, activity.id, activity.type === 'numeric_entry' ? { value: 12, unit: 'm2' } : { value: 'b' });
+    assert.deepEqual(removeUnusedDrafts(store), { removedDrafts: 1 });
+    assert.equal(store.listExams().length, 1);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM source_documents').get().n, 0);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM answer_drafts').get().n, 1);
+    assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally { store.close(); }
+});
+
 test('legacy candidate tokens expire on schema upgrade without losing resumable attempts', () => {
   const store = new Store(':memory:');
   try {
-    const pub = JSON.parse(readFileSync(new URL('../examples/garden/public-exam.json', import.meta.url)));
-    const priv = JSON.parse(readFileSync(new URL('../examples/garden/private-grading.json', import.meta.url)));
+    const pub = JSON.parse(readFileSync(new URL('./fixtures/garden/public-exam.json', import.meta.url)));
+    const priv = JSON.parse(readFileSync(new URL('./fixtures/garden/private-grading.json', import.meta.url)));
     store.importDraft(pub, priv); store.publish(pub.examId, 1);
     const run = store.createRun({ examId: pub.examId, version: 1, pin: '4242',
       opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 3600_000).toISOString(),

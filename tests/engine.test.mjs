@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { assignedOrder, evaluate, validatePackage } from '../src/engine.mjs';
 
 const fixture = name => ({
-  pub: JSON.parse(readFileSync(new URL(`../examples/${name}/public-exam.json`, import.meta.url))),
-  priv: JSON.parse(readFileSync(new URL(`../examples/${name}/private-grading.json`, import.meta.url)))
+  pub: JSON.parse(readFileSync(new URL(`./fixtures/${name}/public-exam.json`, import.meta.url))),
+  priv: JSON.parse(readFileSync(new URL(`./fixtures/${name}/private-grading.json`, import.meta.url)))
 });
 const clone = value => structuredClone(value);
 

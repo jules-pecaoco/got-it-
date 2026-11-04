@@ -4,7 +4,7 @@
   "rollbackTag": "codex/pre-migration-2026-11-04",
   "originalDataPreserved": true,
   "automatedTests": {
-    "passed": 116,
+    "passed": 117,
     "failed": 0
   },
   "checks": [
@@ -64,7 +64,7 @@
     "MySQL and framework hosting",
     "automated full browser interaction grading"
   ],
-  "notes": "Fastify compatibility controllers preserve existing APIs. New runtime/editor modules use TypeScript; existing workflows remain JavaScript. Intermediate phase logs are local diagnostics; migration-checks.txt is the final combined check.",
+  "notes": "Required samples are test fixtures only. Detailed checks can be regenerated with npm run check; previous audit logs remain in Git history.",
   "storage": {
     "runtimeTemp": "D:\\code\\ctfv1\\data\\tmp",
     "npmCache": "D:\\code\\ctfv1\\data\\npm-cache",
@@ -78,5 +78,13 @@
     "requestP95Ms": 196.2,
     "queueDrained": true,
     "workload": "Two Python private tests per student; no concurrent build/test workload"
+  },
+  "cleanup": {
+    "sampleAssessment": "local-test-garden",
+    "removedSampleRuns": 7,
+    "removedSampleAttempts": 5,
+    "removedUnusedDrafts": 1,
+    "backup": "data/backups/before-cleanup-1793766771954-748971a8.sqlite",
+    "originalRollbackDatabaseUnchanged": true
   }
 }

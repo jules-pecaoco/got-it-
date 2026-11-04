@@ -48,7 +48,7 @@ Staff can inspect request latency, event-loop delay and queue age at `/api/instr
 
 ## Verification on 4 November 2026
 
-- 116 automated tests passed; TypeScript, JavaScript syntax, scoped formatting and whitespace checks passed.
+- 117 automated tests passed; TypeScript, JavaScript syntax, scoped formatting and whitespace checks passed.
 - Browser: logic editor, saved-draft refresh, sample results, disconnect/reconnect recovery and cross-origin PHP preview verified using fictional records. The Playwright skill was used for these checks.
 - Real Docker: JavaScript, Python, SQL and PHP execution, invalid programs, execution/output limits and runtime restrictions verified.
 - Real PHP: HTTP rendering, SQLite CRUD, static assets, database recovery/reset, filesystem restriction, console bridge, preview cookie paths and revoked preview access verified.

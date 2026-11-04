@@ -20,3 +20,16 @@ export function removeDemoAssessments(store, demoIds = ['archives-demo', 'garden
     return counts;
   });
 }
+
+export function removeUnusedDrafts(store) {
+  return store.tx(() => {
+    const drafts = store.db.prepare(`SELECT exam_id,version FROM exams e WHERE status='draft'
+      AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.exam_id=e.exam_id AND r.version=e.version)`).all();
+    for (const draft of drafts) {
+      store.db.prepare('DELETE FROM source_documents WHERE exam_id=? AND version=?').run(draft.exam_id, draft.version);
+      store.db.prepare('DELETE FROM exams WHERE exam_id=? AND version=?').run(draft.exam_id, draft.version);
+    }
+    store.audit('maintenance', 'remove_unused_drafts', 'assessments', { count: drafts.length });
+    return { removedDrafts: drafts.length };
+  });
+}

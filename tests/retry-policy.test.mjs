@@ -6,7 +6,7 @@ import { validatePackage } from '../src/engine.mjs';
 import { answerText } from '../public/answer-key.js';
 import { parseTableCode } from '../public/table-code.js';
 
-const base = new URL('../exam-packages/itp255-week13-draft/', import.meta.url);
+const base = new URL('./fixtures/week13/', import.meta.url);
 const pub = JSON.parse(readFileSync(new URL('public-exam.json', base)));
 const priv = JSON.parse(readFileSync(new URL('private-grading.json', base)));
 const source = readFileSync(new URL('Week_13-2_extracted.md', base), 'utf8');

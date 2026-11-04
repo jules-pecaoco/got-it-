@@ -1,2 +1,0 @@
-PASS: real PHP HTTP, SQLite CRUD, static assets, filesystem boundary, database recovery and reset.
-PASS: cross-origin preview proxy, console bridge, cookie scoping and expired-access rejection.

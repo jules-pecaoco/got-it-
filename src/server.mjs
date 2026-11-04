@@ -41,28 +41,10 @@ function answerLimit(sessionId, activityId) {
   return activity?.type === 'web_project' ? 1_700_000 : 110_000;
 }
 
-function seedDemo() {
-  for (const name of ['archives', 'garden']) {
-    const pub = JSON.parse(readFileSync(join(root, 'examples', name, 'public-exam.json'), 'utf8'));
-    const priv = JSON.parse(readFileSync(join(root, 'examples', name, 'private-grading.json'), 'utf8'));
-    if (!store.listExams().some(x => x.examId === pub.examId && x.version === pub.version)) {
-      store.importDraft(pub, priv, 'demo-seed');
-      store.publish(pub.examId, pub.version, 'demo-seed');
-    }
-    if (!store.listRuns().some(x => x.examId === pub.examId && x.version === pub.version)) {
-      store.createRun({
-        examId: pub.examId, version: pub.version, pin: '4242', feedbackMode: 'practice',
-        opensAt: new Date(Date.now() - 3600_000).toISOString(),
-        closesAt: new Date(Date.now() + 7 * 86400_000).toISOString(),
-        roster: [
-          { candidateId: 'DEMO-001', displayName: 'Alex Rivera', section: 'Demo A' },
-          { candidateId: 'DEMO-002', displayName: 'Sam Lee', section: 'Demo A' }
-        ]
-      }, 'demo-seed');
-    }
-  }
+if (demoMode && process.env.NODE_ENV === 'test') {
+  const { seedDemo } = await import('../tests/fixtures/seed.mjs');
+  seedDemo(store);
 }
-if (demoMode && process.env.NODE_ENV === 'test') seedDemo();
 
 function json(res, status, payload, requestId, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });

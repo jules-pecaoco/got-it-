@@ -12,8 +12,8 @@ test('faculty ownership isolates assessments, classes, runs and audit records', 
     const token = store.loginInstructor('alice-password-long', '', 'alice').token;
     assert.equal(store.requireInstructor(token), 'alice');
     assert.throws(() => store.loginInstructor('wrong', '', 'alice'), e => e.status === 401);
-    const pub = JSON.parse(readFileSync(new URL('../examples/garden/public-exam.json', import.meta.url)));
-    const priv = JSON.parse(readFileSync(new URL('../examples/garden/private-grading.json', import.meta.url)));
+    const pub = JSON.parse(readFileSync(new URL('./fixtures/garden/public-exam.json', import.meta.url)));
+    const priv = JSON.parse(readFileSync(new URL('./fixtures/garden/private-grading.json', import.meta.url)));
     let classroom;
     asFaculty('alice', () => {
       store.importDraft(pub, priv); store.publish(pub.examId, pub.version);

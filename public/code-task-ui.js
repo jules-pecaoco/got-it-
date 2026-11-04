@@ -1,6 +1,5 @@
 import { mountLogic } from '/assets/workspaces.js';
-import { codingLanguages, codeLimit, comparisonText } from './code-task.js';
-import { tokenizeCode } from './code-highlight.js';
+import { codingLanguages, comparisonText } from './code-task.js';
 const node = (tag, text, className = '') => {
   const element = document.createElement(tag);
   if (text !== undefined) element.textContent = text;

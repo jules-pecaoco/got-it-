@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { Store } from '../src/store.mjs';
 
 const fixtures = name => [
-  JSON.parse(readFileSync(new URL(`../examples/${name}/public-exam.json`, import.meta.url))),
-  JSON.parse(readFileSync(new URL(`../examples/${name}/private-grading.json`, import.meta.url)))
+  JSON.parse(readFileSync(new URL(`./fixtures/${name}/public-exam.json`, import.meta.url))),
+  JSON.parse(readFileSync(new URL(`./fixtures/${name}/private-grading.json`, import.meta.url)))
 ];
 const setup = name => {
   const store = new Store(':memory:');

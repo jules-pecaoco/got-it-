@@ -5,8 +5,8 @@ import { Store } from '../src/store.mjs';
 
 function fixture() {
   const store = new Store();
-  const pub = JSON.parse(readFileSync(new URL('../examples/garden/public-exam.json', import.meta.url)));
-  const priv = JSON.parse(readFileSync(new URL('../examples/garden/private-grading.json', import.meta.url)));
+  const pub = JSON.parse(readFileSync(new URL('./fixtures/garden/public-exam.json', import.meta.url)));
+  const priv = JSON.parse(readFileSync(new URL('./fixtures/garden/private-grading.json', import.meta.url)));
   store.importDraft(pub, priv); store.publish(pub.examId, pub.version);
   const run = store.createRun({ examId: pub.examId, version: pub.version, pin: '4242',
     opensAt: new Date(Date.now() - 1000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
