@@ -11,10 +11,12 @@ Use the commands below to verify the revision you plan to run. Historical pass c
 | `npm run check`                                     | Type checking, JavaScript syntax, scoped formatting, editor build and automated regression tests | Real Docker behavior, live AI accuracy or classroom capacity |
 | `npm run verify:coding`                             | Real installed language runtimes, input/output and sandbox limits                                | Acceptable throughput for a full class                       |
 | `npm run verify:web`                                | Real frontend/PHP preview behavior, SQLite, assets and isolation                                 | Every possible student project or browser interaction        |
+| `npm run verify:recovery` | Independent workspace lifetime after its Node owner exits, normal close, and expired-workspace detection | Off-host database recovery or whole-host failure |
+| `npm run test:load:mixed` | Current autosaves, interactive terminals, preview POSTs/checkpoints/replacement, rejoin and manual-review finalization | Docker capacity in its default simulated mode |
 | [Browser regression](../../tests/browser/README.md) | Maintained UI workflows against fictional in-memory records                                      | Live AI, real execution or deployment security               |
 | Restore drill                                       | Verified snapshot, selected target, records and recovery                                         | Protection against host loss without off-host copies         |
 
-The package's `check` command does not run the browser workflows or real-Docker verification. CI runs formatting, types, syntax and `npm test`; see [ci.yml](../../.github/workflows/ci.yml). Run builds and container/load checks outside active assessments.
+The package's `check` command does not run the browser workflows or real-Docker verification. CI runs formatting, types, syntax and `npm test`, plus a separate execution/recovery job with pinned Docker images and a four-student mixed workflow; see [ci.yml](../../.github/workflows/ci.yml). Run builds and container/load checks outside active assessments.
 
 ## Current coverage
 
@@ -29,11 +31,17 @@ The current tests exercise grading rules, retry limits, deadlines, draft revisio
 
 Fixtures are fictional and are not loaded during normal startup. Live provider answer quality is not established by mocked tests.
 
-## Load rehearsal limitation
+## Current load rehearsals
 
-`npm run test:load` and its `--docker` option still use a legacy scenario: they submit console code, expect an asynchronous job receipt and assert automatic full-credit scores. Current console submission instead saves work for manual review. Do not use this script unchanged as evidence of current capacity.
+`npm run test:load` now verifies public preview execution and console submissions pending manual review, rather than expecting automatically awarded points. `npm run test:load:mixed` additionally exercises repeated saves, live terminal input/output, PHP POSTs, durable snapshots, preview replacement, rejoin, finalization and hidden results. Both commands default to simulated execution and fictional in-memory records.
 
-Update that scenario before using it for a current rehearsal, then measure the actual mix of interactive terminals, previews, saves and submissions on the intended host and public network. A simulated HTTP runner cannot establish Docker throughput. The historical 80-student automatic-grading result is retained in [test history](../archive/TEST_HISTORY.md), not claimed as a current live-terminal capacity result.
+For an explicit real-Docker rehearsal on PowerShell or another shell, use:
+
+```powershell
+node --import ./src/runtime-temp.mjs --import tsx --experimental-sqlite scripts/load-test-mixed.mts --docker --students=8
+```
+
+Choose 1–80 fictional students. The mixed scenario runs at most eight workflows simultaneously to respect the default terminal limit; the automated capacity regression separately verifies all 80 preview slots can replace their workspaces. Query timings include API calls; these short rehearsals do not replace a full-duration classroom pilot or public-network measurements. A simulated worker cannot establish Docker throughput. The historical automatic-grading results remain in [test history](../archive/TEST_HISTORY.md).
 
 ## Before a graded deployment
 

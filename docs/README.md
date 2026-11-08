@@ -29,6 +29,9 @@ Reviewed against the working tree on **7 November 2026**. This describes the fil
 | [Question authoring](reference/QUESTION_AUTHORING.md) | Working on question formats, packages or validators             |
 | [Security](reference/SECURITY.md)                     | Reviewing access, records, code execution and deployment limits |
 | [Test plan](reference/TEST_PLAN.md)                   | Verifying a revision or preparing a deployment                  |
+| [Application and student audit](reference/SYSTEM_STUDENT_AUDIT_2026-11-08.md) | Reviewing the 8 November student defects, UI/flow findings and verification results |
+| [Faculty desktop UI audit](reference/FACULTY_DESKTOP_UI_AUDIT_2026-11-08.md) | Reviewing laptop/desktop layouts, grading-flow defects, element moves and visual recommendations |
+| [Reliability resolution](reference/RELIABILITY_RESOLUTION_2026-11-08.md) | Reviewing the 8 November recovery, capacity, scheduling and performance fixes |
 | [Interface message audit](reference/INTERFACE_MESSAGE_AUDIT.md) | Reviewing user-facing wording and its meaning in each state |
 | [Branding](reference/BRANDING.md)                     | Changing colors, typography or shared interface styles          |
 
@@ -41,6 +44,7 @@ These preserve what was observed at a particular time. Their test counts, local 
 | [4 November migration](archive/MIGRATION_2026-11-04.md)           | Baseline tag, migration decisions and original verification |
 | [Earlier verification notes](archive/TEST_HISTORY.md)             | Successive workflow changes and past Docker/load checks     |
 | [7 November UX audit](archive/APPLICATION_UX_AUDIT_2026-11-07.md) | Original findings and the implementation follow-up          |
+| [8 November reliability and performance audit](archive/RELIABILITY_PERFORMANCE_AUDIT_2026-11-08.md) | Recovery defects, measured database costs and operational decisions |
 
 The long `SYSTEM_GUIDE.md` was replaced by these focused guides. Earlier overlapping hosting/reference files were moved into the folders above. [README](../README.md) is the entry point; [CHANGE](../CHANGE.md) records changes rather than the contents of a particular local database.
 

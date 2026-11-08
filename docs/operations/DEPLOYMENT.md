@@ -84,4 +84,8 @@ Run `npm run worker` on the execution host. Supply the secret through its servic
 
 The public preview origin still routes to the API's preview service on port 3102. That service relays to the configured execution worker; do not route public students directly to the authenticated worker API.
 
-Preview workspaces expire and are removed on normal shutdown. After a worker crash, inspect orphaned containers labeled `gotit.web=true` on the dedicated host before cleanup/restart. Keep records and accepted submissions available while planning any code or database rollback; the historical migration tag is documented in [the migration archive](../archive/MIGRATION_2026-11-04.md).
+Preview workspaces expire and are removed on normal shutdown. Each PHP workspace also enforces a 12-minute lifetime inside its container, independently of the application or worker process. New launches reconcile actual containers, count live crash survivors toward capacity, and remove only expired containers with this installation's `gotit.owner` label. `EXECUTION_INSTANCE_ID` can give separate installations a stable scope; keep it consistent across restarts and do not share it between unrelated deployments. Legacy containers created before these labels need deliberate operator inspection.
+
+The Windows launchers use a private parent/child IPC channel for graceful shutdown rather than relying on `child.kill()` to run JavaScript cleanup. Forced process or host termination still relies on the container deadline and the last durable database checkpoint. Preview POST responses persist a database snapshot before success; other database changes are checkpointed periodically and during save, export, replacement and normal shutdown.
+
+Keep records and accepted submissions available while planning any code or database rollback; the historical migration tag is documented in [the migration archive](../archive/MIGRATION_2026-11-04.md).

@@ -2,6 +2,14 @@
 
 This file records changes. For current setup and behavior, use the [documentation contents](docs/README.md). Older dated entries describe the revision at that time, including workflows later replaced; their test counts are historical.
 
+## 2026-11-08 — reliability and performance
+
+- Preserve web database checkpoints through preview expiry and process recreation; obtain current database state for ZIP exports and persist preview POST state before success.
+- Bound preview queues, prioritize snapshots, separate checkpoint/expiry scheduling and allow replacement at the full preview capacity.
+- Enforce PHP container lifetimes independently of Node, reconcile owned expired containers and count live crash survivors toward capacity. Drain application shutdown through parent/child IPC on Windows and Unix.
+- Replace repeated grading/access lookups with grouped run queries. Isolate tests from deployment `.env`, restore formatting checks, repair console load verification and add mixed-workflow/forced-exit checks and CI coverage.
+- See the [resolution report](docs/reference/RELIABILITY_RESOLUTION_2026-11-08.md) for validation and operational details.
+
 ## Unreleased — reviewed 7 November 2026
 
 These features are present in the current working tree, including uncommitted changes. This is not a published release or a new application-test report.

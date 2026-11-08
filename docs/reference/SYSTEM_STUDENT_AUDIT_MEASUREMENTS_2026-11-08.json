@@ -1,0 +1,323 @@
+{
+  "date": "2026-11-08",
+  "scope": "Current working tree; fictional in-memory records",
+  "checks": {
+    "automatedFailures": 0,
+    "realCoding": "passed",
+    "npmReportedVulnerabilities": 0,
+    "realWorkspaceRecovery": "passed",
+    "automatedTests": 191,
+    "realWeb": "passed",
+    "maintainedBrowserChecks": 8
+  },
+  "simulatedMixed": {
+    "requestP95Ms": 37.06,
+    "requests": 1280,
+    "maxConcurrentWorkflows": 8,
+    "durationSeconds": 2.83,
+    "students": 80
+  },
+  "realDockerMixed": {
+    "requestP95Ms": 2284.04,
+    "requests": 73,
+    "maxConcurrentWorkflows": 4,
+    "durationSeconds": 9.04,
+    "students": 4
+  },
+  "focusedBrowser": [
+    {
+      "name": "Student completion accessibility",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "name": "Student completion review",
+      "reviewButtons": 0,
+      "summary": "We received answers for 1 of 2 questions. 1 unanswered question receives no points. Your score will appear here after your instructor shares it. This page checks automatically."
+    },
+    {
+      "name": "Student coding geometry",
+      "viewport": [
+        1366,
+        768
+      ],
+      "pageWidth": 1366,
+      "panes": [
+        {
+          "id": "exam-workspace",
+          "y": 93.64583587646484,
+          "height": 618.5
+        },
+        {
+          "id": "ibt-context",
+          "y": 93.64583587646484,
+          "height": 618.5
+        }
+      ],
+      "editor": {
+        "y": 374.75,
+        "height": 321.3333435058594,
+        "bottom": 696.0833435058594
+      }
+    },
+    {
+      "name": "Student coding geometry",
+      "viewport": [
+        390,
+        844
+      ],
+      "pageWidth": 390,
+      "panes": [
+        {
+          "id": "exam-workspace",
+          "y": 372.91668701171875,
+          "height": 415.22918701171875
+        },
+        {
+          "id": "ibt-context",
+          "y": 243.8125,
+          "height": 117.10417175292969
+        }
+      ],
+      "editor": {
+        "y": 541.5,
+        "height": 321.3333435058594,
+        "bottom": 862.8333435058594
+      }
+    },
+    {
+      "name": "Student coding geometry",
+      "viewport": [
+        320,
+        740
+      ],
+      "pageWidth": 320,
+      "panes": [
+        {
+          "id": "exam-workspace",
+          "y": 366.5208435058594,
+          "height": 317.625
+        },
+        {
+          "id": "ibt-context",
+          "y": 264.9375,
+          "height": 89.58333587646484
+        }
+      ],
+      "editor": {
+        "y": 556.1041870117188,
+        "height": 321.3333435058594,
+        "bottom": 877.4375305175781
+      }
+    },
+    {
+      "name": "Student active coding accessibility",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            [
+              ".terminal-output"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Countdown after extension and heartbeat",
+      "beforeDeadline": "2026-11-08T10:54:24.231Z",
+      "afterDeadline": "2026-11-08T10:59:24.231Z",
+      "displayed": "39:43",
+      "serverRemainingMinutes": 44
+    },
+    {
+      "name": "Session rotation recovery",
+      "joinVisible": false,
+      "notice": "",
+      "answer": "Saving your answer…",
+      "localCopy": true
+    },
+    {
+      "name": "Proctor dashboard accessibility",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            [
+              "#proctor-counts"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "finalBrowser": [
+    {
+      "name": "Student sees published objective score",
+      "summary": "Your score: 50 out of 100 points."
+    },
+    {
+      "name": "Invalidated student sign-in blocks leave",
+      "joinVisible": false,
+      "notice": "Some answers are not saved. Select Try saving again beside those questions before leaving.",
+      "answerState": "Answer not saved. Your sign-in has expired. Sign in again to continue.",
+      "localCopy": true
+    },
+    {
+      "name": "Faculty exams",
+      "width": 1440,
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "targets": [
+            [
+              "#open-ai-settings"
+            ]
+          ]
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "Faculty exams",
+      "width": 390,
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "targets": [
+            [
+              "#open-ai-settings"
+            ]
+          ]
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "Faculty classes",
+      "width": 1440,
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "targets": [
+            [
+              "#open-ai-settings"
+            ]
+          ]
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "Faculty classes",
+      "width": 390,
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "targets": [
+            [
+              "#open-ai-settings"
+            ]
+          ]
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "Faculty results",
+      "width": 1440,
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "targets": [
+            [
+              "#open-ai-settings"
+            ]
+          ]
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "name": "Faculty results",
+      "width": 390,
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "targets": [
+            [
+              "#open-ai-settings"
+            ]
+          ]
+        }
+      ],
+      "overflow": false
+    }
+  ],
+  "webGeometry": [
+    {
+      "viewport": [
+        390,
+        844
+      ],
+      "pane": {
+        "y": 420.875,
+        "height": 367.2708435058594,
+        "bottom": 788.1458435058594
+      },
+      "editor": {
+        "y": 1346.09375,
+        "height": 406.0625
+      },
+      "editorInitiallyVisible": false,
+      "pageOverflow": false
+    },
+    {
+      "viewport": [
+        320,
+        740
+      ],
+      "pane": {
+        "y": 416.71875,
+        "height": 267.4270935058594,
+        "bottom": 684.1458435058594
+      },
+      "editor": {
+        "y": 1385.9375,
+        "height": 473.25
+      },
+      "editorInitiallyVisible": false,
+      "pageOverflow": false
+    },
+    {
+      "viewport": [
+        1366,
+        768
+      ],
+      "pane": {
+        "y": 87.85417175292969,
+        "height": 624.2916870117188,
+        "bottom": 712.1458587646484
+      },
+      "editor": {
+        "y": 937.0729370117188,
+        "height": 321.3333435058594
+      },
+      "editorInitiallyVisible": false,
+      "pageOverflow": false
+    }
+  ],
+  "limitations": [
+    "Short local rehearsals do not establish full-class Docker capacity",
+    "Incomplete accessibility checks require manual review",
+    "Live AI quality and public deployment were not tested"
+  ]
+}

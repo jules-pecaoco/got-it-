@@ -1,0 +1,1914 @@
+{
+  "date": "2026-11-08",
+  "priority": "Laptop/desktop faculty UI",
+  "scope": "Current working tree; fictional in-memory records; application code unchanged",
+  "measuredStates": 29,
+  "main": [
+    {
+      "name": "library",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 835,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 714,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#exam-library article",
+          "x": 227,
+          "y": 370,
+          "width": 1096,
+          "height": 103,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#new-activity",
+          "x": 1188,
+          "y": 137,
+          "width": 135,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 26
+    },
+    {
+      "name": "library",
+      "width": 1440,
+      "height": 900,
+      "documentHeight": 957,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1225,
+        "height": 836,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1425,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#exam-library article",
+          "x": 229,
+          "y": 370,
+          "width": 1167,
+          "height": 103,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#new-activity",
+          "x": 1261,
+          "y": 137,
+          "width": 135,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 27
+    },
+    {
+      "name": "library",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1137,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1016,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#exam-library article",
+          "x": 232,
+          "y": 370,
+          "width": 1641,
+          "height": 103,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#new-activity",
+          "x": 1738,
+          "y": 137,
+          "width": 135,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 27
+    },
+    {
+      "name": "create",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1566,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1445,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "New activity",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#ai-title",
+          "x": 227,
+          "y": 487,
+          "width": 309,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#ai-source",
+          "x": 719,
+          "y": 914,
+          "width": 226,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#generate-ai"
+        },
+        {
+          "selector": "#ai-create button.primary",
+          "x": 227,
+          "y": 1407,
+          "width": 159,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 15
+    },
+    {
+      "name": "create",
+      "width": 1440,
+      "height": 900,
+      "documentHeight": 1566,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1225,
+        "height": 1445,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1425,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "New activity",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#ai-title",
+          "x": 229,
+          "y": 487,
+          "width": 309,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#ai-source",
+          "x": 721,
+          "y": 914,
+          "width": 226,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#generate-ai"
+        },
+        {
+          "selector": "#ai-create button.primary",
+          "x": 229,
+          "y": 1407,
+          "width": 159,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 15
+    },
+    {
+      "name": "create",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1566,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1445,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "New activity",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#ai-title",
+          "x": 232,
+          "y": 487,
+          "width": 309,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#ai-source",
+          "x": 724,
+          "y": 914,
+          "width": 226,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#generate-ai"
+        },
+        {
+          "selector": "#ai-create button.primary",
+          "x": 232,
+          "y": 1407,
+          "width": 159,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 15
+    },
+    {
+      "name": "create-mixed",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 2208,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 2087,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "New activity",
+      "context": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "display": "none",
+        "visible": false
+      },
+      "targets": [
+        {
+          "selector": "#ai-question-type-counts",
+          "x": 246,
+          "y": 1045,
+          "width": 960,
+          "height": 504,
+          "display": "grid",
+          "visible": true
+        },
+        {
+          "selector": "#ai-source",
+          "x": 719,
+          "y": 914,
+          "width": 226,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#ai-generate",
+          "x": 227,
+          "y": 2049,
+          "width": 159,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 15
+    },
+    {
+      "name": "draft-review",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1948,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1827,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#publish-package",
+          "x": 227,
+          "y": 478,
+          "width": 141,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#draft-preview",
+          "x": 227,
+          "y": 913,
+          "width": 1096,
+          "height": 930,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#exam-title-input",
+          "x": 227,
+          "y": 581,
+          "width": 750,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 18
+    },
+    {
+      "name": "draft-review",
+      "width": 1440,
+      "height": 900,
+      "documentHeight": 1948,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1225,
+        "height": 1827,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1425,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 229,
+        "y": 137,
+        "width": 1167,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#publish-package",
+          "x": 229,
+          "y": 478,
+          "width": 141,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#draft-preview",
+          "x": 229,
+          "y": 913,
+          "width": 1167,
+          "height": 930,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#exam-title-input",
+          "x": 229,
+          "y": 581,
+          "width": 750,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 18
+    },
+    {
+      "name": "draft-review",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1948,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1827,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#publish-package",
+          "x": 232,
+          "y": 478,
+          "width": 141,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#draft-preview",
+          "x": 232,
+          "y": 913,
+          "width": 1641,
+          "height": 930,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#exam-title-input",
+          "x": 232,
+          "y": 581,
+          "width": 750,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 18
+    },
+    {
+      "name": "question-edit",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 3887,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 3765,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#draft-preview details[open]",
+          "x": 248,
+          "y": 1704,
+          "width": 1055,
+          "height": 1977,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "button[type=submit]",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "display": "block",
+          "visible": false
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 18
+    },
+    {
+      "name": "rules",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 926,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 805,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#policy-editor",
+          "x": 227,
+          "y": 394,
+          "width": 900,
+          "height": 416,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#save-policies",
+          "x": 227,
+          "y": 830,
+          "width": 129,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 14
+    },
+    {
+      "name": "rules",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1137,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1016,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#policy-editor",
+          "x": 232,
+          "y": 394,
+          "width": 900,
+          "height": 416,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#save-policies",
+          "x": 232,
+          "y": 830,
+          "width": 129,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 17
+    },
+    {
+      "name": "sources",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1287,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1166,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Input and output practice",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#source-file",
+          "x": 227,
+          "y": 459,
+          "width": 1096,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#coverage-form-ui",
+          "x": 227,
+          "y": 841,
+          "width": 1096,
+          "height": 330,
+          "display": "grid",
+          "visible": true
+        },
+        {
+          "selector": "#save-coverage",
+          "x": 227,
+          "y": 1192,
+          "width": 110,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 16
+    },
+    {
+      "name": "classes",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1080,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 958,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Classes",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#class-library",
+          "x": 227,
+          "y": 330,
+          "width": 1096,
+          "height": 93,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#class-form",
+          "x": 227,
+          "y": 444,
+          "width": 900,
+          "height": 520,
+          "display": "grid",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 14
+    },
+    {
+      "name": "classes",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1137,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1016,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Classes",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#class-library",
+          "x": 232,
+          "y": 330,
+          "width": 1641,
+          "height": 93,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#class-form",
+          "x": 232,
+          "y": 444,
+          "width": 900,
+          "height": 520,
+          "display": "grid",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 16
+    },
+    {
+      "name": "class-roster",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 2405,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 2284,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Classes",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#student-editor",
+          "x": 228,
+          "y": 498,
+          "width": 1095,
+          "height": 160,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".class-students thead",
+          "x": 228,
+          "y": 762,
+          "width": 1095,
+          "height": 40,
+          "display": "table-header-group",
+          "visible": true
+        },
+        {
+          "selector": "#class-form",
+          "x": 227,
+          "y": 1769,
+          "width": 900,
+          "height": 520,
+          "display": "grid",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 15
+    },
+    {
+      "name": "class-roster",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 2405,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 2284,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Classes",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#student-editor",
+          "x": 233,
+          "y": 498,
+          "width": 1639,
+          "height": 160,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".class-students thead",
+          "x": 233,
+          "y": 762,
+          "width": 1639,
+          "height": 40,
+          "display": "table-header-group",
+          "visible": true
+        },
+        {
+          "selector": "#class-form",
+          "x": 232,
+          "y": 1769,
+          "width": 900,
+          "height": 520,
+          "display": "grid",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 21
+    },
+    {
+      "name": "assign",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1371,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1250,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#run-name-field",
+          "x": 227,
+          "y": 398,
+          "width": 900,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#run-summary",
+          "x": 227,
+          "y": 979,
+          "width": 1096,
+          "height": 229,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#create-run",
+          "x": 227,
+          "y": 1275,
+          "width": 136,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 14
+    },
+    {
+      "name": "assign",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1371,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1250,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#run-name-field",
+          "x": 232,
+          "y": 398,
+          "width": 900,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#run-summary",
+          "x": 232,
+          "y": 979,
+          "width": 1641,
+          "height": 229,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": "#create-run",
+          "x": 232,
+          "y": 1275,
+          "width": 136,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 14
+    },
+    {
+      "name": "results",
+      "width": 1280,
+      "height": 720,
+      "documentHeight": 1263,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1065,
+        "height": 1142,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1265,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 226,
+        "y": 137,
+        "width": 1013,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#results-summary",
+          "x": 226,
+          "y": 387,
+          "width": 1013,
+          "height": 85,
+          "display": "grid",
+          "visible": true
+        },
+        {
+          "selector": "#results-filters",
+          "x": 226,
+          "y": 556,
+          "width": 1013,
+          "height": 71,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#results-table tbody tr",
+          "x": 226,
+          "y": 723,
+          "width": 997,
+          "height": 72,
+          "display": "table-row",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 21
+    },
+    {
+      "name": "results",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1294,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1173,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#results-summary",
+          "x": 227,
+          "y": 387,
+          "width": 1096,
+          "height": 85,
+          "display": "grid",
+          "visible": true
+        },
+        {
+          "selector": "#results-filters",
+          "x": 227,
+          "y": 556,
+          "width": 1096,
+          "height": 71,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#results-table tbody tr",
+          "x": 228,
+          "y": 723,
+          "width": 1079,
+          "height": 72,
+          "display": "table-row",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 22
+    },
+    {
+      "name": "results",
+      "width": 1440,
+      "height": 900,
+      "documentHeight": 1380,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1225,
+        "height": 1259,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1425,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 229,
+        "y": 137,
+        "width": 1167,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#results-summary",
+          "x": 229,
+          "y": 387,
+          "width": 1167,
+          "height": 85,
+          "display": "grid",
+          "visible": true
+        },
+        {
+          "selector": "#results-filters",
+          "x": 229,
+          "y": 556,
+          "width": 1167,
+          "height": 71,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#results-table tbody tr",
+          "x": 229,
+          "y": 723,
+          "width": 1150,
+          "height": 72,
+          "display": "table-row",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 23
+    },
+    {
+      "name": "results",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1497,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1376,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#results-summary",
+          "x": 232,
+          "y": 387,
+          "width": 1641,
+          "height": 85,
+          "display": "grid",
+          "visible": true
+        },
+        {
+          "selector": "#results-filters",
+          "x": 232,
+          "y": 556,
+          "width": 1641,
+          "height": 71,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#results-table tbody tr",
+          "x": 233,
+          "y": 723,
+          "width": 1624,
+          "height": 72,
+          "display": "table-row",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 26
+    },
+    {
+      "name": "grading",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1303,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": -257,
+        "width": 1151,
+        "height": 1181,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": -315,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 227,
+        "y": -241,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#student-review",
+          "x": 227,
+          "y": 16,
+          "width": 1096,
+          "height": 876,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".answer-value",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "display": "block",
+          "visible": false
+        },
+        {
+          "selector": ".score-adjust-form input[type=number]",
+          "x": 227,
+          "y": 644,
+          "width": 120,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".score-adjust-form button[type=submit]",
+          "x": 227,
+          "y": 806,
+          "width": 108,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 11
+    },
+    {
+      "name": "grading",
+      "width": 1440,
+      "height": 900,
+      "documentHeight": 1303,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1225,
+        "height": 1181,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1425,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 229,
+        "y": 137,
+        "width": 1167,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#student-review",
+          "x": 229,
+          "y": 395,
+          "width": 1167,
+          "height": 876,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".answer-value",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "display": "block",
+          "visible": false
+        },
+        {
+          "selector": ".score-adjust-form input[type=number]",
+          "x": 229,
+          "y": 1023,
+          "width": 120,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".score-adjust-form button[type=submit]",
+          "x": 229,
+          "y": 1185,
+          "width": 108,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 18
+    },
+    {
+      "name": "grading",
+      "width": 1920,
+      "height": 1080,
+      "documentHeight": 1303,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1705,
+        "height": 1181,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1905,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 232,
+        "y": 137,
+        "width": 1641,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#student-review",
+          "x": 232,
+          "y": 395,
+          "width": 1641,
+          "height": 876,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".answer-value",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "display": "block",
+          "visible": false
+        },
+        {
+          "selector": ".score-adjust-form input[type=number]",
+          "x": 232,
+          "y": 1023,
+          "width": 120,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        },
+        {
+          "selector": ".score-adjust-form button[type=submit]",
+          "x": 232,
+          "y": 1185,
+          "width": 108,
+          "height": 44,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 19
+    },
+    {
+      "name": "Unsaved grade navigation",
+      "original": "0",
+      "entered": "7",
+      "returned": "0",
+      "returnedReason": "",
+      "dialogs": []
+    },
+    {
+      "name": "ai-settings",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1294,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1173,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#ai-settings-dialog",
+          "x": 355,
+          "y": 167,
+          "width": 640,
+          "height": 434,
+          "display": "block",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 24
+    },
+    {
+      "name": "service-warning",
+      "width": 1366,
+      "height": 768,
+      "documentHeight": 1294,
+      "overflow": false,
+      "main": {
+        "x": 200,
+        "y": 121,
+        "width": 1151,
+        "height": 1173,
+        "display": "block",
+        "visible": true
+      },
+      "service": {
+        "x": 0,
+        "y": 64,
+        "width": 1351,
+        "height": 57,
+        "display": "flex",
+        "visible": true
+      },
+      "contextText": "Programming fundamentals · IT 1-A",
+      "context": {
+        "x": 227,
+        "y": 137,
+        "width": 1096,
+        "height": 62,
+        "display": "flex",
+        "visible": true
+      },
+      "targets": [
+        {
+          "selector": "#faculty-services",
+          "x": 0,
+          "y": 64,
+          "width": 1351,
+          "height": 57,
+          "display": "flex",
+          "visible": true
+        },
+        {
+          "selector": "#results-table tbody tr",
+          "x": 228,
+          "y": 723,
+          "width": 1079,
+          "height": 72,
+          "display": "table-row",
+          "visible": true
+        }
+      ],
+      "font": "\"Segoe UI\", Arial, sans-serif",
+      "visibleButtons": 22
+    }
+  ],
+  "followup": [
+    {
+      "name": "Review navigation ignores submitted-only filter",
+      "filter": "submitted",
+      "previousEnabled": true,
+      "title": "Student answers · Sam Lee",
+      "summary": "AUDIT-002 · In progress · 0 / 10 pts · Scores can be adjusted after the attempt ends."
+    },
+    {
+      "name": "Class edit location",
+      "scrollY": 1522.6666259765625,
+      "formRect": {
+        "x": 227.3125,
+        "y": 246.59375,
+        "width": 900,
+        "height": 520.1771240234375
+      }
+    },
+    {
+      "name": "Computed visual system",
+      "colors": [
+        {
+          "selector": ".masthead",
+          "font": "\"Segoe UI\", Arial, sans-serif",
+          "size": "16px",
+          "weight": "400",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(24, 46, 123)",
+          "radius": "0px"
+        },
+        {
+          "selector": ".faculty-nav",
+          "font": "\"Segoe UI\", Arial, sans-serif",
+          "size": "16px",
+          "weight": "400",
+          "foreground": "rgb(36, 41, 54)",
+          "background": "rgb(243, 245, 250)",
+          "radius": "0px"
+        },
+        {
+          "selector": "h1",
+          "font": "Poppins, \"Segoe UI\", sans-serif",
+          "size": "25.6px",
+          "weight": "600",
+          "foreground": "rgb(24, 46, 123)",
+          "background": "rgba(0, 0, 0, 0)",
+          "radius": "0px"
+        },
+        {
+          "selector": "label",
+          "font": "\"Segoe UI\", Arial, sans-serif",
+          "size": "13.6px",
+          "weight": "500",
+          "foreground": "rgb(32, 40, 61)",
+          "background": "rgba(0, 0, 0, 0)",
+          "radius": "0px"
+        },
+        {
+          "selector": "input",
+          "font": "\"Segoe UI\", Arial, sans-serif",
+          "size": "13.6px",
+          "weight": "500",
+          "foreground": "rgb(32, 40, 61)",
+          "background": "rgb(255, 255, 255)",
+          "radius": "2px"
+        },
+        {
+          "selector": "button.primary",
+          "font": "\"Segoe UI\", Arial, sans-serif",
+          "size": "16px",
+          "weight": "500",
+          "foreground": "rgb(255, 255, 255)",
+          "background": "rgb(24, 46, 123)",
+          "radius": "2px"
+        },
+        {
+          "selector": "button:disabled",
+          "font": "\"Segoe UI\", Arial, sans-serif",
+          "size": "13.76px",
+          "weight": "500",
+          "foreground": "rgb(96, 107, 128)",
+          "background": "rgba(0, 0, 0, 0)",
+          "radius": "2px"
+        }
+      ]
+    }
+  ],
+  "healthy": {
+    "create": {
+      "sourceY": 891.9583740234375,
+      "generateY": 1384.8646240234375,
+      "aiStatus": "AI is ready. Check every question and correct answer before publishing."
+    },
+    "review": {
+      "firstQuestionY": 912.5104370117188,
+      "publishY": 478.13543701171875,
+      "validation": "The question format and point totals are correct. Check the answers and teaching material before selecting Publish activity."
+    }
+  },
+  "prototypeChecks": [
+    {
+      "name": "Unsaved navigation guard",
+      "visible": true
+    },
+    {
+      "name": "Save and next",
+      "student": "Maria de los Santos"
+    },
+    {
+      "name": "Saved grade enters ready queue",
+      "rows": "Jamie Cruz\nAUDIT-003\n\tSubmitted\t7 / 10\tHidden\tReview"
+    },
+    {
+      "name": "Responsive proposal",
+      "width": 1024,
+      "overflow": false,
+      "rootWidth": 992,
+      "frameWidth": 992
+    },
+    {
+      "name": "Responsive proposal",
+      "width": 736,
+      "overflow": false,
+      "rootWidth": 704,
+      "frameWidth": 704
+    },
+    {
+      "name": "Responsive proposal",
+      "width": 320,
+      "overflow": false,
+      "rootWidth": 272.66668701171875,
+      "frameWidth": 288
+    }
+  ]
+}
