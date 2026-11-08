@@ -13,6 +13,30 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.sample-runs {
+  display: grid;
+  gap: 0.75rem;
+}
+.sample-runs h3,
+.sample-runs h4 {
+  margin: 0;
+}
+.sample-run-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.sample-run-values p {
+  font-weight: 600;
+}
+.coding-workspace textarea.run-input {
+  min-height: 6rem;
+}
+@media (max-width: 600px) {
+  .sample-run-values {
+    grid-template-columns: 1fr;
+  }
+}
 .web-preview {
   width: 100%;
   min-height: 28rem;
@@ -27,4 +51,82 @@
 .file-tabs [aria-pressed='true'] {
   font-weight: bold;
   border-bottom: 3px solid currentColor;
+}
+.terminal-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+.terminal-panel h3,
+.terminal-panel p {
+  margin: 0;
+}
+.terminal-output {
+  min-height: 10rem;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 1rem;
+  background: #18211d;
+  color: #eef4ef;
+  font-family: Consolas, monospace;
+}
+.terminal-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+}
+.terminal-input-row label {
+  flex: 1 1 14rem;
+}
+.terminal-input-row input {
+  width: 100%;
+  font-family: Consolas, monospace;
+}
+.sample-runs > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.source-editor {
+  min-width: 0;
+}
+.code-editor-host .cm-editor {
+  border: 1px solid #777e72;
+  background: #fff;
+  color: #242c26;
+}
+.code-editor-host .cm-editor.cm-focused {
+  outline: 2px solid #2c7b67;
+  outline-offset: 2px;
+}
+.code-editor-host .cm-scroller {
+  min-height: 20rem;
+  max-height: 36rem;
+  overflow: auto;
+  font:
+    14px/1.6 Consolas,
+    monospace;
+}
+.code-editor-host .cm-content {
+  padding: 0.75rem 0;
+  min-width: 0;
+}
+.code-editor-host .cm-line {
+  padding: 0 0.75rem;
+}
+.code-editor-host .cm-gutters {
+  background: #f1f0e9;
+  color: #656d60;
+  border-right: 1px solid #d7d4cc;
+}
+.code-editor-host .cm-activeLine,
+.code-editor-host .cm-activeLineGutter {
+  background: #eaf2ed;
+}
+.editor-keyboard-help {
+  margin: 0.5rem 0 0;
+}
+.file-editor-name {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
 }

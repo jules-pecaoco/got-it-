@@ -1,4 +1,5 @@
 import { accessToken, clearBrowserSession } from '../http-session.mjs';
+import { referenceGuides } from '../reference-guides.mts';
 
 export async function studentApi({
   req,
@@ -12,13 +13,50 @@ export async function studentApi({
   limit,
   webPreviews,
   answerLimit,
-  snapshotProjects,
+  settlement,
+  terminals,
+  runtimeStatus,
 }) {
   const method = req.method,
     path = url.pathname;
 
   const candidateToken = accessToken(req, 'candidate');
   const sessionId = store.requireCandidate(candidateToken);
+  if (method === 'GET' && path === '/api/me/code/status') return send(res, requestId, await runtimeStatus());
+  if (method === 'GET' && path === '/api/me/reference-guides') {
+    const { exam } = store.context(sessionId);
+    return send(res, requestId, { guides: referenceGuides(exam.public.settings.referenceGuides || []) });
+  }
+  const terminalPath = /^\/api\/me\/activities\/([A-Za-z0-9-]+)\/terminal(?:\/([a-f0-9-]{36}))?$/.exec(path);
+  if (terminalPath) {
+    const [, activityId, id] = terminalPath;
+    if (method === 'DELETE' && id) return send(res, requestId, await terminals.stop(sessionId, id));
+    let context;
+    try {
+      context = store.codingContext(sessionId, activityId);
+    } catch (error) {
+      if (id) await terminals.stop(sessionId, id).catch(() => {});
+      throw error;
+    }
+    if (context.activity.type !== 'code_writing' || context.activity.publicConfig.language === 'sql')
+      throw Object.assign(
+        new Error('Live terminal input is available for Python, JavaScript and PHP console questions.'),
+        { code: 'INVALID_TERMINAL', status: 422 },
+      );
+    if (method === 'POST' && !id) {
+      limit(`terminal-open:${sessionId}`, 12);
+      const input = await body(req, 70000);
+      return send(
+        res,
+        requestId,
+        await terminals.open(sessionId, context.activity.publicConfig.language, input.value),
+        201,
+      );
+    }
+    if (method === 'GET' && id) return send(res, requestId, await terminals.read(sessionId, id));
+    if (method === 'POST' && id)
+      return send(res, requestId, await terminals.write(sessionId, id, await body(req, 20000)));
+  }
   if (method === 'POST' && path === '/api/me/heartbeat') return send(res, requestId, { acknowledged: true });
   const jobPath = /^\/api\/me\/coding-jobs\/([a-f0-9-]{36})$/.exec(path);
   if (method === 'GET' && jobPath) return send(res, requestId, store.codingQueue.view(sessionId, jobPath[1]));
@@ -27,8 +65,10 @@ export async function studentApi({
     clearBrowserSession(req, res, 'candidate', publicOrigin);
     return send(res, requestId, result);
   }
-  if (method === 'GET' && (path === '/api/me/session' || path === '/api/me/results'))
+  if (method === 'GET' && (path === '/api/me/session' || path === '/api/me/results')) {
+    await settlement.settle(sessionId);
     return send(res, requestId, store.sessionView(sessionId));
+  }
   if (method === 'GET' && path === '/api/me/missions/current') {
     const state = store.progress(sessionId);
     const current = state.find((x) => x.unlocked && !x.completed) ?? state.findLast((x) => x.unlocked);
@@ -45,9 +85,7 @@ export async function studentApi({
       store
         .context(sessionId)
         .exam.public.missions.some((m) =>
-          m.activities.some(
-            (a) => a.id === activityPath[1] && ['code_writing', 'web_project'].includes(a.type),
-          ),
+          m.activities.some((a) => a.id === activityPath[1] && a.type === 'web_project'),
         )
     ) {
       const input = await body(req, answerLimit(sessionId, activityPath[1]));
@@ -57,7 +95,14 @@ export async function studentApi({
       return send(
         res,
         requestId,
-        store.queueCode(sessionId, activityPath[1], 'submit', input, req.headers['idempotency-key']),
+        store.queueCode(
+          sessionId,
+          activityPath[1],
+          'submit',
+          input,
+          req.headers['idempotency-key'],
+          req.headers['if-match'],
+        ),
         202,
       );
     }
@@ -69,6 +114,7 @@ export async function studentApi({
         activityPath[1],
         await body(req, answerLimit(sessionId, activityPath[1])),
         req.headers['idempotency-key'] ?? null,
+        req.headers['if-match'],
       ),
     );
   }
@@ -97,11 +143,30 @@ export async function studentApi({
   const draftPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/draft$/.exec(path);
   if (method === 'PUT' && draftPath) {
     const input = await body(req, answerLimit(sessionId, draftPath[1]));
-    if (input.value?.files && webPreviews)
-      input.value.database = (await webPreviews.snapshot(sessionId, draftPath[1])) || input.value.database;
-    return send(res, requestId, store.saveDraft(sessionId, draftPath[1], input, req.headers['if-match']));
+    let warning;
+    if (input.value?.files && webPreviews) {
+      try {
+        input.value.database = (await webPreviews.snapshot(sessionId, draftPath[1])) || input.value.database;
+      } catch (error) {
+        if (error.code !== 'WEB_RUNTIME_UNAVAILABLE' && error.code !== 'WEB_WORKSPACE_ENDED') throw error;
+        const previous = store.db
+          .prepare('SELECT response_json FROM answer_drafts WHERE session_id=? AND activity_id=?')
+          .get(sessionId, draftPath[1]);
+        if (previous)
+          input.value.database = JSON.parse(previous.response_json).value?.database ?? input.value.database;
+        warning =
+          'Your project files are saved, but the latest database changes could not be saved. Keep this page open and tell your instructor before leaving.';
+      }
+    }
+    const saved = store.saveDraft(sessionId, draftPath[1], input, req.headers['if-match']);
+    return send(res, requestId, { ...saved, ...(warning ? { warning } : {}) });
   }
   const webPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/web-preview$/.exec(path);
+  if (method === 'DELETE' && webPath) {
+    store.codingContext(sessionId, webPath[1]);
+    await webPreviews?.discard(sessionId, webPath[1]);
+    return send(res, requestId, { discarded: true });
+  }
   if (method === 'POST' && webPath) {
     limit(`web-preview:${sessionId}`, 6);
     const { activity } = store.codingContext(sessionId, webPath[1]);
@@ -126,8 +191,8 @@ export async function studentApi({
     );
   }
   if (method === 'POST' && path === '/api/me/finalize') {
-    await snapshotProjects(sessionId);
-    return send(res, requestId, store.finalize(sessionId));
+    await settlement.settle(sessionId, true);
+    return send(res, requestId, store.sessionView(sessionId));
   }
 
   throw Object.assign(new Error('Route not found.'), { code: 'NOT_FOUND', status: 404 });

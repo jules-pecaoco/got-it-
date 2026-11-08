@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import CodeEditor from './CodeEditor.vue';
+import { userErrorMessage } from '../public/user-messages.js';
 import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { exportProject, importProject } from './project-archive.js';
-import { validateProject } from '../public/web-project.js';
+import { validateProject, expectedOutputDocument } from '../public/web-project.js';
 import type { CodingActivity, Project, WorkspaceActions } from './contracts.js';
 const props = defineProps<{ activity: CodingActivity; actions: WorkspaceActions }>();
 const initial = (props.activity.lastDraft?.value ?? props.activity.lastSubmission?.value) as
@@ -46,7 +48,8 @@ function addFile() {
     Object.keys(files.value).length >= 20 ||
     filename.value in files.value
   ) {
-    error.value = 'Choose a new relative filename; maximum 20 files.';
+    error.value =
+      'Choose a new file name, such as style.css. Use up to 20 files, and do not start names with a slash.';
     return;
   }
   files.value[filename.value] = '';
@@ -60,11 +63,12 @@ async function preview(reset = false) {
   try {
     const result = await props.actions.preview!(project(), reset);
     database.value = result.database;
+    error.value = result.warning ?? '';
     consoleLines.value = [];
     url.value = result.url;
-    changed();
+    if (reset) changed();
   } catch (cause) {
-    error.value = (cause as Error).message;
+    error.value = userErrorMessage(cause, 'student');
   } finally {
     busy.value = false;
   }
@@ -79,31 +83,50 @@ function download() {
   URL.revokeObjectURL(link.href);
 }
 async function upload(event: Event) {
+  if (busy.value) return;
+  busy.value = true;
   try {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
-    if (file.size > 1600000) throw new Error('Project exceeds 1.6 MB.');
+    if (file.size > 1600000)
+      throw new Error('This project is too large to import. Choose a file smaller than 1.6 MB.');
     const value = file.name.endsWith('.zip')
       ? importProject(new Uint8Array(await file.arrayBuffer()))
       : (JSON.parse(await file.text()) as Project);
     const errors = validateProject(value);
     if (errors.length) throw new Error(errors.join(' '));
+    await props.actions.discardPreview?.();
     files.value = value.files;
     database.value = value.database;
     active.value = Object.keys(value.files)[0];
     url.value = '';
     changed();
   } catch (cause) {
-    error.value = (cause as Error).message;
+    error.value = userErrorMessage(cause, 'student');
+  } finally {
+    busy.value = false;
   }
 }
 defineExpose({ value: project });
 </script>
 <template>
   <section class="coding-workspace">
+    <details v-if="activity.publicConfig.expectedHtml" open>
+      <summary>Example of the finished page</summary>
+      <iframe
+        :srcdoc="expectedOutputDocument(activity.publicConfig.expectedHtml)"
+        title="Expected output reference"
+        class="web-preview"
+        sandbox=""
+        referrerpolicy="no-referrer"
+      ></iframe>
+      <p>This example shows how your finished page should look. Use Run web preview to test your own work.</p>
+    </details>
     <div class="button-row">
       <button type="button" @click="download">Download project ZIP</button
-      ><label>Import project<input type="file" accept=".zip,.json" @change="upload" /></label>
+      ><label
+        >Import project<input type="file" accept=".zip,.json" :disabled="busy" @change="upload"
+      /></label>
     </div>
     <div class="file-tabs" aria-label="Project files">
       <button
@@ -121,32 +144,43 @@ defineExpose({ value: project });
         >New file<input v-model="filename" placeholder="style.css" @keydown.enter.prevent="addFile" /></label
       ><button type="button" @click="addFile">Add file</button>
     </div>
-    <label
-      >{{ active
-      }}<textarea v-model="source" rows="18" spellcheck="false" maxlength="50000" @input="changed"></textarea>
-    </label>
+    <section :aria-label="'Edit ' + active">
+      <p class="file-editor-name">{{ active }}</p>
+      <CodeEditor
+        v-model="source"
+        :language="active"
+        :label="active"
+        :document-key="active"
+        :max-length="50000"
+        @change="changed"
+      />
+    </section>
     <div class="button-row">
       <button type="button" :disabled="busy" @click="preview(false)">
         {{ busy ? 'Opening…' : 'Run web preview' }}</button
-      ><button type="button" :disabled="busy" @click="preview(true)">Reset database and preview</button>
+      ><button type="button" :disabled="busy" @click="preview(true)" v-if="activity.publicConfig.seedSql">
+        Reset database and preview
+      </button>
     </div>
     <p role="status">{{ error }}</p>
     <iframe
       v-if="url"
       ref="frame"
       :src="url"
-      title="Your PHP application"
+      title="Your web application"
       class="web-preview"
       sandbox="allow-scripts allow-forms allow-same-origin"
       referrerpolicy="no-referrer"
     ></iframe>
     <details>
       <summary>JavaScript console</summary>
-      <pre aria-label="Preview console">{{ consoleLines.join('\n') || 'No messages.' }}</pre>
+      <pre aria-label="Messages from your web page">{{ consoleLines.join('\n') || 'No messages.' }}</pre>
     </details>
     <p class="small">
-      Database: SQLite through PDO at /tmp/data/database.sqlite. Preview expires after ten minutes. Save
-      project checkpoints before leaving.
+      <span v-if="activity.publicConfig.seedSql"
+        >Database: SQLite through PDO at /tmp/data/database.sqlite. </span
+      >The preview closes after ten minutes. Your project files save as you work; check the save message
+      before leaving this page.
     </p>
   </section>
 </template>

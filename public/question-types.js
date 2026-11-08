@@ -8,6 +8,7 @@ export const questionTypes = Object.freeze([
   { id: 'sequencing', label: 'Put in order' },
   { id: 'data_inspection', label: 'Table inspection' },
   { id: 'datatable_code', label: 'DataTables JavaScript' },
+  { id: 'web_project', label: 'Build a web project (HTML/CSS/JS or PHP)' },
   { id: 'code_writing', label: 'Write code (PHP, Python, SQL, JavaScript)' }
 ]);
 export const questionTypeIds = new Set(questionTypes.map(type => type.id));

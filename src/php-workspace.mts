@@ -4,7 +4,7 @@ import { runtimeImages } from './code-runner.mjs';
 import { validateProject } from '../public/web-project.js';
 import type { Project } from '../web/contracts.js';
 
-const install = `$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);foreach($p['files'] as $n=>$v){$f='/tmp/public/'.$n;@mkdir(dirname($f),0700,true);file_put_contents($f,$v);}if(isset($p['database'])){file_put_contents('/tmp/data/database.sqlite',base64_decode($p['database'],true));}elseif(!file_exists('/tmp/data/database.sqlite')){$db=new PDO('sqlite:/tmp/data/database.sqlite');$db->exec($p['seedSql']??'');}`;
+const install = `$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);foreach($p['files'] as $n=>$v){$f='/tmp/public/'.$n;@mkdir(dirname($f),0700,true);file_put_contents($f,$v);}if(isset($p['database'])){file_put_contents('/tmp/data/database.sqlite',base64_decode($p['database'],true));}elseif(!file_exists('/tmp/data/database.sqlite')){$db=new PDO('sqlite:/tmp/data/database.sqlite');if(trim($p['seedSql']??'')!=='')$db->exec($p['seedSql']);}`;
 const requestScript = `$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);$s=fsockopen('127.0.0.1',8080,$e,$m,2);stream_set_timeout($s,4);$b=$p['body']??'';$r=$p['method'].' '.$p['path']." HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ".strlen($b)."\r\n";if(!empty($p['cookie']))$r.='Cookie: '.$p['cookie']."\r\n";fwrite($s,$r."\r\n".$b);$raw=stream_get_contents($s,300000);fclose($s);$parts=explode("\r\n\r\n",$raw,2);echo json_encode(['headers'=>$parts[0],'body'=>base64_encode($parts[1]??'')]);`;
 export interface WebResponse {
   status: number;

@@ -3,15 +3,17 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { assignedOrder, evaluate, hash, resolveRetryPolicy, validatePackage } from './engine.mjs';
+import { assignedOrder, evaluate, hasSubmittableCode, hash, resolveRetryPolicy, validInspectionState, validatePackage } from './engine.mjs';
 import { answerText } from '../public/answer-key.js';
+import { hasAnswerValue } from '../public/answer-presence.js';
 import { initializeStoreSchema } from './store-schema.mjs';
-import { evaluateCode, executeCode, previewCode, cleanupJobContainers } from './code-runner.mjs';
+import { executeCode, previewCode, cleanupJobContainers } from './code-runner.mjs';
 import { CodingQueue } from './coding-queue.mjs';
 import { migrate } from './migrations.mjs';
 import { facultyId, asFaculty, assertOwner, passwordHash, passwordMatches } from './faculty-access.mjs';
 import { evaluateWeb } from './web-grading.mts';
 import { validateProject } from '../public/web-project.js';
+import { buildFacultyQuestion } from './ai.mjs';
 
 const parse = value => JSON.parse(value);
 const shuffled = values => {
@@ -33,10 +35,27 @@ const presentationKind = pub => {
 };
 const stamp = () => new Date().toISOString();
 const invariant = (condition, code, message, status = 400) => { if (!condition) throw Object.assign(new Error(message), { code, status }); };
+function gradableDraft(activity, response) {
+  const value = response?.value;
+  switch (activity.type) {
+    case 'code_writing': return hasSubmittableCode(response);
+    case 'data_inspection': return validInspectionState(activity.publicConfig, value);
+    case 'true_false': return typeof value === 'boolean';
+    case 'numeric_entry': return Number.isFinite(value);
+    case 'single_choice':
+    case 'text_entry':
+    case 'datatable_code': return typeof value === 'string' && Boolean(value.trim());
+    case 'multiple_choice':
+    case 'sequencing': return Array.isArray(value) && value.some(item => typeof item === 'string' && item.trim());
+    case 'matching': return value && typeof value === 'object' && !Array.isArray(value) && hasAnswerValue(value);
+    default: return hasAnswerValue(value);
+  }
+}
 
 export class Store {
-  constructor(filename = ':memory:', { codeRunner = executeCode } = {}) {
+  constructor(filename = ':memory:', { codeRunner = executeCode, automaticSettlement = true } = {}) {
     this.codeRunner = codeRunner;
+    this.automaticSettlement = automaticSettlement;
     if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
     initializeStoreSchema(this.db);
@@ -50,7 +69,7 @@ export class Store {
     this.codingQueue = new CodingQueue(this.db, job => asFaculty(null, () => this.completeCodingJob(job)));
   }
   close() { this.codingQueue.close(); this.db.close(); }
-  queueCode(sessionId, activityId, kind, submission, key = randomUUID()) {
+  queueCode(sessionId, activityId, kind, submission, key = randomUUID(), expectedRevision) {
     invariant(typeof key === 'string' && /^[A-Za-z0-9-]{16,80}$/.test(key), 'INVALID_IDEMPOTENCY_KEY', 'Submission retry key is invalid.');
     const existing = this.db.prepare('SELECT status,payload_json FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind=? AND request_key=?').get(sessionId, activityId, kind, key);
     if (existing && submission?.value?.files) {
@@ -58,12 +77,13 @@ export class Store {
       invariant(JSON.stringify(accepted.value.files) === JSON.stringify(submission.value.files), 'IDEMPOTENCY_CONFLICT', 'Retry key belongs to a different project.', 409);
       submission = accepted;
     }
-    if (existing && existing.status !== 'failed') return this.codingQueue.enqueue(sessionId, activityId, kind, key, submission);
+    if (existing && !['failed', 'superseded'].includes(existing.status)) return this.codingQueue.enqueue(sessionId, activityId, kind, key, submission);
     const { mission, activity } = this.codingContext(sessionId, activityId);
     invariant(['submit', 'preview'].includes(kind), 'INVALID_JOB', 'Invalid coding job.');
     if (activity.type === 'web_project') invariant(!validateProject(submission?.value).length, 'INVALID_PROJECT', validateProject(submission?.value).join(' '));
-    else invariant(typeof submission?.value === 'string' && submission.value.trim() && submission.value.length <= 16000, 'INVALID_CODE', 'Enter 1–16,000 characters of code.');
+    else invariant(hasSubmittableCode(submission), 'INVALID_CODE', 'Enter 1–16,000 characters of code.');
     if (kind === 'submit') {
+      this.checkDraftRevision(sessionId, activityId, expectedRevision);
       const policy = resolveRetryPolicy(mission, activity);
       const previous = this.db.prepare('SELECT COUNT(*) AS n FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).n;
       invariant(policy.maxRetries === null || previous <= policy.maxRetries, 'ATTEMPT_LIMIT', 'No attempts remain for this question.', 403);
@@ -76,15 +96,14 @@ export class Store {
     const activity = exam.public.missions.flatMap(m => m.activities).find(a => a.id === job.activity_id);
     invariant(['code_writing', 'web_project'].includes(activity?.type), 'INVALID_CODE_ACTIVITY', 'Coding question unavailable.');
     const submission = parse(job.payload_json);
-    const runner = (...args) => this.codeRunner(...args, { jobId: job.id });
-    if (job.kind === 'preview') return previewCode(activity.publicConfig, submission.value, runner);
+    if (job.kind === 'preview') return previewCode(activity.publicConfig, submission.value, (...args) => this.codeRunner(...args, { jobId: job.id }), submission.input);
     // A persisted receipt is trusted server state: queue wait never consumes the
     // student's remaining time. Direct synchronous submissions retain their policy.
     const prior = this.db.prepare('SELECT 1 FROM submissions WHERE session_id=? AND activity_id=? AND idempotency_key=?')
       .get(job.session_id, job.activity_id, job.request_key);
     const evaluation = prior ? { awarded: [] } : activity.type === 'web_project'
       ? await evaluateWeb(activity.publicConfig, exam.private.rules[activity.gradingRuleId], submission)
-      : await evaluateCode(activity, exam.private.rules[activity.gradingRuleId], submission, runner);
+      : evaluate(activity, exam.private.rules[activity.gradingRuleId], submission);
     return this.#submitEvaluated(job.session_id, job.activity_id, submission, job.request_key, evaluation, job.accepted_at);
   }
   tx(fn) {
@@ -114,6 +133,46 @@ export class Store {
       .run(JSON.stringify(pub), JSON.stringify(priv), examId, version);
     this.audit(actor, 'update_draft', `${examId}@${version}`);
     return { examId, version, status: 'draft' };
+  }
+  editDraftQuestion(examId, version, activityId, input) {
+    return this.tx(() => {
+      const exam = this.getExam(examId, version);
+      invariant(exam.status === 'draft' && !exam.archived_at, 'IMMUTABLE_VERSION', 'Only active drafts can be edited.', 409);
+      invariant(input?.revision === hash(exam.public_json + '\n' + exam.private_json), 'DRAFT_CHANGED', 'This draft changed. Refresh it before saving your edits.', 409);
+      const pub = structuredClone(exam.public), priv = structuredClone(exam.private);
+      const mission = pub.missions.find(m => m.activities.some(a => a.id === activityId));
+      const index = mission?.activities.findIndex(a => a.id === activityId);
+      invariant(mission && index >= 0, 'ACTIVITY_NOT_FOUND', 'Question not found.', 404);
+      const previous = mission.activities[index], oldRule = priv.rules[previous.gradingRuleId];
+      const points = input.question?.points;
+      invariant(Number.isInteger(points) && points >= 1 && points <= 10000, 'INVALID_POINTS', 'Use a whole-number question score from 1 to 10,000.');
+      const built = buildFacultyQuestion(input.question);
+      // Retain existing HTTP checks when editing older web projects.
+      if (previous.type === 'web_project' && built.activity.type === 'web_project') {
+        built.rule.criteria = [...oldRule.criteria.filter(c => c.answer.kind === 'http'), ...built.rule.criteria];
+      }
+      const criteria = built.rule.criteria;
+      invariant(points >= criteria.length, 'INVALID_POINTS', `This question needs at least ${criteria.length} points for its grading criteria.`);
+      const weights = criteria.map((criterion, i) => previous.type === built.activity.type && oldRule.criteria.length === criteria.length ? oldRule.criteria[i].points : criterion.points);
+      const total = weights.reduce((sum, weight) => sum + weight, 0);
+      const allocated = weights.map(weight => Math.floor(points * weight / total));
+      let remainder = points - allocated.reduce((sum, value) => sum + value, 0);
+      const order = weights.map((weight, i) => ({ i, fraction: points * weight / total - allocated[i] })).sort((a, b) => b.fraction - a.fraction);
+      for (const { i } of order) if (remainder-- > 0) allocated[i]++;
+      invariant(allocated.every(value => value > 0), 'INVALID_POINTS', 'Increase the question score so each grading criterion receives at least one point.');
+      built.rule.criteria = criteria.map((criterion, i) => ({ ...criterion, id: `edited-${activityId}-${i + 1}`, points: allocated[i] }));
+      mission.activities[index] = { ...previous, ...built.activity, id: activityId, gradingRuleId: previous.gradingRuleId, maxPoints: points };
+      delete mission.activities[index].sourceRefs;
+      priv.rules[previous.gradingRuleId] = built.rule;
+      if (priv.evidence) priv.evidence = priv.evidence.filter(item => item.activityId !== activityId);
+      mission.maxPoints = mission.activities.reduce((sum, activity) => sum + activity.maxPoints, 0);
+      pub.settings.coreMaxPoints = pub.missions.reduce((sum, item) => sum + item.maxPoints, 0);
+      const errors = validatePackage(pub, priv);
+      invariant(!errors.length, 'INVALID_QUESTION', errors.join(' '), 422);
+      this.updateDraft(examId, version, pub, priv);
+      this.audit('instructor', 'edit_question', `${examId}@${version}`, { activityId });
+      return { saved: true };
+    });
   }
   cloneExam(examId, version, actor = 'instructor') {
     return this.tx(() => {
@@ -423,6 +482,52 @@ export class Store {
     this.audit(actor, 'rename_run', runId, { name });
     return { id: runId, name };
   }
+  updateRun(runId, input, actor = 'instructor') {
+    return this.tx(() => {
+      const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
+      invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404); assertOwner(run.owner_id);
+      const name = typeof input?.name === 'string' ? input.name.trim() : run.name;
+      invariant(name && name.length <= 80, 'INVALID_RUN', 'Run name must be 1–80 characters.');
+      const closesAt = input?.closesAt === undefined ? run.closes_at : input.closesAt;
+      invariant(typeof closesAt === 'string' && Number.isFinite(Date.parse(closesAt)) && Date.parse(closesAt) > Date.parse(run.opens_at), 'INVALID_RUN', 'Closing time must be after the opening time.');
+      const active = this.db.prepare("SELECT MAX(deadline_at) AS deadline FROM sessions WHERE run_id=? AND status='in_progress' AND deadline_at>?").get(runId, stamp()).deadline;
+      invariant(!active || Date.parse(closesAt) >= Date.parse(active), 'ACTIVE_ATTEMPTS', 'Closing time cannot cut short an active attempt.', 409);
+      const closing = new Date(closesAt).toISOString();
+      this.db.prepare('UPDATE runs SET name=?,closes_at=? WHERE id=?').run(name, closing, runId);
+      this.audit(actor, 'update_run', runId, {name,closesAt:closing});
+      return {id:runId,name,closesAt:closing};
+    });
+  }
+  deleteRunRecords(runId) {
+    const active = this.db.prepare("SELECT 1 FROM sessions WHERE run_id=? AND status='in_progress' AND deadline_at>?").get(runId, stamp());
+    invariant(!active, 'ACTIVE_ATTEMPTS', 'Students are still taking this run. Finish their attempts before deleting it.', 409);
+    invariant(!this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id IN (SELECT id FROM sessions WHERE run_id=?) AND status IN ('queued','running')").get(runId), 'GRADING_PENDING', 'Wait for queued or running grading to finish before deleting.', 409);
+    for (const table of ['coding_jobs','penalty_events','score_overrides','answer_drafts','score_events','submissions'])
+      this.db.prepare(`DELETE FROM ${table} WHERE session_id IN (SELECT id FROM sessions WHERE run_id=?)`).run(runId);
+    this.db.prepare('DELETE FROM sessions WHERE run_id=?').run(runId);
+    this.db.prepare('DELETE FROM proctor_tokens WHERE run_id=?').run(runId);
+    this.db.prepare('DELETE FROM roster WHERE run_id=?').run(runId);
+    this.db.prepare('DELETE FROM runs WHERE id=?').run(runId);
+  }
+  deleteRun(runId, actor = 'instructor') {
+    return this.tx(() => {
+      const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
+      invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404); assertOwner(run.owner_id);
+      this.deleteRunRecords(runId); this.audit(actor, 'delete_run', runId, {name:run.name});
+      return {id:runId,deleted:true};
+    });
+  }
+  deleteActivity(examId, version, actor = 'instructor') {
+    return this.tx(() => {
+      const exam = this.getExam(examId,version);
+      const runs = this.db.prepare('SELECT id,owner_id FROM runs WHERE exam_id=? AND version=?').all(examId,version);
+      for (const run of runs) { assertOwner(run.owner_id); this.deleteRunRecords(run.id); }
+      this.db.prepare('DELETE FROM source_documents WHERE exam_id=? AND version=?').run(examId,version);
+      this.db.prepare('DELETE FROM exams WHERE exam_id=? AND version=?').run(examId,version);
+      this.audit(actor,'delete_activity',`${examId}@${version}`,{title:exam.public.title,runs:runs.length});
+      return {examId,version,deleted:true,deletedRuns:runs.length};
+    });
+  }
   resetRunPin(runId, pin, actor = 'instructor') {
     invariant(this.db.prepare('SELECT 1 FROM runs WHERE id=?').get(runId), 'RUN_NOT_FOUND', 'Run not found.', 404);
     invariant(typeof pin === 'string' && pin.length >= 4 && pin.length <= 80,
@@ -492,9 +597,21 @@ export class Store {
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
     const exam = this.getExam(run.exam_id, run.version);
-    const questionCount = exam.public.missions.reduce((sum, mission) => sum + mission.activities.length, 0);
-    const rows = this.db.prepare(`SELECT r.candidate_id,r.display_name,r.section,s.status,s.started_at,s.deadline_at,s.last_seen_at,
-      (SELECT COUNT(DISTINCT sub.activity_id) FROM submissions sub WHERE sub.session_id=s.id) AS answered_count,
+    const activities = exam.public.missions.flatMap(mission => mission.activities);
+    const questionCount = activities.length;
+    const byId = new Map(activities.map(activity => [activity.id, activity]));
+    const answers = new Map();
+    for (const answer of this.db.prepare(`SELECT DISTINCT s.id AS session_id, sub.activity_id, NULL AS response_json
+      FROM submissions sub JOIN sessions s ON s.id=sub.session_id WHERE s.run_id=?
+      UNION ALL
+      SELECT s.id, d.activity_id, d.response_json
+      FROM answer_drafts d JOIN sessions s ON s.id=d.session_id WHERE s.run_id=? AND s.status='in_progress'`).iterate(runId, runId)) {
+      const activity = byId.get(answer.activity_id);
+      if (!activity || (answer.response_json !== null && !gradableDraft(activity, parse(answer.response_json)))) continue;
+      if (!answers.has(answer.session_id)) answers.set(answer.session_id, new Set());
+      answers.get(answer.session_id).add(answer.activity_id);
+    }
+    const rows = this.db.prepare(`SELECT r.candidate_id,r.display_name,r.section,s.id AS session_id,s.status,s.started_at,s.deadline_at,s.last_seen_at,
       (SELECT MAX(sub.at) FROM submissions sub WHERE sub.session_id=s.id) AS last_submission_at
       FROM roster r LEFT JOIN sessions s ON s.run_id=r.run_id AND s.candidate_id=r.candidate_id
       WHERE r.run_id=? ORDER BY r.section,r.display_name COLLATE NOCASE`).all(runId)
@@ -502,7 +619,7 @@ export class Store {
         status: row.status === 'in_progress' && Date.now() >= Date.parse(row.deadline_at) ? 'expired'
           : row.status || 'registered',
         startedAt: row.started_at, deadlineAt: row.deadline_at, lastSeenAt: row.last_seen_at,
-        answeredCount: row.answered_count || 0, lastSubmissionAt: row.last_submission_at }));
+        answeredCount: answers.get(row.session_id)?.size || 0, lastSubmissionAt: row.last_submission_at }));
     const counts = { registered: 0, in_progress: 0, submitted: 0, expired: 0 };
     for (const row of rows) counts[row.status]++;
     return { runId, name: run.name || exam.public.title, activityTitle: exam.public.title,
@@ -587,6 +704,7 @@ export class Store {
       availableSeconds: Math.max(0, Math.floor((Date.parse(existing?.deadline_at || run.closes_at) - now) / 1000)),
       feedbackMode: run.feedback_mode, questionCount: exam.public.missions.reduce((sum, m) => sum + m.activities.length, 0),
       sectionCount: exam.public.missions.length, retryPolicies: [...policies.values()],
+      referenceGuides: exam.public.settings.referenceGuides || [],
       resumed: !!existing, status: existing
         ? existing.status === 'in_progress' && now >= Date.parse(existing.deadline_at) ? 'expired' : existing.status
         : 'not_started'
@@ -640,6 +758,7 @@ export class Store {
   }
   progress(sessionId) {
     const { session, exam } = this.context(sessionId);
+    const gated = presentationKind(exam.public) === 'ctf';
     const attempts = new Set(this.db.prepare('SELECT DISTINCT activity_id FROM submissions WHERE session_id=?').all(sessionId).map(r => r.activity_id));
     const completed = new Set();
     const order = parse(session.order_json);
@@ -648,7 +767,7 @@ export class Store {
       const dependenciesMet = (m.dependsOn ?? []).every(x => completed.has(x));
       const priorMet = i === 0 || completed.has(missions[i - 1].id);
       const done = m.activities.every(a => attempts.has(a.id));
-      const unlocked = dependenciesMet && priorMet;
+      const unlocked = !gated || (dependenciesMet && priorMet);
       if (done && unlocked) completed.add(m.id);
       return { id: m.id, title: m.title, unlocked, completed: done && unlocked, activityCount: m.activities.length };
     });
@@ -665,23 +784,49 @@ export class Store {
     return Math.max(0, earned - lost + adjustment);
   }
   sessionView(sessionId) {
-    this.settleDrafts(sessionId);
+    if (this.automaticSettlement) this.settleAttempt(sessionId);
     const { session, run, exam, roster } = this.context(sessionId);
     const progress = this.progress(sessionId);
     const status = Date.now() >= Date.parse(session.deadline_at) && session.status === 'in_progress' ? 'expired' : session.status;
-    const pendingCodingCount = this.db.prepare("SELECT COUNT(*) AS n FROM coding_jobs WHERE session_id=? AND kind='submit' AND status IN ('queued','running','failed')").get(sessionId).n;
+    const { pendingCodingCount, failedCodingCount } = this.db.prepare(`SELECT COUNT(*) AS pendingCodingCount,
+      COUNT(CASE WHEN status='failed' THEN 1 END) AS failedCodingCount FROM coding_jobs
+      WHERE session_id=? AND kind='submit' AND status IN ('queued','running','failed')`).get(sessionId);
+    const activities = exam.public.missions.flatMap(mission => mission.activities);
+    const codingLanguages = [...new Set(activities.filter(activity => activity.type === 'code_writing')
+      .map(activity => activity.publicConfig.language))];
+    const webProject = activities.some(activity => activity.type === 'web_project');
     const pendingReview = this.hasPendingReview(sessionId);
     const released = !pendingCodingCount && !pendingReview && resultsReleased(run, session);
+    const kind = presentationKind(exam.public);
+    const questionOrder = parse(session.question_order_json);
+    const questions = kind === 'ctf' ? undefined : progress.flatMap(mission => {
+      const activities = exam.public.missions.find(item => item.id === mission.id).activities;
+      return (questionOrder?.[mission.id] ?? activities.map(activity => activity.id))
+        .map(id => ({ id, missionId: mission.id, unlocked: mission.unlocked }));
+    });
+    const savedAnswers = questions && new Set(this.db.prepare(
+      'SELECT DISTINCT activity_id AS id FROM submissions WHERE session_id=?'
+    ).all(sessionId).map(row => row.id));
+    if (savedAnswers) {
+      const byId = new Map(activities.map(activity => [activity.id, activity]));
+      for (const draft of this.db.prepare('SELECT activity_id, response_json FROM answer_drafts WHERE session_id=?').all(sessionId)) {
+        const activity = byId.get(draft.activity_id);
+        if (activity && gradableDraft(activity, parse(draft.response_json))) savedAnswers.add(draft.activity_id);
+      }
+    }
     return {
       id: session.id, candidateId: session.candidate_id, displayName: roster.display_name, section: roster.section,
       examId: exam.public.examId, version: exam.public.version, title: exam.public.title,
-      kind: presentationKind(exam.public), difficulty: exam.public.difficulty || null,
+      kind, difficulty: exam.public.difficulty || null,
+      referenceGuides: exam.public.settings.referenceGuides || [],
       description: exam.public.description, startedAt: session.started_at, deadlineAt: session.deadline_at,
-      status, feedbackMode: run.feedback_mode, resultsReleased: released, pendingCodingCount, pendingReview,
+      status, feedbackMode: run.feedback_mode, resultsReleased: released, pendingCodingCount, failedCodingCount, pendingReview,
+      codingLanguages, webProject,
       questionCount: exam.public.missions.reduce((sum, mission) => sum + mission.activities.length, 0),
       submittedCount: this.db.prepare('SELECT COUNT(DISTINCT activity_id) AS count FROM submissions WHERE session_id=?').get(sessionId).count,
       ...(released ? { score: this.score(sessionId) } : {}), maxPoints: exam.public.settings.coreMaxPoints,
-      order: progress
+      order: progress,
+      ...(questions ? { questions, savedAnswers: [...savedAnswers] } : {})
     };
   }
   missionView(sessionId, missionId) {
@@ -696,11 +841,17 @@ export class Store {
       const draft = this.db.prepare('SELECT response_json,updated_at FROM answer_drafts WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id);
       const attemptsUsed = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id).count;
       const policy = resolveRetryPolicy(mission, publicActivity);
+      const response = draft && parse(draft.response_json);
       return { ...publicActivity, lastSubmission: last ? parse(last.response_json) : null,
-        lastDraft: draft ? { ...parse(draft.response_json), updatedAt: draft.updated_at } : null,
+        lastDraft: draft ? { ...response, updatedAt: draft.updated_at, gradable: gradableDraft(publicActivity, response) } : null,
         attemptsUsed, attemptPolicy: policy,
         attemptsRemaining: policy.maxRetries === null ? null : Math.max(0, policy.maxRetries + 1 - attemptsUsed) };
     }), version: exam.public.version };
+  }
+  checkDraftRevision(sessionId, activityId, expectedRevision) {
+    if (expectedRevision === undefined) return;
+    const current = this.db.prepare('SELECT updated_at FROM answer_drafts WHERE session_id=? AND activity_id=?').get(sessionId, activityId);
+    invariant(expectedRevision === (current?.updated_at ?? ''), 'DRAFT_CONFLICT', 'This answer changed in another tab. Reload before saving.', 409);
   }
   saveDraft(sessionId, activityId, response, expectedRevision = undefined) {
     const { session, exam } = this.context(sessionId);
@@ -712,6 +863,10 @@ export class Store {
     const encoded = JSON.stringify(response);
     const activity = mission.activities.find(a => a.id === activityId);
     invariant(encoded.length <= (activity.type === 'web_project' ? 1_700_000 : 100_000), 'DRAFT_TOO_LARGE', 'Draft is too large.', 413);
+    if (activity.type === 'data_inspection' && response.value != null)
+      invariant(gradableDraft(activity, response), 'INVALID_ANSWER', 'Enter valid table filters, sort order, and page.');
+    if (activity.type === 'code_writing')
+      invariant(typeof response.value === 'string' && response.value.length <= 16000, 'INVALID_CODE', 'Drafts can contain at most 16,000 characters of code.');
     if (activity.type === 'web_project') invariant(!validateProject(response.value).length, 'INVALID_PROJECT', validateProject(response.value).join(' '));
     let updatedAt = stamp();
     this.tx(() => {
@@ -724,7 +879,7 @@ export class Store {
           ON CONFLICT(session_id,activity_id) DO UPDATE SET response_json=excluded.response_json,updated_at=excluded.updated_at`)
           .run(sessionId, activityId, encoded, updatedAt);
     });
-    return { saved: true, updatedAt };
+    return { saved: true, updatedAt, gradable: gradableDraft(activity, response) };
   }
   submit(sessionId, activityId, submission, idempotencyKey = null) {
     return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey);
@@ -741,14 +896,15 @@ export class Store {
   }
   async previewCode(sessionId, activityId, submission) {
     const { activity } = this.codingContext(sessionId, activityId);
-    return previewCode(activity.publicConfig, submission?.value, this.codeRunner);
+    return previewCode(activity.publicConfig, submission?.value, this.codeRunner, submission?.input);
   }
-  async submitAnswer(sessionId, activityId, submission, idempotencyKey = null) {
-    invariant(!this.hasPendingCode(sessionId), 'CODING_JOB_PENDING', 'Wait for your queued coding submission to finish.', 409);
+  async submitAnswer(sessionId, activityId, submission, idempotencyKey = null, expectedRevision) {
     const { exam } = this.context(sessionId);
     const activity = exam.public.missions.flatMap(m => m.activities).find(a => a.id === activityId);
-    if (!['code_writing', 'web_project'].includes(activity?.type)) return this.submit(sessionId, activityId, submission, idempotencyKey);
+    if (!['code_writing', 'web_project'].includes(activity?.type)) return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, null, null, expectedRevision);
     const { mission, rule } = this.codingContext(sessionId, activityId);
+    invariant(!this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind='submit' AND status IN ('queued','running')").get(sessionId, activityId),
+      'CODING_JOB_PENDING', 'Wait for your queued submission for this question to finish.', 409);
     invariant(idempotencyKey === null || (typeof idempotencyKey === 'string' && /^[A-Za-z0-9-]{16,80}$/.test(idempotencyKey)), 'INVALID_IDEMPOTENCY_KEY', 'Submission retry key is invalid.');
     const previous = idempotencyKey && this.db.prepare('SELECT request_hash FROM submissions WHERE session_id=? AND activity_id=? AND idempotency_key=?').get(sessionId, activityId, idempotencyKey);
     if (previous) {
@@ -758,10 +914,10 @@ export class Store {
     const count = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).count;
     const policy = resolveRetryPolicy(mission, activity);
     invariant(policy.maxRetries === null || count <= policy.maxRetries, 'ATTEMPT_LIMIT', 'No attempts remain for this question.', 403);
-    const result = activity.type === 'web_project' ? await evaluateWeb(activity.publicConfig, rule, submission) : await evaluateCode(activity, rule, submission, this.codeRunner);
-    return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, result);
+    const result = activity.type === 'web_project' ? await evaluateWeb(activity.publicConfig, rule, submission) : evaluate(activity, rule, submission);
+    return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, result, null, expectedRevision);
   }
-  #submitEvaluated(sessionId, activityId, submission, idempotencyKey = null, executionResult = null, acceptedAt = null) {
+  #submitEvaluated(sessionId, activityId, submission, idempotencyKey = null, executionResult = null, acceptedAt = null, expectedRevision) {
     const receivedAt = acceptedAt || stamp();
     const { run, exam } = this.context(sessionId);
     const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
@@ -791,7 +947,10 @@ export class Store {
         }
       }
       const live = this.db.prepare('SELECT status,deadline_at FROM sessions WHERE id=?').get(sessionId);
-      invariant(acceptedAt ? Date.parse(acceptedAt) < Date.parse(live.deadline_at) : live.status === 'in_progress' && Date.now() < Date.parse(live.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
+      this.checkDraftRevision(sessionId, activityId, expectedRevision);
+      invariant(gradableDraft(activity, submission), 'INVALID_ANSWER', 'Enter a valid answer before submitting.');
+      // Persisted drafts and jobs were admitted before the deadline in effect at receipt.
+      invariant(acceptedAt || (live.status === 'in_progress' && Date.now() < Date.parse(live.deadline_at)), 'SESSION_CLOSED', 'The session is closed.', 403);
       const previous = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).count;
       invariant(policy.maxRetries === null || previous < policy.maxRetries + 1,
         'ATTEMPT_LIMIT', 'No attempts remain for this question.', 403);
@@ -800,13 +959,20 @@ export class Store {
       this.db.prepare(`INSERT INTO submissions(id,session_id,activity_id,response_json,result,at,idempotency_key,request_hash)
         VALUES(?,?,?,?,?,?,?,?)`).run(submissionId, sessionId, activityId, JSON.stringify(submission), evaluation.result,
           acceptedAt || stamp(), idempotencyKey, idempotencyKey ? requestHash : null);
+      if (['code_writing', 'web_project'].includes(activity.type)) this.db.prepare('DELETE FROM score_overrides WHERE session_id=? AND activity_id=?').run(sessionId, activityId);
       this.db.prepare('DELETE FROM answer_drafts WHERE session_id=? AND activity_id=? AND updated_at<=?').run(sessionId, activityId, receivedAt);
+      if (policy.maxRetries !== null && attemptNumber > policy.maxRetries) {
+        this.db.prepare("UPDATE coding_jobs SET status='superseded' WHERE session_id=? AND activity_id=? AND kind='submit' AND status='failed'")
+          .run(sessionId, activityId);
+      }
       const insert = this.db.prepare('INSERT OR IGNORE INTO score_events VALUES (?,?,?,?,?)');
       for (const c of evaluation.awarded) insert.run(sessionId, activityId, c.id, c.points, stamp());
       if (previous > 0) {
         this.db.prepare('INSERT INTO penalty_events VALUES (?,?,?,?,?,?)')
           .run(submissionId, sessionId, activityId, policy.pointPenalty, policy.timePenaltySeconds, stamp());
-        deadlineAt = new Date(Math.max(acceptedAt ? Date.parse(acceptedAt) : Date.now(), Date.parse(live.deadline_at) - policy.timePenaltySeconds * 1000)).toISOString();
+        const currentDeadline = Date.parse(live.deadline_at);
+        const earliestDeadline = Math.min(currentDeadline, acceptedAt ? Date.parse(acceptedAt) : Date.now());
+        deadlineAt = new Date(Math.max(earliestDeadline, currentDeadline - policy.timePenaltySeconds * 1000)).toISOString();
         this.db.prepare('UPDATE sessions SET deadline_at=? WHERE id=?').run(deadlineAt, sessionId);
       } else deadlineAt = live.deadline_at;
     });
@@ -826,12 +992,16 @@ export class Store {
       penaltyApplied: attemptNumber > 1 ? { points: policy.pointPenalty, seconds: policy.timePenaltySeconds } : null,
       attemptsRemaining: policy.maxRetries === null ? null : Math.max(0, policy.maxRetries + 1 - attemptNumber) };
   }
-  settleExpired(runId = null) {
-    const sessions = this.db.prepare(`SELECT id FROM sessions WHERE status='in_progress' AND deadline_at<=?
-      AND (? IS NULL OR run_id=?)`).all(stamp(), runId, runId);
-    for (const session of sessions) this.finalize(session.id);
+  expiredSessionIds(runId = null) {
+    return this.db.prepare(`SELECT s.id FROM sessions s JOIN runs r ON r.id=s.run_id
+      WHERE s.status='in_progress' AND s.deadline_at<=?
+      AND (? IS NULL OR s.run_id=?) AND (? IS NULL OR r.owner_id=?)`)
+      .all(stamp(), runId, runId, facultyId(), facultyId()).map(session => session.id);
   }
-  settleDrafts(sessionId, force = false) {
+  settleExpired(runId = null) {
+    for (const sessionId of this.expiredSessionIds(runId)) this.settleAttempt(sessionId);
+  }
+  settleAttempt(sessionId, force = false) {
     const { session, exam } = this.context(sessionId);
     if (session.status !== 'in_progress' || (!force && Date.now() < Date.parse(session.deadline_at))) return;
     const drafts = this.db.prepare('SELECT * FROM answer_drafts WHERE session_id=? ORDER BY updated_at').all(sessionId);
@@ -844,30 +1014,31 @@ export class Store {
       // Exhausted retries never become free attempts at expiry.
       if (policy.maxRetries !== null && count > policy.maxRetries) continue;
       const response = parse(draft.response_json);
+      if (!gradableDraft(activity, response)) continue;
       const queued = this.db.prepare("SELECT payload_json FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind='submit' AND status IN ('queued','running','failed')").all(sessionId, activity.id);
       if (queued.some(job => job.payload_json === draft.response_json)) continue;
+      if (policy.maxRetries !== null && count + queued.length > policy.maxRetries) continue;
       const key = `draft-${hash(draft.updated_at + draft.response_json).slice(0, 48)}`;
-      if (['code_writing', 'web_project'].includes(activity.type)) {
+      if (activity.type === 'web_project') {
         this.codingQueue.enqueue(sessionId, activity.id, 'submit', key, response, { acceptedAt: draft.updated_at, finalizing: true });
       } else {
         this.#submitEvaluated(sessionId, activity.id, response, key, null, draft.updated_at);
       }
     }
+    const { deadline_at: deadline } = this.db.prepare('SELECT deadline_at FROM sessions WHERE id=?').get(sessionId);
+    const status = Date.now() >= Date.parse(deadline) ? 'expired' : 'submitted';
+    this.db.prepare('UPDATE sessions SET status=? WHERE id=?').run(status, sessionId);
+    this.audit(session.candidate_id, 'finalize', sessionId, { status });
   }
   finalize(sessionId) {
-    this.settleDrafts(sessionId, true);
-    const { session } = this.context(sessionId);
-    if (session.status === 'in_progress') {
-      const status = Date.now() >= Date.parse(session.deadline_at) ? 'expired' : 'submitted';
-      this.db.prepare('UPDATE sessions SET status=? WHERE id=?').run(status, sessionId);
-      this.audit(session.candidate_id, 'finalize', sessionId, { status });
-    }
+    this.settleAttempt(sessionId, true);
     return this.sessionView(sessionId);
   }
   results(runId) {
-    this.settleExpired(runId);
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
+    assertOwner(run.owner_id);
+    if (this.automaticSettlement) this.settleExpired(runId);
     const exam = this.getExam(run.exam_id, run.version);
     const rows = this.db.prepare(`SELECT r.candidate_id, r.display_name, r.section, s.id AS session_id,
       s.status, s.started_at, s.deadline_at, s.results_published_at
@@ -885,7 +1056,9 @@ export class Store {
     for (const row of this.db.prepare('SELECT session_id,activity_id,points FROM score_overrides WHERE session_id IN (SELECT id FROM sessions WHERE run_id=?)').all(runId)) {
       totals.set(row.session_id, (totals.get(row.session_id) || 0) + row.points - (perQuestion.get(`${row.session_id}:${row.activity_id}`) || 0));
     }
-    const pending = new Set(this.db.prepare("SELECT DISTINCT session_id FROM coding_jobs WHERE kind='submit' AND status IN ('queued','running','failed') AND session_id IN (SELECT id FROM sessions WHERE run_id=?)").all(runId).map(r => r.session_id));
+    const pending = new Map(this.db.prepare(`SELECT session_id, COUNT(CASE WHEN status='failed' THEN 1 END) AS failed
+      FROM coding_jobs WHERE kind='submit' AND status IN ('queued','running','failed')
+      AND session_id IN (SELECT id FROM sessions WHERE run_id=?) GROUP BY session_id`).all(runId).map(r => [r.session_id, r.failed]));
     return { runId, examId: run.exam_id, version: run.version, title: exam.public.title,
       classId: run.class_id, className: run.class_name,
       name: run.name || exam.public.title,
@@ -896,15 +1069,18 @@ export class Store {
         sessionId: r.session_id, status: r.session_id && r.status === 'in_progress' && Date.now() >= Date.parse(r.deadline_at)
           ? 'expired' : r.status ?? 'registered', startedAt: r.started_at,
         deadlineAt: r.deadline_at, score: Math.max(0, totals.get(r.session_id) || 0), pendingCoding: pending.has(r.session_id),
+        failedCodingCount: pending.get(r.session_id) || 0,
+        finalizationPending: r.status === 'in_progress' && Date.now() >= Date.parse(r.deadline_at),
         pendingReview: !!r.session_id && this.hasPendingReview(r.session_id),
         resultsReleased: !pending.has(r.session_id) && !this.hasPendingReview(r.session_id) && resultsReleased(run, r) })) };
   }
   publishStudentResults(runId, candidateId, actor = 'instructor') {
     const review = this.reviewStudent(runId, candidateId);
     invariant(review.sessionId, 'SESSION_NOT_FOUND', 'This student has not started an attempt.', 404);
+    if (this.automaticSettlement) this.settleAttempt(review.sessionId);
     invariant(!this.hasPendingCode(review.sessionId), 'CODING_JOB_PENDING', 'Wait for queued coding submissions to finish.', 409);
-    invariant(!this.hasPendingReview(review.sessionId), 'REVIEW_PENDING', 'Complete the manual web rubric before publishing.', 409);
-    invariant(review.status !== 'in_progress', 'ATTEMPT_IN_PROGRESS', 'Wait until the student finishes before publishing their score.', 409);
+    invariant(!this.hasPendingReview(review.sessionId), 'REVIEW_PENDING', 'Grade all submitted coding answers and manual rubrics before publishing.', 409);
+    invariant(this.context(review.sessionId).session.status !== 'in_progress', 'ATTEMPT_IN_PROGRESS', 'Wait until the student finishes before publishing their score.', 409);
     const publishedAt = stamp();
     this.tx(() => {
       this.db.prepare('UPDATE sessions SET results_published_at=? WHERE id=?').run(publishedAt, review.sessionId);
@@ -913,11 +1089,13 @@ export class Store {
     return { runId, candidateId, resultsReleased: true, publishedAt };
   }
   publishCompletedResults(runId, actor = 'instructor') {
-    const run = this.db.prepare('SELECT id FROM runs WHERE id=?').get(runId);
+    const run = this.db.prepare('SELECT owner_id FROM runs WHERE id=?').get(runId);
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
+    assertOwner(run.owner_id);
+    if (this.automaticSettlement) this.settleExpired(runId);
     const publishedAt = stamp();
     const eligible = this.db.prepare(`SELECT id FROM sessions WHERE run_id=?
-      AND (status <> 'in_progress' OR deadline_at <= ?) AND results_published_at IS NULL`).all(runId, publishedAt);
+      AND status <> 'in_progress' AND results_published_at IS NULL`).all(runId);
     this.tx(() => {
       const update = this.db.prepare('UPDATE sessions SET results_published_at=? WHERE id=?');
       for (const session of eligible) if (!this.hasPendingCode(session.id) && !this.hasPendingReview(session.id)) update.run(publishedAt, session.id);
@@ -937,10 +1115,12 @@ export class Store {
   hasPendingReview(sessionId) {
     if (!sessionId) return false;
     const { exam } = this.context(sessionId);
-    return exam.public.missions.flatMap(m => m.activities).some(activity => activity.type === 'web_project' &&
-      exam.private.rules[activity.gradingRuleId].criteria.some(criterion => criterion.answer.kind === 'manual') &&
-      this.db.prepare('SELECT 1 FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activity.id) &&
-      !this.db.prepare('SELECT 1 FROM score_overrides WHERE session_id=? AND activity_id=?').get(sessionId, activity.id));
+    return exam.public.missions.flatMap(m => m.activities).some(activity => {
+      const latest = this.db.prepare('SELECT result FROM submissions WHERE session_id=? AND activity_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId, activity.id);
+      const manual = activity.type === 'code_writing' ? latest?.result === 'pending_review' :
+        activity.type === 'web_project' && exam.private.rules[activity.gradingRuleId].criteria.some(criterion => criterion.answer.kind === 'manual');
+      return manual && !!latest && !this.db.prepare('SELECT 1 FROM score_overrides WHERE session_id=? AND activity_id=?').get(sessionId, activity.id);
+    });
   }
   reviewStudent(runId, candidateId) {
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
@@ -992,7 +1172,7 @@ export class Store {
     const released = resultsReleased(run, session);
     return { ...base, sessionId: session.id, status, startedAt: session.started_at,
       deadlineAt: session.deadline_at, score: this.score(session.id),
-      canOverride: status !== 'in_progress' && !this.hasPendingCode(session.id), resultsReleased: released && !this.hasPendingCode(session.id), questions };
+      canOverride: session.status !== 'in_progress' && !this.hasPendingCode(session.id), resultsReleased: released && !this.hasPendingCode(session.id), questions };
   }
   overrideQuestionScore(runId, candidateId, activityId, input, actor = 'instructor') {
     const review = this.reviewStudent(runId, candidateId);
@@ -1002,7 +1182,7 @@ export class Store {
     invariant(Number.isInteger(input?.points) && input.points >= 0 && input.points <= question.maxPoints,
       'INVALID_SCORE', `Enter a whole-number score from 0 to ${question.maxPoints}.`);
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
-    invariant(reason.length >= 3 && reason.length <= 300, 'INVALID_SCORE', 'Give a reason of 3–300 characters.');
+    invariant(reason.length <= 300, 'INVALID_SCORE', 'Reason must be at most 300 characters.');
     this.tx(() => {
       this.db.prepare(`INSERT INTO score_overrides (session_id,activity_id,points,reason,updated_at)
         VALUES (?,?,?,?,?) ON CONFLICT(session_id,activity_id) DO UPDATE SET
@@ -1042,7 +1222,7 @@ export class Store {
     const now = Date.now();
     let deadline;
     if (action === 'extend') {
-      invariant(session.status === 'in_progress', 'ATTEMPT_NOT_ACTIVE', 'Only an active attempt can receive extra time.', 409);
+      invariant(['in_progress', 'expired'].includes(session.status), 'ATTEMPT_NOT_ACTIVE', 'Only active or expired attempts can receive extra time.', 409);
       deadline = Math.min(Math.max(now, Date.parse(session.deadline_at)) + minutes * 60_000, Date.parse(run.closes_at));
       invariant(deadline > Date.parse(session.deadline_at), 'RUN_CLOSED', 'The run closing time leaves no room to extend this attempt.', 409);
     } else {

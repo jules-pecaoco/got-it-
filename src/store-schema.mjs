@@ -1,6 +1,7 @@
 export function initializeStoreSchema(db) {
   db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
   db.exec(`
+      CREATE TABLE IF NOT EXISTS faculty_ai_settings (faculty_id TEXT PRIMARY KEY, settings_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS exams (
         exam_id TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
         public_json TEXT NOT NULL, private_json TEXT NOT NULL, content_hash TEXT,

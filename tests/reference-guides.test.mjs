@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {referenceGuides} from '../src/reference-guides.mts';
+import {referenceTopics,validateReferenceSelection} from '../public/reference-topics.js';
+import {searchReferences} from '../public/reference-dictionary.js';
+test('reference catalog covers seven topics with original text and inert code examples',()=>{
+ const guides=referenceGuides(referenceTopics.map(topic=>topic.id));
+ assert.equal(guides.length,7);
+ for(const guide of guides){
+  assert.ok(guide.note);assert.ok(guide.entries.length>=8);
+  assert.equal(new Set(guide.entries.map(entry=>entry.title)).size,guide.entries.length);
+  for(const entry of guide.entries) for(const field of ['title','text','code']) assert.equal(typeof entry[field],'string');
+ }
+ assert.equal(referenceGuides([]).length,0);
+ assert.deepEqual(referenceGuides(['python','sql']).map(g=>g.id),['sql','python']);
+ assert.deepEqual(referenceGuides(['unknown']),[]);
+});
+test('reference selection rejects unsupported, duplicate and malformed guide choices',()=>{
+ for(const value of [undefined,[],['python','html']])assert.deepEqual(validateReferenceSelection(value),[]);
+ for(const value of [null,'python',['unknown'],['python','python'],[{}]])assert.ok(validateReferenceSelection(value).length);
+});
+test('reference search is case-insensitive, matches code and filters by allowed topic',()=>{
+ const guides=referenceGuides(['sql','python','html']);
+ assert.ok(searchReferences(guides,'JOIN','sql').some(e=>e.title==='JOIN related tables'));
+ assert.ok(searchReferences(guides,'input print','python').length);
+ assert.ok(searchReferences(guides,'<label','html').length);
+ assert.equal(searchReferences(guides,'','php').length,0);
+ assert.equal(searchReferences(guides,'unfindable-example').length,0);
+ assert.ok(searchReferences(guides).every(e=>['sql','python','html'].includes(e.topic)));
+});

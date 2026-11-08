@@ -70,16 +70,18 @@ export async function cleanupJobContainers(jobId, processRunner = processRun) {
     if (removed.exitCode !== 0) fail('CODE_RUNNER_UNAVAILABLE', 'Cannot remove an interrupted coding container. Restore Docker and retry.');
   }
 }
-export async function previewCode(config, code, runner = executeCode) {
+export async function previewCode(config, code, runner = executeCode, input = undefined) {
   const errors = validateCodeConfig(config);
   if (errors.length) fail('INVALID_CODE_CONFIG', errors.join(' '), 422);
-  const results = [];
-  for (const sample of config.samples) {
-    const execution = await runner(config.language, code, sample.input);
-    results.push({ ...execution, input: sample.input, expectedOutput: sample.output,
-      matches: execution.succeeded && outputMatches(execution.output, sample.output, config.comparison) });
+  if (input !== undefined && (typeof input !== 'string' || input.length > codeLimit))
+    fail('INVALID_INPUT', 'Input must be text up to 16,000 characters.', 400);
+  const inputs = input === undefined ? config.samples.map(sample => sample.input) : [input];
+  const samples = [];
+  for (const sampleInput of inputs) {
+    const execution = await runner(config.language, code, sampleInput);
+    samples.push({ ...execution, input: sampleInput });
   }
-  return { samples: results };
+  return { samples };
 }
 export async function evaluateCode(activity, rule, submission, runner = executeCode) {
   const awarded = [];
@@ -91,15 +93,26 @@ export async function evaluateCode(activity, rule, submission, runner = executeC
   return { result: all ? 'correct' : awarded.length ? 'partially_correct' : 'incorrect', awarded,
     feedbackCode: all ? 'ALL_CRITERIA_MET' : awarded.length ? 'SOME_CRITERIA_MET' : 'TRY_AGAIN' };
 }
-export async function codingStatus() {
+export async function codingStatus(processRunner = processRun) {
+  const unavailable = (docker, message) => ({ available: false, docker, languages: [], message });
   try {
-    const result = await processRun(['info', '--format', '{{.OSType}}'], '', 3000);
-    if (result.exitCode !== 0 || result.stdout.trim() !== 'linux') return { available: false, languages: [], message: 'Start Docker with Linux containers to run coding questions.' };
-    const languages = [];
-    for (const [language, image] of Object.entries(runtimeImages)) {
-      const checked = await processRun(['image', 'inspect', image, '--format', '{{.Id}}'], '', 3000);
-      if (checked.exitCode === 0) languages.push(language);
-    }
-    return { available: languages.length === 4, languages, message: languages.length === 4 ? 'Coding runtimes ready.' : 'Install the missing coding runtime images.' };
-  } catch { return { available: false, languages: [], message: 'Docker is required to run coding questions.' }; }
+    const result = await processRunner(['info', '--format', '{{.OSType}}'], '', 3000);
+    if (result.exitCode !== 0 || result.stopped)
+      return unavailable('unreachable', 'Docker is not running or cannot be reached on the execution host.');
+    if (result.stdout.trim() !== 'linux')
+      return unavailable('wrong_mode', 'Docker is running in Windows container mode. Switch to Linux containers.');
+    const images = [...new Set(Object.values(runtimeImages))];
+    const installed = await Promise.all(images.map(async image => {
+      const result = await processRunner(['image', 'inspect', image, '--format', '{{.Id}}'], '', 3000);
+      return !result.stopped && result.exitCode === 0;
+    }));
+    const languages = Object.keys(runtimeImages).filter(language => installed[images.indexOf(runtimeImages[language])]);
+    const missing = Object.keys(runtimeImages).filter(language => !languages.includes(language));
+    return { available: !missing.length, docker: 'ready', languages,
+      message: missing.length ? `Docker is running. Missing runtime images for ${missing.join(', ')}.` : 'Docker and coding runtimes are ready.' };
+  } catch (error) {
+    return error.code === 'ENOENT'
+      ? unavailable('missing', 'Docker is not installed or is missing from PATH on the execution host.')
+      : unavailable('unreachable', 'Docker cannot be reached on the execution host.');
+  }
 }

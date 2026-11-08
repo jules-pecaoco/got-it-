@@ -8,7 +8,7 @@ export function participationCounts(rows) {
     if (Object.hasOwn(attemptLabels, row.status)) counts[row.status]++;
     if (row.sessionId && !row.resultsReleased) {
       counts.hidden++;
-      if (['submitted', 'expired'].includes(row.status) && !row.pendingCoding && !row.pendingReview) counts.readyToPublish++;
+      if (['submitted', 'expired'].includes(row.status) && !row.finalizationPending && !row.pendingCoding && !row.pendingReview) counts.readyToPublish++;
     }
   }
   return counts;
@@ -22,11 +22,12 @@ export function filterResultRows(rows, { search = '', status = 'all', visibility
 }
 
 export function retryPolicyText(policy) {
-  const retries = policy.maxRetries === null ? 'Unlimited retries' : `${policy.maxRetries} ${policy.maxRetries === 1 ? 'retry' : 'retries'} per question`;
-  const cost = policy.pointPenalty || policy.timePenaltySeconds
-    ? `Each retry costs ${policy.pointPenalty} ${policy.pointPenalty === 1 ? 'point' : 'points'} and ${policy.timePenaltySeconds} seconds.`
-    : 'Retries have no point or time cost.';
-  return `${retries}. ${cost}`;
+  if (policy.maxRetries === 0) return 'You can submit each answer once. You cannot change it after submitting.';
+  const limit = policy.maxRetries === null ? 'You can submit each answer as many times as you need while time remains.' : `You can submit each answer up to ${policy.maxRetries + 1} times.`;
+  const deductions = [];
+  if (policy.pointPenalty) deductions.push(`${policy.pointPenalty} ${policy.pointPenalty === 1 ? 'point' : 'points'}`);
+  if (policy.timePenaltySeconds) deductions.push(`${policy.timePenaltySeconds} seconds from your remaining time`);
+  return `${limit} ${deductions.length ? `Each submission after the first deducts ${deductions.join(' and ')}.` : 'Extra submissions do not deduct points or time.'}`;
 }
 
 export function localDateTime(value) {

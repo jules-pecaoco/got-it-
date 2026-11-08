@@ -11,17 +11,30 @@ class RemoteWorkspace {
       throw new Error('Remote execution requires HTTPS.');
     const secret = process.env.EXECUTION_SECRET;
     if (!secret || secret.length < 32) throw new Error('Set EXECUTION_SECRET to at least 32 characters.');
+    const unavailable = () =>
+      Object.assign(
+        new Error('The PHP execution worker is unavailable. Check that the worker and Docker are running.'),
+        {
+          code: 'WEB_RUNTIME_UNAVAILABLE',
+          status: 503,
+        },
+      );
     const response = await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
       signal: AbortSignal.timeout(20000),
+    }).catch(() => {
+      throw unavailable();
     });
-    if (!response.ok)
-      throw Object.assign(new Error('Web execution worker unavailable. Retry shortly.'), {
-        code: 'WEB_RUNTIME_UNAVAILABLE',
-        status: 503,
-      });
+    if (!response.ok) {
+      if (response.status === 404 && path !== '/web/open')
+        throw Object.assign(new Error('The PHP workspace ended. Reopen the preview to continue.'), {
+          code: 'WEB_WORKSPACE_ENDED',
+          status: 503,
+        });
+      throw unavailable();
+    }
     return response.json();
   }
   async start(project: Project, seedSql = '') {

@@ -1,3 +1,4 @@
+import { TerminalManager } from '../src/terminal.mts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildGeneratedPackage } from '../src/ai.mjs';
@@ -7,7 +8,7 @@ process.env.NODE_ENV = 'test';
 process.env.DATA_FILE = ':memory:';
 process.env.DEMO_MODE = '1';
 process.env.INSTRUCTOR_PASSWORD = 'demo-instructor';
-const { server, store } = await import('../src/server.mjs');
+const { server, store, terminals } = await import('../src/server.mjs');
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const call = async (path, { method = 'GET', data, token, headers: extraHeaders = {} } = {}) => {
@@ -40,30 +41,24 @@ test('coding HTTP routes protect private tests, ignore forged expected output, a
     const mission = (await call('/api/me/missions/mission-1', { token: joined.token })).payload.data;
     assert.doesNotMatch(JSON.stringify(mission), /referenceCode|"criteria"|-8 1/);
     const preview = await call(`${path}/preview`, { method: 'POST', token: joined.token, data: { value: 'solution', config: { samples: [{ input: '-8 1', output: 'fake' }] } } });
-    assert.equal(preview.response.status, 200); assert.equal(preview.payload.data.samples[0].expectedOutput, '5'); assert.equal(calls, 1);
+    assert.equal(preview.response.status, 200); assert.equal(preview.payload.data.samples[0].output, '5'); assert.equal(preview.payload.data.samples[0].matches, undefined); assert.equal(calls, 1);
     assert.doesNotMatch(JSON.stringify(preview.payload), /-8 1/);
     const submitted = await call(`${path}/submit`, { method: 'POST', token: joined.token, data: { value: 'solution', output: 'forged' }, headers: { 'Idempotency-Key': 'coding-http-request-0001' } });
     assert.equal(submitted.response.status, 200); assert.equal(submitted.payload.data.saved, true);
-    assert.equal(submitted.payload.data.score, undefined); assert.equal(submitted.payload.data.result, undefined); assert.equal(calls, 3);
-    assert.equal(store.score(joined.session.id), 10);
+    assert.equal(submitted.payload.data.score, undefined); assert.equal(submitted.payload.data.result, undefined); assert.equal(calls, 1);
+    assert.equal(store.score(joined.session.id), 0);
     const queued = await call(`${path}/submit`, { method: 'POST', token: joined.token, data: { value: 'solution' }, headers: { Prefer: 'respond-async', 'Idempotency-Key': 'coding-http-queued-0002' } });
-    assert.equal(queued.response.status, 202);
-    const jobPath = `/api/me/coding-jobs/${queued.payload.data.jobId}`;
-    assert.equal((await call(jobPath)).response.status, 401);
-    let job;
-    for (let tries = 0; tries < 100; tries++) {
-      job = await call(jobPath, { token: joined.token });
-      if (job.payload.data.status === 'done') break;
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
-    assert.equal(job.payload.data.status, 'done');
-    assert.equal(job.payload.data.result.saved, true); assert.equal(job.payload.data.result.score, undefined);
+    assert.equal(queued.response.status, 200);
+    assert.equal(queued.payload.data.saved, true);
+    assert.equal(store.hasPendingReview(joined.session.id), true);
     await call('/api/me/finalize', { method: 'POST', token: joined.token, data: {} });
     assert.equal((await call(`${path}/preview`, { method: 'POST', token: joined.token, data: { value: 'solution' } })).response.status, 403);
   } finally { store.codeRunner = originalRunner; }
 });
 
 test('public assets revalidate while readiness and API responses remain uncached', async () => {
+  const config=await call('/api/config');
+  assert.equal(config.payload.data.features.liveTerminal,true);
   const first = await fetch(base + '/student.js');
   assert.equal(first.status, 200); const etag = first.headers.get('etag'); assert.ok(etag);
   const cached = await fetch(base + '/student.js', { headers: { 'If-None-Match': etag } });
@@ -396,7 +391,7 @@ test('student and faculty endpoints are separate and the panel is removed', asyn
   assert.match(faculty.payload, /Faculty Studio/);
   assert.match(faculty.payload, /id="ai-difficulty"/);
   assert.match(faculty.payload, /id="ai-questions"/);
-  assert.match(faculty.payload, /Package JSON/);
+  assert.doesNotMatch(faculty.payload, /Package JSON|coverage-json|new-package-json|package-json-details|creation-import/);
   assert.match(faculty.payload, /Answer key \(faculty only\)/);
   assert.match(faculty.payload, /aria-label="Faculty workspace"/);
   assert.match(faculty.payload, /id="proctor-access"/);
@@ -603,4 +598,94 @@ test('question shuffle stays fixed and faculty can review and override a finishe
   const audit = (await call('/api/instructor/audit', { token })).payload.data;
   assert.ok(audit.some(event => event.action === 'override_question_score' && event.detail.activityId === activity.id));
   assert.ok(audit.some(event => event.action === 'clear_question_score_override' && event.detail.activityId === activity.id));
+});
+
+test('HTML references use per-page style nonces while scripts remain restricted', async () => {
+  const first=await call('/app/faculty');
+  const csp=first.response.headers.get('content-security-policy');
+  const nonce=/name="expected-output-style-nonce" content="([a-f0-9]{32})"/.exec(first.payload)?.[1];
+  assert.ok(nonce);assert.ok(csp.includes("'nonce-"+nonce+"'"));
+  assert.ok(csp.includes("script-src 'self'"));assert.ok(!csp.includes("'unsafe-inline'"));
+  assert.equal(first.response.headers.get('cache-control'),'no-store');
+  const second=await call('/app/faculty');
+  assert.ok(!second.payload.includes(nonce));
+});
+
+test('saved draft question forms enforce ownership, revisions, validation and published immutability', async () => {
+  const source={filename:'edit-lesson.txt',content:'A labelled form input needs a meaningful label so students using assistive technology can understand its purpose. Labels should describe the value being requested.'};
+  const value=buildGeneratedPackage({title:'Editable questions',subject:'Forms',kind:'exam',durationMinutes:30,questionCount:1,source},{missions:[{title:'Forms',activities:[{type:'single_choice',prompt:'What describes a field?',options:['A label','A timer'],answer:'A label',evidenceQuote:source.content,location:'Source'}]}]});
+  const token=store.loginInstructor('demo-instructor','demo-instructor').token;
+  store.importDraft(value.public,value.private);store.addSource(value.public.examId,1,source);
+  const path='/api/instructor/assessments/'+value.public.examId+'/1';
+  const before=(await call(path,{token})).payload.data;
+  const question={type:'single_choice',prompt:'Choose the accessible label.',options:['A label','A timer'],answer:'A label',points:15};
+  const saved=await call(path+'/questions/m1-q1',{method:'PUT',token,data:{question,revision:before.revision}});
+  assert.equal(saved.response.status,200);
+  assert.equal((await call(path+'/questions/m1-q1',{method:'PUT',token,data:{question,revision:before.revision}})).response.status,409);
+  const after=(await call(path,{token})).payload.data;
+  assert.equal(after.public.settings.coreMaxPoints,15);
+  const invalid=await call(path+'/questions/m1-q1',{method:'PUT',token,data:{question:{...question,answer:'Not an option'},revision:after.revision}});
+  assert.equal(invalid.response.status,422);
+  assert.equal((await call(path,{token})).payload.data.revision,after.revision);
+  assert.equal((await call(path+'/questions/m1-q1',{method:'PUT',data:{question,revision:after.revision}})).response.status,401);
+  store.setFacultyPassword('other-editor','other-editor-password');
+  const other=store.loginInstructor('other-editor-password','demo-instructor','other-editor').token;
+  assert.equal((await call(path+'/questions/m1-q1',{method:'PUT',token:other,data:{question,revision:after.revision}})).response.status,404);
+  store.publish(value.public.examId,1);
+  assert.equal((await call(path+'/questions/m1-q1',{method:'PUT',token,data:{question,revision:after.revision}})).response.status,409);
+});
+
+test('live terminal HTTP routes isolate student runs, accept replies and stop after the attempt ends',async()=>{
+ const source={filename:'terminal-lesson.txt',content:'A Python program can ask for a name using input and print a greeting with print. The name is read as text from standard input. Define and call functions when useful.'};
+ const value=buildGeneratedPackage({title:'Terminal HTTP',subject:'Python',kind:'exam',durationMinutes:30,questionCount:1,source},{missions:[{title:'Greeting',activities:[{type:'code_writing',language:'python',prompt:'Read a name and print a greeting.',starterCode:'# Your code',samples:[{input:'Jules',output:'Hello Jules'}],comparison:{mode:'whitespace'},rubric:['Correct greeting'],evidenceQuote:source.content,location:'Source'}]}]});
+ store.importDraft(value.public,value.private);store.addSource(value.public.examId,1,source);store.publish(value.public.examId,1);
+ const run=store.createRun({examId:value.public.examId,version:1,pin:'4242',feedbackMode:'graded',opensAt:new Date(Date.now()-1000).toISOString(),closesAt:new Date(Date.now()+600000).toISOString(),roster:[{candidateId:'TA',displayName:'A',section:'S'},{candidateId:'TB',displayName:'B',section:'S'}]});
+ const a=store.join({runId:run.id,pin:'4242',candidateId:'TA'}),b=store.join({runId:run.id,pin:'4242',candidateId:'TB'});
+ const manager=new TerminalManager(async(language,code,_id,output,exit)=>{
+  assert.equal(language,'python');assert.equal(code,'print(input())');output('Name: ');
+  return {write:line=>output('Received '+line),end:()=>exit(true),stop:async()=>{}};
+ });
+ const methods=['open','read','write','stop'],original=Object.fromEntries(methods.map(name=>[name,terminals[name]]));
+ for(const name of methods)terminals[name]=manager[name].bind(manager);
+ try{
+  const path='/api/me/activities/m1-q1/terminal';
+  assert.equal((await call(path,{method:'POST',data:{value:'code'}})).response.status,401);
+  const started=await call(path,{method:'POST',token:a.token,data:{value:'print(input())',language:'javascript'}});
+  assert.equal(started.response.status,201);assert.match(started.payload.data.output,/Name:/);
+  const itemPath=path+'/'+started.payload.data.id;
+  assert.equal((await call(itemPath,{token:b.token})).response.status,404);
+  const reply=await call(itemPath,{method:'POST',token:a.token,data:{line:'Jules'}});
+  assert.equal(reply.response.status,200);assert.match(reply.payload.data.output,/Received Jules/);
+  assert.equal(store.sessionView(a.session.id).submittedCount,0);
+  store.finalize(a.session.id);
+  assert.equal((await call(itemPath,{token:a.token})).response.status,403);
+  assert.equal(manager.read(a.session.id,started.payload.data.id).status,'stopped');
+  assert.equal((await call(itemPath,{method:'DELETE',token:a.token})).response.status,200);
+ }finally{for(const name of methods)terminals[name]=original[name];await manager.close();}
+});
+
+test('student references contain only faculty-selected guides and cannot be expanded through query parameters',async()=>{
+ const token=store.loginInstructor('demo-instructor','demo-instructor').token;
+ const all=await call('/api/instructor/reference-guides',{token});
+ assert.equal(all.response.status,200);assert.equal(all.payload.data.guides.length,7);
+ assert.equal((await call('/api/me/reference-guides')).response.status,401);
+ assert.equal((await call('/reference-guides.mts')).response.status,404);
+ const source={filename:'guide-lesson.txt',content:'A labelled input is associated with its label using an id and a matching for attribute. Python can read text with input and display text with print. Select only the reference material allowed by faculty.'};
+ const value=buildGeneratedPackage({title:'Allowed references',subject:'Programming',kind:'exam',durationMinutes:30,questionCount:1,source},{missions:[{title:'Labels',activities:[{type:'true_false',prompt:'A label can name an input.',answer:true,evidenceQuote:source.content,location:'Source'}]}]});
+ value.public.settings.referenceGuides=['python','html'];
+ store.importDraft(value.public,value.private);store.addSource(value.public.examId,1,source);store.publish(value.public.examId,1);
+ const run=store.createRun({examId:value.public.examId,version:1,pin:'4242',feedbackMode:'graded',opensAt:new Date(Date.now()-1000).toISOString(),closesAt:new Date(Date.now()+600000).toISOString(),roster:[{candidateId:'REF',displayName:'Reference user',section:'S'}]});
+ const preview=store.previewJoin({runId:run.id,pin:'4242',candidateId:'REF'});
+ assert.deepEqual(preview.referenceGuides,['python','html']);
+ const joined=store.join({runId:run.id,pin:'4242',candidateId:'REF'});
+ const allowed=await call('/api/me/reference-guides?topics=sql,php,bootstrap5',{token:joined.token});
+ assert.equal(allowed.response.status,200);
+ assert.deepEqual(allowed.payload.data.guides.map(g=>g.id),['python','html']);
+ assert.deepEqual(joined.session.referenceGuides,['python','html']);
+ assert.equal((await call('/api/instructor/reference-guides',{token:joined.token})).response.status,401);
+ const disabled=structuredClone(value);disabled.public.examId+='-off';delete disabled.public.settings.referenceGuides;
+ store.importDraft(disabled.public,disabled.private);store.addSource(disabled.public.examId,1,source);store.publish(disabled.public.examId,1);
+ const off=store.createRun({examId:disabled.public.examId,version:1,pin:'4242',opensAt:new Date(Date.now()-1000).toISOString(),closesAt:new Date(Date.now()+600000).toISOString(),roster:[{candidateId:'OFF',displayName:'Off',section:'S'}]});
+ const no=store.join({runId:off.id,pin:'4242',candidateId:'OFF'});
+ assert.deepEqual((await call('/api/me/reference-guides',{token:no.token})).payload.data.guides,[]);
 });

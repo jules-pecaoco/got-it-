@@ -1,7 +1,10 @@
+import { aiProviderCatalog, resolveAiSelection } from '../ai-provider.mjs';
+import { suggestGrade } from '../ai-grading.mjs';
 import {
   aiAvailable,
   generateExam,
   proposeExam,
+  regenerateInvalidQuestions,
   inspectProposal,
   buildApprovedPackage,
   checkSourceSupport,
@@ -9,10 +12,11 @@ import {
 } from '../ai.mjs';
 import { extractMaterialBounded } from '../material-extraction.mjs';
 import { accessToken, clearBrowserSession } from '../http-session.mjs';
-import { codingStatus, previewCode } from '../code-runner.mjs';
+import { previewCode } from '../code-runner.mjs';
 import { asFaculty, assertOwner } from '../faculty-access.mjs';
-import { webTemplate } from '../web-template.mjs';
-import { randomUUID } from 'node:crypto';
+import { hash } from '../engine.mjs';
+import { referenceGuides } from '../reference-guides.mts';
+import { referenceTopics } from '../../public/reference-topics.js';
 
 export async function facultyApi({
   req,
@@ -27,19 +31,33 @@ export async function facultyApi({
   body,
   limit,
   metricsSnapshot,
+  settlement,
+  runtimeStatus,
 }) {
   const method = req.method,
     path = url.pathname;
   const instructorToken = accessToken(req, 'instructor');
   const owner = store.requireInstructor(instructorToken);
   return asFaculty(owner, async () => {
-    if (method === 'POST' && path.startsWith('/api/instructor/ai/')) {
-      // A proposal may use two 90-second attempts; generation can also repair it.
-      res.setTimeout(path.endsWith('/generate') ? 370000 : 190000);
+    const savedAI = store.db.prepare('SELECT settings_json FROM faculty_ai_settings WHERE faculty_id=?').get(owner);
+    const storedSelection = savedAI ? JSON.parse(savedAI.settings_json) : {};
+    const selection = { provider: storedSelection.aiProvider || 'gemini', model: storedSelection.aiModel || aiProviderCatalog()[0].models[0].id };
+    const selectedInput = async () => ({ ...await body(req), aiProvider: selection.provider, aiModel: selection.model });
+    if (path === '/api/instructor/ai/settings') {
+      if (method === 'GET') return send(res, requestId, { aiProvider: selection.provider, aiModel: selection.model, providers: aiProviderCatalog() });
+      if (method === 'PUT') {
+        const chosen = resolveAiSelection(await body(req));
+        const settings = { aiProvider: chosen.provider, aiModel: chosen.model };
+        store.db.prepare('INSERT INTO faculty_ai_settings(faculty_id,settings_json) VALUES (?,?) ON CONFLICT(faculty_id) DO UPDATE SET settings_json=excluded.settings_json').run(owner, JSON.stringify(settings));
+        return send(res, requestId, settings);
+      }
     }
-    if (method === 'POST' && path === '/api/instructor/web-template') {
-      const value = webTemplate(`php-${randomUUID()}`);
-      return send(res, requestId, store.importDraft(value.public, value.private), 201);
+
+    if (method === 'GET' && path === '/api/instructor/reference-guides')
+      return send(res, requestId, { guides: referenceGuides(referenceTopics.map((topic) => topic.id)) });
+    if (method === 'POST' && path.startsWith('/api/instructor/ai/')) {
+      // Initial generation and one repair may each use two 90-second provider attempts.
+      res.setTimeout((path.endsWith('/generate') || path.endsWith('/propose') || path.endsWith('/regenerate')) ? 370000 : 190000);
     }
     const runId = /^\/api\/instructor\/runs\/([a-f0-9-]+)/.exec(path)?.[1];
     if (runId) {
@@ -82,13 +100,18 @@ export async function facultyApi({
       return send(res, requestId, {
         available: aiAvailable(),
         model: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+        providers: aiProviderCatalog(),
       });
     if (method === 'GET' && path === '/api/instructor/code/status')
-      return send(res, requestId, await codingStatus());
+      return send(res, requestId, await runtimeStatus());
     if (method === 'POST' && path === '/api/instructor/code/preview') {
       limit(`code-preview:instructor:${instructorToken}`, 12);
       const input = await body(req, 500_000);
-      return send(res, requestId, await previewCode(input.config, input.value, store.codeRunner));
+      return send(
+        res,
+        requestId,
+        await previewCode(input.config, input.value, store.codeRunner, input.input),
+      );
     }
     if (path === '/api/instructor/ai/proposal') {
       if (method === 'GET') return send(res, requestId, store.getAiProposal(instructorToken));
@@ -100,11 +123,15 @@ export async function facultyApi({
       return send(res, requestId, inspectProposal(await body(req)));
     if (method === 'POST' && path === '/api/instructor/ai/generate') {
       limit(`ai-generate:${req.socket.remoteAddress}`, 5, 3600_000);
-      return send(res, requestId, await generateExam(await body(req)));
+      return send(res, requestId, await generateExam(await selectedInput()));
+    }
+    if (method === 'POST' && path === '/api/instructor/ai/regenerate') {
+      limit(`ai-regenerate:${req.socket.remoteAddress}`, 40, 3600_000);
+      return send(res, requestId, await regenerateInvalidQuestions(await selectedInput()));
     }
     if (method === 'POST' && path === '/api/instructor/ai/propose') {
       limit(`ai-propose:${req.socket.remoteAddress}`, 5, 3600_000);
-      return send(res, requestId, await proposeExam(await body(req)));
+      return send(res, requestId, await proposeExam(await selectedInput()));
     }
     if (method === 'POST' && path === '/api/instructor/ai/approved-draft') {
       const input = await body(req);
@@ -135,7 +162,7 @@ export async function facultyApi({
       limit(`ai-check:${req.socket.remoteAddress}`, 10, 3600_000);
       const exam = store.getExam(aiCheckPath[1], Number(aiCheckPath[2]));
       const sources = store.listSources(aiCheckPath[1], Number(aiCheckPath[2]));
-      return send(res, requestId, await checkSourceSupport(exam, sources));
+      return send(res, requestId, await checkSourceSupport(exam, sources, selection));
     }
     if (method === 'GET' && /^\/api\/instructor\/(assessments|exams)$/.test(path))
       return send(res, requestId, store.listExams());
@@ -143,6 +170,14 @@ export async function facultyApi({
       const input = await body(req);
       return send(res, requestId, store.importDraft(input.public, input.private), 201);
     }
+    const questionPath =
+      /^\/api\/instructor\/assessments\/([a-z0-9-]+)\/(\d+)\/questions\/([A-Za-z0-9-]+)$/.exec(path);
+    if (method === 'PUT' && questionPath)
+      return send(
+        res,
+        requestId,
+        store.editDraftQuestion(questionPath[1], Number(questionPath[2]), questionPath[3], await body(req)),
+      );
     const examPath =
       /^\/api\/instructor\/(?:assessments|exams)\/([a-z0-9-]+)\/(\d+)(?:\/(validate|publish|clone|archive|restore))?$/.exec(
         path,
@@ -170,8 +205,10 @@ export async function facultyApi({
           public: exam.public,
           private: exam.private,
           contentHash: exam.content_hash,
+          revision: hash(exam.public_json + '\n' + exam.private_json),
         });
       }
+      if (method === 'DELETE' && !action) return send(res, requestId, store.deleteActivity(id, version));
       if (method === 'PUT' && !action) {
         const input = await body(req);
         return send(res, requestId, store.updateDraft(id, version, input.public, input.private));
@@ -233,22 +270,59 @@ export async function facultyApi({
         store.recoverStudent(recoveryPath[1], recoveryPath[2], await body(req), recoveryPath[3]),
       );
     const publishAllResultsPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/publish-scores$/.exec(path);
-    if (method === 'POST' && publishAllResultsPath)
+    if (method === 'POST' && publishAllResultsPath) {
+      await settlement.settleExpired(publishAllResultsPath[1]);
       return send(res, requestId, store.publishCompletedResults(publishAllResultsPath[1]));
+    }
     const publishStudentResultsPath =
       /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/publish-scores$/.exec(path);
-    if (method === 'POST' && publishStudentResultsPath)
+    if (method === 'POST' && publishStudentResultsPath) {
+      const { sessionId } = store.reviewStudent(publishStudentResultsPath[1], publishStudentResultsPath[2]);
+      if (sessionId) await settlement.settle(sessionId);
       return send(
         res,
         requestId,
         store.publishStudentResults(publishStudentResultsPath[1], publishStudentResultsPath[2]),
       );
+    }
+    const aiGradePath =
+      /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})\/scores\/([A-Za-z0-9-]+)\/ai-check$/.exec(
+        path,
+      );
+    if (method === 'POST' && aiGradePath) {
+      limit(`ai-grading:${owner}`, 10);
+      const [, gradeRun, candidate, questionId] = aiGradePath;
+      const review = store.reviewStudent(gradeRun, candidate);
+      if (!review.canOverride)
+        throw Object.assign(new Error('Wait until the attempt is finished and ready for faculty grading.'), {
+          code: 'ATTEMPT_IN_PROGRESS',
+          status: 409,
+        });
+      const question = review.questions.find((item) => item.id === questionId);
+      if (!question)
+        throw Object.assign(new Error('Question not found.'), { code: 'NOT_FOUND', status: 404 });
+      const signature = JSON.stringify(question.attempts);
+      res.setTimeout(190000);
+      const suggestion = await suggestGrade(question, { selection });
+      const current = store.reviewStudent(gradeRun, candidate);
+      if (
+        !current.canOverride ||
+        signature !== JSON.stringify(current.questions.find((item) => item.id === questionId)?.attempts)
+      )
+        throw Object.assign(new Error('The attempt changed. Refresh and request a new suggestion.'), {
+          code: 'STALE_REVIEW',
+          status: 409,
+        });
+      return send(res, requestId, suggestion);
+    }
     const studentReviewPath =
       /^\/api\/instructor\/runs\/([a-f0-9-]+)\/students\/([A-Za-z0-9-]{1,40})(?:\/scores\/([A-Za-z0-9-]+))?$/.exec(
         path,
       );
     if (studentReviewPath) {
       const [, runId, candidateId, activityId] = studentReviewPath;
+      const { sessionId } = store.reviewStudent(runId, candidateId);
+      if (sessionId) await settlement.settle(sessionId);
       if (method === 'GET' && !activityId)
         return send(res, requestId, store.reviewStudent(runId, candidateId));
       if (method === 'PUT' && activityId)
@@ -268,10 +342,15 @@ export async function facultyApi({
         return send(res, requestId, store.issueProctorAccess(runId, (await body(req)).code));
       if (method === 'DELETE') return send(res, requestId, store.revokeProctorAccess(runId));
     }
+    const manageRun = /^\/api\/instructor\/runs\/([a-f0-9-]+)$/.exec(path);
+    if (manageRun && method === 'PUT')
+      return send(res, requestId, store.updateRun(manageRun[1], await body(req)));
+    if (manageRun && method === 'DELETE') return send(res, requestId, store.deleteRun(manageRun[1]));
     const runPath = /^\/api\/instructor\/runs\/([a-f0-9-]+)\/(name|results|export.csv)$/.exec(path);
     if (method === 'PUT' && runPath?.[2] === 'name')
       return send(res, requestId, store.renameRun(runPath[1], (await body(req)).name));
     if (method === 'GET' && runPath) {
+      await settlement.settleExpired(runPath[1]);
       const result = store.results(runPath[1]);
       if (runPath[2] === 'export.csv') return csv(res, gradebook(result));
       return send(res, requestId, result);

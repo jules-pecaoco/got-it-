@@ -2,6 +2,12 @@ export const codingLanguages = Object.freeze([
   ['php', 'PHP'], ['python', 'Python'], ['sql', 'SQL (SQLite)'], ['javascript', 'JavaScript']
 ]);
 export const codeLimit = 16000;
+export function defaultStarterCode(language) {
+  if (language === 'php') return '<?php\n// Write your solution here.\n';
+  if (language === 'python') return '# Write your solution here.\n';
+  if (language === 'sql') return '-- Write your query here.\n';
+  return '// Write your solution here.\n';
+}
 const text = (value, limit = codeLimit) => typeof value === 'string' && value.length <= limit;
 export function validateCodeConfig(config) {
   const errors = [];
@@ -10,8 +16,8 @@ export function validateCodeConfig(config) {
   if (!codingLanguages.some(([name]) => name === config.language)) errors.push('coding language must be php, python, sql, or javascript.');
   if (!text(config.starterCode)) errors.push('starterCode must be a string of at most 16,000 characters.');
   if (!Array.isArray(config.samples) || config.samples.length < 1 || config.samples.length > 3 ||
-    config.samples.some(sample => !sample || !text(sample.input) || !text(sample.output) ||
-      Object.keys(sample).some(key => !['input', 'output'].includes(key)))) errors.push('provide 1–3 samples with only input and expected output strings.');
+    config.samples.some(sample => !sample || !text(sample.input) || !text(sample.output) || (sample.transcript !== undefined && (!text(sample.transcript) || sample.transcript.length > 16000)) ||
+      Object.keys(sample).some(key => !['input', 'output', 'transcript'].includes(key)))) errors.push('provide 1–3 samples with input/output strings and an optional sample-run transcript.');
   const comparison = config.comparison;
   if (!comparison || !['exact', 'whitespace', 'numeric'].includes(comparison.mode)) errors.push('output comparison must be exact, whitespace, or numeric.');
   if (comparison && Object.keys(comparison).some(key => !['mode', 'absoluteTolerance', 'relativeTolerance'].includes(key))) errors.push('output comparison contains an unsupported field.');
@@ -21,6 +27,10 @@ export function validateCodeConfig(config) {
 }
 export function validateCodeRule(config, rule) {
   const errors = validateCodeConfig(config);
+  if (Array.isArray(rule?.criteria) && rule.criteria.length && rule.criteria.every(item => item?.answer?.kind === 'manual')) {
+    if (rule.criteria.length > 10 || rule.criteria.some(item => !text(item.answer.description) || !item.answer.description.trim())) errors.push('Provide 1–10 manual criteria with descriptions.');
+    return errors;
+  }
   if (!text(rule?.referenceCode) || !rule.referenceCode.trim()) errors.push('a private reference solution is required (at most 16,000 characters).');
   if (!Array.isArray(rule?.criteria) || rule.criteria.length < 2 || rule.criteria.length > 6 ||
     rule.criteria.some(criterion => !text(criterion?.answer?.input) || !text(criterion?.answer?.output))) errors.push('coding questions need 2–6 test cases with input and output strings.');

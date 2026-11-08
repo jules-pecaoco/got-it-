@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { parseTableCode } from '../public/table-code.js';
 import { validateCodeRule } from '../public/code-task.js';
 import { validateWebRule } from '../public/web-project.js';
+import { validateReferenceSelection } from '../public/reference-topics.js';
 
 export const hash = value => createHash('sha256').update(value).digest('hex');
 const asArray = value => Array.isArray(value) ? value : [];
@@ -39,16 +40,17 @@ export function inspectRows(config, state) {
   return { filteredCount: rows.length, visible: state?.flags?.paging === false ? rows : rows.slice(pageIndex * pageLength, (pageIndex + 1) * pageLength) };
 }
 
-function validInspectionState(config, value) {
+export function validInspectionState(config, value) {
   if (!Array.isArray(config.columns) || !Array.isArray(config.pageLengths) ||
     !value || typeof value !== 'object' || !config.pageLengths.includes(value.pageLength) ||
     typeof value.globalSearch !== 'string' || value.globalSearch.length > 100 ||
     !Number.isInteger(value.pageIndex) || value.pageIndex < 0 || !Array.isArray(value.order) || value.order.length > 2) return false;
   const columns = new Set(config.columns.map(column => column.id));
-  if (value.columnSearch !== undefined && (typeof value.columnSearch !== 'object' || Array.isArray(value.columnSearch) ||
+  if (value.columnSearch !== undefined && (!value.columnSearch || typeof value.columnSearch !== 'object' || Array.isArray(value.columnSearch) ||
     Object.entries(value.columnSearch).some(([column, term]) => !columns.has(column) || typeof term !== 'string' || term.length > 100))) return false;
-  return value.order.length > 0 && new Set(value.order.map(item => item.column)).size === value.order.length &&
-    value.order.every(item => columns.has(item.column) && ['asc', 'desc'].includes(item.direction));
+  return value.order.length > 0 &&
+    value.order.every(item => item && columns.has(item.column) && ['asc', 'desc'].includes(item.direction)) &&
+    new Set(value.order.map(item => item.column)).size === value.order.length;
 }
 
 export const validatorRegistry = Object.freeze({
@@ -99,6 +101,7 @@ export function validatePackage(pub, priv) {
   if (pub.difficulty !== undefined && !['easy', 'medium', 'hard'].includes(pub.difficulty))
     errors.push('difficulty must be easy, medium, or hard.');
   const s = pub.settings ?? {};
+  errors.push(...validateReferenceSelection(s.referenceGuides));
   if (!Number.isInteger(s.durationMinutes) || s.durationMinutes < 1 || s.durationMinutes > 1440) errors.push('durationMinutes must be 1–1440.');
   if (!Number.isInteger(s.coreMaxPoints) || s.coreMaxPoints < 1) errors.push('coreMaxPoints must be positive.');
   if (!Number.isInteger(s.bonusMaxPoints) || s.bonusMaxPoints < 0) errors.push('bonusMaxPoints must be nonnegative.');
@@ -206,7 +209,7 @@ function validateActivityConfig(a, rule) {
     if (options.length < 2 || options.some(x => !x?.id || !x?.label) || new Set(options.map(x => x.id)).size !== options.length) errors.push('at least two unique labeled options required.');
     const ids = new Set(options.map(x => x.id));
     const answers = a.type === 'multiple_choice' ? asArray(first) : [first];
-    if (!answers.length || answers.some(x => !ids.has(x))) errors.push('private option answer is invalid.');
+    if (!answers.length || new Set(answers).size !== answers.length || answers.some(x => !ids.has(x))) errors.push('private option answer is invalid.');
   }
   if (a.type === 'true_false' && typeof first !== 'boolean') errors.push('boolean private answer required.');
   if (a.type === 'text_entry' && (!Array.isArray(first) || !first.length || first.some(x => typeof x !== 'string'))) errors.push('accepted text array required.');
@@ -261,7 +264,17 @@ export function assignedOrder(missions, random = Math.random) {
   return result;
 }
 
+export function hasSubmittableCode(submission) {
+  const code = submission?.value;
+  return typeof code === 'string' && code.length <= 16000 && code.trim().length > 0;
+}
+
 export function evaluate(a, rule, submission) {
+  if (a.type === 'code_writing') {
+    if (!hasSubmittableCode(submission))
+      throw Object.assign(new Error('Enter 1–16,000 characters of code.'), { code: 'INVALID_CODE', status: 400 });
+    return { result: 'pending_review', feedbackCode: 'MANUAL_REVIEW', awarded: [] };
+  }
   const awarded = [];
   const validator = validatorRegistry[a.type];
   if (!validator) throw new Error(`No validator registered for ${a.type}.`);

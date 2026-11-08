@@ -1,4 +1,5 @@
 import { createWorkspace } from './workspace-client.mts';
+import { validateProject } from '../public/web-project.js';
 import type { Project } from '../web/contracts.js';
 interface Criterion {
   id: string;
@@ -17,6 +18,11 @@ export async function evaluateWeb(
   rule: { criteria: Criterion[] },
   submission: { value: Project },
 ) {
+  const errors = validateProject(submission?.value);
+  if (errors.length)
+    throw Object.assign(new Error(errors.join(' ')), { code: 'INVALID_PROJECT', status: 400 });
+  if (rule.criteria.every((criterion) => criterion.answer.kind === 'manual'))
+    return { result: 'pending_review', awarded: [], feedbackCode: 'FACULTY_REVIEW_REQUIRED' };
   // Student database state is evidence; tests start with a clean faculty fixture.
   const workspace = createWorkspace();
   const awarded: { id: string; points: number }[] = [];

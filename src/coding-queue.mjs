@@ -23,6 +23,7 @@ export class CodingQueue {
       this.recover(); this.pump();
     }, 5000);
     this.timer.unref();
+    this.db.prepare("UPDATE coding_jobs SET status='superseded' WHERE status='failed' AND json_valid(error_json) AND json_extract(error_json,'$.code')='ATTEMPT_LIMIT'").run();
     this.recover();
     setImmediate(() => this.pump());
   }
@@ -44,7 +45,8 @@ export class CodingQueue {
     }
     if (!finalizing && this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id=? AND status IN ('queued','running')").get(sessionId))
       throw Object.assign(new Error('Wait for your current coding job to finish.'), { code: 'CODING_JOB_PENDING', status: 409 });
-    if (this.stats().pending >= this.capacity) throw Object.assign(new Error('The coding queue is full. Retry shortly; no attempt was charged.'), { code: 'CODE_RUNNER_BUSY', status: 429 });
+    // Finalization moves already-acknowledged answers into the durable queue.
+    if (!finalizing && this.stats().pending >= this.capacity) throw Object.assign(new Error('The coding queue is full. Retry shortly; no attempt was charged.'), { code: 'CODE_RUNNER_BUSY', status: 429 });
     const id = randomUUID();
     this.db.prepare("INSERT INTO coding_jobs(id,session_id,activity_id,kind,request_key,payload_json,accepted_at,status) VALUES(?,?,?,?,?,?,?,'queued')")
       .run(id, sessionId, activityId, kind, key, encoded, acceptedAt);
@@ -60,9 +62,9 @@ export class CodingQueue {
   view(sessionId, id) {
     const row = this.db.prepare('SELECT * FROM coding_jobs WHERE id=? AND session_id=?').get(id, sessionId);
     if (!row) throw Object.assign(new Error('Coding job not found.'), { code: 'NOT_FOUND', status: 404 });
-    return { jobId: row.id, status: row.status, acceptedAt: row.accepted_at,
+    return { jobId: row.id, status: row.status === 'superseded' ? 'failed' : row.status, acceptedAt: row.accepted_at,
       ...(row.status === 'done' ? { result: JSON.parse(row.result_json) } : {}),
-      ...(row.status === 'failed' ? { error: JSON.parse(row.error_json) } : {}) };
+      ...(['failed', 'superseded'].includes(row.status) ? { error: JSON.parse(row.error_json) } : {}) };
   }
   pump() {
     if (this.closed) return;
@@ -82,8 +84,8 @@ export class CodingQueue {
       Promise.resolve().then(() => this.handler(job)).then(result => {
         if (!this.closed) this.db.prepare("UPDATE coding_jobs SET status='done',result_json=?,lease_until=NULL WHERE id=? AND lease_owner=?").run(JSON.stringify(result), job.id, this.owner);
       }, error => {
-        if (!this.closed) this.db.prepare("UPDATE coding_jobs SET status='failed',error_json=?,failures=failures+1,retry_at=?,lease_until=NULL WHERE id=? AND lease_owner=?")
-          .run(JSON.stringify({ code: error.code || 'CODE_RUNNER_UNAVAILABLE', message: error.status ? error.message : 'Coding service interrupted. Retry your submission.' }),
+        if (!this.closed) this.db.prepare("UPDATE coding_jobs SET status=?,error_json=?,failures=failures+1,retry_at=?,lease_until=NULL WHERE id=? AND lease_owner=?")
+          .run(error.code === 'ATTEMPT_LIMIT' ? 'superseded' : 'failed', JSON.stringify({ code: error.code || 'CODE_RUNNER_UNAVAILABLE', message: error.status ? error.message : 'Coding service interrupted. Retry your submission.' }),
             error.status === 503 || !error.status ? new Date(Date.now() + 5000).toISOString() : null, job.id, this.owner);
       }).finally(() => { this.active--; this.pump(); });
     }

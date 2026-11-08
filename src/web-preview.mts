@@ -15,6 +15,7 @@ export function createPreviewService(
   origin: string,
   allowed: (sessionId: string) => boolean,
   parentOrigin = '*',
+  finished = (sessionId: string) => !allowed(sessionId),
 ) {
   const previews = new Map<string, Preview>();
   const opening = new Set<string>();
@@ -31,7 +32,7 @@ export function createPreviewService(
     );
     if (!preview || preview.expires < Date.now() || !allowed(preview.sessionId)) {
       res.writeHead(404);
-      res.end('Preview ended. Open a new preview from the assessment.');
+      res.end('This preview has ended. Return to your answer and select Run web preview to open a new one.');
       return;
     }
     try {
@@ -41,6 +42,13 @@ export function createPreviewService(
         size += chunk.length;
         if (size > 100000) throw new Error('Request too large.');
         chunks.push(chunk);
+      }
+      if (!allowed(preview.sessionId) || opening.has(`${preview.sessionId}:${preview.activityId}`)) {
+        res.writeHead(404);
+        res.end(
+          'This preview has ended. Return to your answer and select Run web preview to open a new one.',
+        );
+        return;
       }
       const path = match![2] || '/';
       // Serialize requests and snapshots so SQLite snapshots never race PHP writes.
@@ -84,15 +92,15 @@ export function createPreviewService(
       res.writeHead(response.status, response.headers);
       res.end(body);
     } catch {
-      previews.delete(match![1]);
-      await preview.workspace.close();
       res.writeHead(503);
-      res.end('Preview interrupted. Save your project and reopen the preview.');
+      res.end(
+        'Your project preview stopped. Open a new preview to try again. If it still does not work, tell your instructor.',
+      );
     }
   });
   const timer = setInterval(() => {
     for (const [token, preview] of previews)
-      if (preview.expires < Date.now() || !allowed(preview.sessionId)) {
+      if (preview.expires < Date.now() || finished(preview.sessionId)) {
         previews.delete(token);
         void preview.workspace.close();
       }
@@ -109,11 +117,20 @@ export function createPreviewService(
         const existing = [...previews.entries()].find(
           ([, item]) => item.sessionId === sessionId && item.activityId === activityId,
         );
+        let warning: string | undefined;
         if (existing) {
-          previews.delete(existing[0]);
-          await existing[1].busy;
-          if (!reset) project = { ...project, database: await existing[1].workspace.snapshot() };
-          await existing[1].workspace.close();
+          const [, preview] = existing;
+          if (!reset) {
+            try {
+              const snapshot = preview.busy.then(() => preview.workspace.snapshot());
+              preview.busy = snapshot.catch(() => {});
+              project = { ...project, database: await snapshot };
+            } catch (error) {
+              if ((error as { code?: string }).code !== 'WEB_WORKSPACE_ENDED') throw error;
+              warning =
+                'The previous preview ended. Reopened with the database available in this editor. Newer preview changes may be missing.';
+            }
+          }
         }
         if (previews.size >= 80)
           throw Object.assign(new Error('All preview environments are busy. Retry shortly.'), {
@@ -123,6 +140,15 @@ export function createPreviewService(
         if (reset) project = { files: project.files };
         const workspace = createWorkspace();
         await workspace.start(project, seedSql);
+        const database = await workspace.snapshot().catch(async (error) => {
+          await workspace.close();
+          throw error;
+        });
+        if (existing) {
+          previews.delete(existing[0]);
+          await existing[1].busy;
+          await existing[1].workspace.close();
+        }
         const token = randomBytes(24).toString('hex');
         previews.set(token, {
           workspace,
@@ -131,18 +157,31 @@ export function createPreviewService(
           expires: Date.now() + 10 * 60000,
           busy: Promise.resolve(),
         });
-        return { url: `${parsed.origin}/p/${token}/`, database: await workspace.snapshot() };
+        return { url: `${parsed.origin}/p/${token}/`, database, warning };
       } finally {
         opening.delete(key);
       }
+    },
+    async discard(sessionId: string, activityId: string) {
+      if (opening.has(`${sessionId}:${activityId}`))
+        throw Object.assign(new Error('Preview busy. Retry shortly.'), { status: 503, code: 'WEB_CAPACITY' });
+      const existing = [...previews.entries()].find(
+        ([, item]) => item.sessionId === sessionId && item.activityId === activityId,
+      );
+      if (!existing) return;
+      const [token, preview] = existing;
+      previews.delete(token);
+      await preview.busy;
+      await preview.workspace.close();
     },
     async snapshot(sessionId: string, activityId: string) {
       const preview = [...previews.values()].find(
         (item) => item.sessionId === sessionId && item.activityId === activityId,
       );
       if (!preview) return undefined;
-      await preview.busy;
-      return preview.workspace.snapshot();
+      const work = preview.busy.then(() => preview.workspace.snapshot());
+      preview.busy = work.catch(() => {});
+      return work;
     },
     async close() {
       clearInterval(timer);

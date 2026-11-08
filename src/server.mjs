@@ -8,33 +8,35 @@ import { Store } from './store.mjs';
 import { loadConfig } from './config.mjs';
 import { RateLimiter } from './rate-limit.mjs';
 import { accessToken, browserSession, clearBrowserSession, checkRequestOrigin } from './http-session.mjs';
-import { executionRunner } from './execution-client.mts';
+import { executionRunner, executionStatus } from './execution-client.mts';
+import { terminalService } from './terminal-client.mts';
 import { createPreviewService } from './web-preview.mts';
 import { migrationDatabase } from './migration-database.mjs';
 import { measureRequest, metricsSnapshot } from './metrics.mts';
+import { attemptSettlement } from './attempt-settlement.mjs';
 
 const runtimeConfig = loadConfig();
 if (process.env.NODE_ENV !== 'test' && process.env.MIGRATION_ACTIVE !== '1') runtimeConfig.dataFile = migrationDatabase(runtimeConfig.dataFile);
 const { root, dataFile, demoMode, platformLabel, platformTagline, instructorPassword, publicOrigin } = runtimeConfig;
 if (!instructorPassword) throw new Error('INSTRUCTOR_PASSWORD is required when DEMO_MODE=0.');
-const store = new Store(dataFile, { codeRunner: executionRunner() });
-const assetCache = new Map();
 const previewOrigin = process.env.PREVIEW_ORIGIN ? new URL(process.env.PREVIEW_ORIGIN).origin : null;
 if (previewOrigin && previewOrigin === publicOrigin) throw new Error('PREVIEW_ORIGIN must differ from PUBLIC_ORIGIN.');
-const webPreviews = previewOrigin ? createPreviewService(previewOrigin, sessionId => {
-  try { const { session } = store.context(sessionId); return session.status === 'in_progress' && Date.now() < Date.parse(session.deadline_at); } catch { return false; }
-}, publicOrigin || '*') : null;
-async function snapshotProjects(sessionId = null, all = false) {
-  if (!webPreviews) return;
-  const drafts = store.db.prepare(`SELECT d.session_id,d.activity_id,d.response_json FROM answer_drafts d JOIN sessions s ON s.id=d.session_id
-    WHERE (? IS NULL OR d.session_id=?) AND (? OR ? IS NOT NULL OR s.deadline_at<=?)`).all(sessionId, sessionId, Number(all), sessionId, new Date().toISOString());
-  for (const draft of drafts) {
-    const response = JSON.parse(draft.response_json);
-    if (!response.value?.files) continue;
-    const database = await webPreviews.snapshot(draft.session_id, draft.activity_id);
-    if (database) store.db.prepare('UPDATE answer_drafts SET response_json=? WHERE session_id=? AND activity_id=? AND response_json=?')
-      .run(JSON.stringify({ value: { ...response.value, database } }), draft.session_id, draft.activity_id, draft.response_json);
-  }
+const store = new Store(dataFile, { codeRunner: executionRunner(), automaticSettlement: !previewOrigin });
+const terminals = terminalService();
+const assetCache = new Map();
+const webPreviews = previewOrigin ? createPreviewService(
+  previewOrigin,
+  sessionId => {
+    const session = previewSession(sessionId);
+    return session?.status === 'in_progress' && !settlement.isSettling(sessionId) && Date.now() < Date.parse(session.deadline_at);
+  },
+  publicOrigin || '*',
+  sessionId => previewSession(sessionId)?.status !== 'in_progress',
+) : null;
+const settlement = attemptSettlement(store, webPreviews);
+const runtimeStatus = executionStatus(Boolean(webPreviews));
+function previewSession(sessionId) {
+  return store.db.prepare('SELECT status,deadline_at FROM sessions WHERE id=?').get(sessionId);
 }
 function answerLimit(sessionId, activityId) {
   const activity = store.context(sessionId).exam.public.missions.flatMap(mission => mission.activities).find(item => item.id === activityId);
@@ -74,8 +76,6 @@ function studentAdmission(req, input, preview) {
   const ip = req.socket.remoteAddress;
   const identity = createHash('sha256').update(JSON.stringify([input?.runId, input?.candidateId])).digest('hex');
   const accountKey = `join-failed:${identity}`, ipKey = `join-failed-ip:${ip}`;
-  rate.check(accountKey, 10);
-  rate.check(ipKey, 200);
   try {
     const result = preview ? store.previewJoin(input) : store.join(input);
     rate.clear(accountKey);
@@ -94,8 +94,13 @@ const csvCell = value => {
   return '"' + text.replaceAll('"', '""') + '"';
 };
 function gradebook(result) {
-  const rows = [['Candidate ID', 'Name', 'Section', 'Status', 'Score', 'Maximum', 'Started at', 'Deadline']];
-  for (const r of result.rows) rows.push([r.candidateId, r.displayName, r.section, r.status, r.score, result.maxPoints, r.startedAt, r.deadlineAt]);
+  const rows = [['Candidate ID', 'Name', 'Section', 'Status', 'Score', 'Maximum', 'Started at', 'Deadline', 'Grading status']];
+  for (const r of result.rows) {
+    const grading = r.status === 'registered' ? 'No attempt' : r.finalizationPending ? 'Finalization pending'
+      : r.failedCodingCount ? 'Grading interrupted' : r.pendingCoding ? 'Grading queued'
+        : r.pendingReview ? 'Review pending' : r.status === 'in_progress' ? 'In progress' : 'Graded';
+    rows.push([r.candidateId, r.displayName, r.section, r.status, grading === 'Graded' ? r.score : '', result.maxPoints, r.startedAt, r.deadlineAt, grading]);
+  }
   return '\ufeff' + rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 }
 const send = (res, requestId, result, status = 200) => json(res, status, { ok: true, data: result }, requestId);
@@ -111,7 +116,7 @@ async function api(req, res, url, requestId) {
     store.db.prepare('SELECT 1').get();
     return send(res, requestId, { status: 'ready' });
   }
-  if (method === 'GET' && path === '/api/config') return send(res, requestId, { platformLabel, platformTagline, demoMode });
+  if (method === 'GET' && path === '/api/config') return send(res, requestId, { platformLabel, platformTagline, demoMode, features: { liveTerminal: true } });
   if (method === 'GET' && path === '/api/demo') {
     if (!demoMode || process.env.NODE_ENV !== 'test')
       throw Object.assign(new Error('Demo fixtures are unavailable.'), { code: 'NOT_FOUND', status: 404 });
@@ -141,7 +146,7 @@ async function api(req, res, url, requestId) {
       return send(res, requestId, result);
     }
   }
-  if (path.startsWith('/api/instructor/')) return facultyApi({ req, res, url, requestId, store, publicOrigin, send, csv, gradebook, body, limit, metricsSnapshot });
+  if (path.startsWith('/api/instructor/')) return facultyApi({ req, res, url, requestId, store, publicOrigin, send, csv, gradebook, body, limit, metricsSnapshot, settlement, runtimeStatus });
   if (method === 'POST' && (path === '/api/auth/student/join' || path === '/api/auth/student/preview')) {
     // Socket address is intentional: forwarded headers are not trusted. Allow a full
     // 500-student class behind NAT/proxy; credential failures have separate limits.
@@ -149,13 +154,17 @@ async function api(req, res, url, requestId) {
     const input = await body(req);
     const preview = path.endsWith('/preview');
     const result = studentAdmission(req, input, preview);
+    if (!preview && result.resumed && result.session.status === 'expired') {
+      await settlement.settle(result.session.id);
+      result.session = store.sessionView(result.session.id);
+    }
     return send(res, requestId, preview ? result : browserSession(req, res, 'candidate', result, publicOrigin));
   }
-  if (path.startsWith('/api/me/')) return studentApi({ req, res, url, requestId, store, publicOrigin, send, body, limit, webPreviews, answerLimit, snapshotProjects });
+  if (path.startsWith('/api/me/')) return studentApi({ req, res, url, requestId, store, publicOrigin, send, body, limit, webPreviews, answerLimit, settlement, terminals, runtimeStatus });
   throw Object.assign(new Error('Route not found.'), { code: 'NOT_FOUND', status: 404 });
 }
 
-const staticTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' };
+const staticTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf' };
 const { app, server, ready } = createHttpServer(async (req, res) => {
   measureRequest(req, res);
   const requestId = randomUUID();
@@ -185,6 +194,12 @@ const { app, server, ready } = createHttpServer(async (req, res) => {
       asset = { bytes, mtime: info.mtimeMs, size: info.size, etag: '"' + createHash('sha256').update(bytes).digest('hex') + '"' };
       assetCache.set(file, asset);
     }
+    if (extname(file) === '.html') {
+      const nonce = randomUUID().replaceAll('-', '');
+      res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self' 'nonce-${nonce}'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src ${previewOrigin || "'none'"}; base-uri 'none'; object-src 'none'`);
+      res.writeHead(200, { 'Content-Type': staticTypes['.html'], 'Cache-Control': 'no-store' });
+      return res.end(req.method === 'HEAD' ? undefined : asset.bytes.toString('utf8').replace('<head>', '<head><meta name="expected-output-style-nonce" content="' + nonce + '">'));
+    }
     const headers = { 'Content-Type': staticTypes[extname(file)], 'Cache-Control': 'private, no-cache', ETag: asset.etag };
     if (req.headers['if-none-match'] === asset.etag) { res.writeHead(304, headers); return res.end(); }
     res.writeHead(200, headers);
@@ -196,11 +211,18 @@ const { app, server, ready } = createHttpServer(async (req, res) => {
 });
 
 await ready;
+server.on('close', () => { void terminals.close(); });
 if (process.env.NODE_ENV !== 'test') {
   let settling = false, lastCheckpoint = 0;
   const expiryTimer = setInterval(async () => {
     if (settling) return; settling = true;
-    try { const all = Date.now() - lastCheckpoint > 15000; await snapshotProjects(null, all); if (all) lastCheckpoint = Date.now(); store.settleExpired(); } catch (error) { console.error(JSON.stringify({ code: 'EXPIRY_FAILED', message: error.message })); }
+    try {
+      await settlement.settleExpired();
+      if (Date.now() - lastCheckpoint > 15000) {
+        await settlement.checkpointActive();
+        lastCheckpoint = Date.now();
+      }
+    } catch (error) { console.error(JSON.stringify({ code: 'EXPIRY_FAILED', message: error.message })); }
     finally { settling = false; }
   }, 1000);
   expiryTimer.unref();
@@ -212,4 +234,4 @@ if (process.env.NODE_ENV !== 'test') {
   const port = Number(process.env.PORT || 3000);
   server.listen(port, process.env.HOST || '127.0.0.1', () => console.log(`${platformLabel} listening on http://${process.env.HOST || '127.0.0.1'}:${port} (demo=${demoMode})`));
 }
-export { server, store, webPreviews };
+export { server, store, webPreviews, terminals };

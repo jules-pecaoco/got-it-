@@ -1,3 +1,4 @@
+import { apiError, userErrorMessage } from './user-messages.js';
 import { beginRequestStatus } from './request-status.js';
 import { proctorRequestLabel } from './request-labels.js';
 import { icon } from './icons.js';
@@ -27,7 +28,7 @@ async function request(path, { method = 'GET', data, silent = false } = {}) {
   try {
     const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
     const result = await response.json();
-    if (!response.ok) throw Object.assign(new Error(result.message), { status: response.status });
+    if (!response.ok) throw apiError(result, 'proctor', response.status);
     return result.data;
   } finally { finishStatus(); }
 }
@@ -80,14 +81,14 @@ function renderRows() {
     statusLabel.append(icon(statusIcons[row.status] || 'registered'), document.createTextNode(labels[row.status] || row.status));
     status.append(statusLabel);
     tr.append(status, node('td', '', `${row.answeredCount} / ${view.questionCount}`),
-      node('td', '', timeText(row.lastSubmissionAt)), node('td', '', row.lastSeenAt ? `${timeText(row.lastSeenAt)}${Date.now() - Date.parse(row.lastSeenAt) > 45000 ? ' · Connection stale' : ''}` : 'Not seen'));
+      node('td', '', timeText(row.lastSubmissionAt)), node('td', '', row.lastSeenAt ? `${timeText(row.lastSeenAt)}${Date.now() - Date.parse(row.lastSeenAt) > 45000 ? ' · No update for over 45 seconds' : ''}` : 'No connection update yet'));
     const remaining = node('td', '', '—');
     if (row.status === 'in_progress' && row.deadlineAt) remaining.dataset.deadline = row.deadlineAt;
     tr.append(remaining);
     target.append(tr);
   }
   if (!rows.length) {
-    const tr = node('tr'), td = node('td', 'proctor-empty', view.rows.length ? 'No students match this filter.' : 'No students in this run.');
+    const tr = node('tr'), td = node('td', 'proctor-empty', view.rows.length ? 'No students match this filter.' : 'No students are assigned to this activity.');
     td.colSpan = 7;
     tr.append(td);
     target.append(tr);
@@ -98,7 +99,7 @@ function renderRows() {
 function renderRun() {
   const view = state.view;
   $('proctor-run-name').textContent = view.name;
-  $('proctor-run-meta').textContent = `${view.name === view.activityTitle ? '' : `${view.activityTitle} · `}v${view.version}${view.className ? ` · ${view.className}` : ''} · Closes ${localDateTime(view.closesAt)}`;
+  $('proctor-run-meta').textContent = `${view.name === view.activityTitle ? '' : `${view.activityTitle} · `}Version ${view.version}${view.className ? ` · ${view.className}` : ''} · Closes ${localDateTime(view.closesAt)}`;
   $('proctor-update').textContent = `Updated ${timeText(view.updatedAt)} · refreshes every 15 seconds`;
   const counts = $('proctor-counts');
   counts.replaceChildren();
@@ -119,7 +120,7 @@ async function loadRun({ background = false, restoring = false } = {}) {
   state.loading = true;
   state.lastRefresh = Date.now();
   $('proctor-refresh').disabled = true;
-  if (background) $('proctor-update').textContent = 'Refreshing run status…';
+  if (background) $('proctor-update').textContent = 'Updating student progress…';
   try {
     state.view = await request('/api/proctor/run', { silent: background });
     renderRun();
@@ -129,12 +130,12 @@ async function loadRun({ background = false, restoring = false } = {}) {
     if (error.status === 401) {
       state.authenticated = false;
       showLogin();
-      if (!restoring) message('Proctor access ended. Sign in with a current code.');
+      if (!restoring) message('Your proctor sign-in has ended. Ask faculty for the current code, then sign in again.');
     } else {
       $('proctor-update').textContent = state.view
-        ? `Refresh failed · Last updated ${timeText(state.view.updatedAt)}. Retrying automatically.`
-        : 'Run status is unavailable. Select Refresh to try again.';
-      message(`Could not refresh the run: ${error.message}`);
+        ? `Could not update · Showing information from ${timeText(state.view.updatedAt)}. Retrying automatically.`
+        : 'We could not load student progress. Select Refresh to try again.';
+      message(`Could not update student progress. ${userErrorMessage(error, 'proctor')}`);
     }
   } finally {
     state.loading = false;
@@ -152,7 +153,7 @@ $('proctor-login').addEventListener('submit', async event => {
       data: { runId: $('proctor-run-id').value.trim(), code: $('proctor-code').value } });
     state.authenticated = true;
     await loadRun();
-  } catch (error) { message(error.message); }
+  } catch (error) { message(userErrorMessage(error, 'proctor')); }
   finally { button.disabled = false; }
 });
 
@@ -161,7 +162,7 @@ $('proctor-search').addEventListener('input', renderRows);
 $('proctor-filter').addEventListener('change', renderRows);
 $('proctor-logout').addEventListener('click', async () => {
   try { await request('/api/proctor/logout', { method: 'POST' }); }
-  catch (error) { if (error.status !== 401) { message('Sign-out could not reach the server. Please retry.'); return; } }
+  catch (error) { if (error.status !== 401) { message('We could not sign you out. Check your connection and select Sign out again.'); return; } }
   state.authenticated = false;
   showLogin();
   message('Signed out.');

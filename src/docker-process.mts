@@ -32,8 +32,13 @@ export async function docker(args: string[], input = '', timeout = 8000): Promis
   });
 }
 function unavailable() {
-  return Object.assign(new Error('PHP workspace unavailable. Check the execution host and retry.'), {
-    code: 'WEB_RUNTIME_UNAVAILABLE',
-    status: 503,
-  });
+  return Object.assign(
+    new Error(
+      'The Docker runtime could not complete this operation. Check Docker and the required runtime image on the execution host.',
+    ),
+    {
+      code: 'WEB_RUNTIME_UNAVAILABLE',
+      status: 503,
+    },
+  );
 }

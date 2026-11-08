@@ -1,3 +1,4 @@
+import { apiError, userErrorMessage, savedAnswerRule, finishReviewMessage, completionMessage, codeServiceMessage } from './user-messages.js';
 import { parseTableCode } from './table-code.js';
 import { normalizeSyntax, syntaxLanguages, tokenizeCode } from './code-highlight.js';
 import { renderPrompt } from './prompt-code.js';
@@ -10,10 +11,13 @@ import { retryPolicyText, localDateTime } from './ui-model.js';
 import { browserSessionHeaders, randomId } from './browser-session.js';
 import { localDraft, clearLocalDrafts } from './local-drafts.js';
 import { mountWeb } from '/assets/workspaces.js';
+import { createReferenceDictionary } from './reference-dictionary.js';
+import { referenceTopics } from './reference-topics.js';
 
 installPasswordToggles();
 
 const $ = id => document.getElementById(id);
+const dictionary = createReferenceDictionary($('open-reference-dictionary'), $('reference-dictionary'), request);
 const state = {
   candidateAccess: randomId(),
   session: null,
@@ -21,6 +25,7 @@ const state = {
   joining: false,
   finalizing: false,
   resultsRefreshing: false,
+  liveTerminalAvailable: false,
   fullscreenFallback: false,
   readiness: null, draftEditors: new Map(), timerWarnings: new Set(), serverClock: null
 };
@@ -38,6 +43,7 @@ function syncFullscreenGate() {
   const gated = active && !state.fullscreenFallback && document.fullscreenElement !== document.documentElement;
   const gate = $('fullscreen-gate');
   const wasHidden = gate.classList.contains('hidden');
+  if (gated) $('ibt-review-dialog').close();
   gate.classList.toggle('hidden', !gated);
   $('exam-grid').inert = gated;
   $('exam-footer').inert = gated;
@@ -61,11 +67,34 @@ $('fullscreen-fallback').addEventListener('click', () => {
 });
 document.addEventListener('fullscreenchange', syncFullscreenGate);
 
-const message = text => {
+let noticeTimer;
+const message = (text, { persistent = false } = {}) => {
+  clearTimeout(noticeTimer);
   const box = $('notice');
   box.textContent = text;
-  if (text) window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
+  if (text && !persistent) noticeTimer = window.setTimeout(() => { if (box.textContent === text) box.textContent = ''; }, 7000);
 };
+function statusNotice(id, text = '') {
+  const box = $(id);
+  if (box.textContent !== text) box.textContent = text;
+  box.classList.toggle('hidden', !text);
+}
+let checkingRuntime = false;
+async function refreshRuntimeStatus() {
+  const session = state.session;
+  if (checkingRuntime || !session || (session.status !== 'in_progress' && !session.pendingCodingCount)) return;
+  const languages = session.codingLanguages ?? [];
+  if (!languages.length && !session.webProject) return;
+  checkingRuntime = true;
+  try {
+    const status = await request('/api/me/code/status', { silent: true });
+    if (state.session?.id !== session.id) return;
+    statusNotice('student-runtime-status', codeServiceMessage(status, { languages, webProject: session.webProject }));
+  } catch {
+    if (state.session?.id === session.id)
+      statusNotice('student-runtime-status', 'We could not check whether code running is available. Try again shortly, or tell your instructor.');
+  } finally { checkingRuntime = false; }
+}
 
 async function request(path, { method = 'GET', data, headers: extraHeaders = {}, silent = false } = {}) {
   const finishStatus = silent ? () => {} : beginRequestStatus(studentRequestLabel(path));
@@ -80,10 +109,11 @@ async function request(path, { method = 'GET', data, headers: extraHeaders = {},
     }
     let value;
     if (!job) {
-      const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
-      const result = await response.json();
+      const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(35000) })
+        .catch(() => { throw new Error('We could not connect to the activity. Check your connection and try again.'); });
+      const result = await response.json().catch(() => { throw new Error('We could not load the activity. Try again or tell your instructor.'); });
       if (result.serverNow) state.serverClock = { at: Date.parse(result.serverNow), received: performance.now() };
-      if (!response.ok) throw Object.assign(new Error(`${result.message} (${result.code})`), { status: response.status, code: result.code });
+      if (!response.ok) throw apiError(result, 'student', response.status);
       value = result.data;
       if (!value?.jobId || headers.Prefer !== 'respond-async') return value;
       job = { jobId: value.jobId, payload: JSON.stringify(data) };
@@ -95,10 +125,10 @@ async function request(path, { method = 'GET', data, headers: extraHeaders = {},
       value = await request(`/api/me/coding-jobs/${encodeURIComponent(job.jobId)}`, { silent: true });
       if (value.status === 'done' || value.status === 'failed') {
         try { sessionStorage.removeItem(storageKey); } catch { /* Optional. */ }
-        if (value.error) throw Object.assign(new Error(value.error.message), { code: value.error.code });
+        if (value.error) throw apiError(value.error, 'student');
         return value.result;
       }
-      if (!silent) message(value.status === 'queued' ? (path.endsWith('/submit') ? 'Coding submission queued. Your on-time receipt is saved.' : 'Sample tests queued…') : 'Running coding tests…');
+      if (!silent) message(value.status === 'queued' ? (path.endsWith('/submit') ? 'Your code was received before the deadline. We are processing it now.' : 'Your code is waiting to run…') : 'Running your code…');
       await new Promise(resolve => setTimeout(resolve, delay));
       delay = Math.min(4000, delay + 500);
     }
@@ -106,12 +136,13 @@ async function request(path, { method = 'GET', data, headers: extraHeaders = {},
 }
 
 const perform = async fn => {
-  try { await fn(); } catch (error) { message(error.message); }
+  try { await fn(); } catch (error) { message(userErrorMessage(error, 'student'), { persistent: true }); }
 };
 
 async function loadConfig() {
   try {
     const config = await request('/api/config');
+    state.liveTerminalAvailable = config.features?.liveTerminal === true;
     document.title = `${config.platformLabel} · Student`;
     $('platform-label').textContent = config.platformLabel;
     $('platform-tagline').textContent = config.platformTagline || 'Gotta Catch Ed All';
@@ -148,26 +179,28 @@ function renderReadiness(details) {
   const summary = $('readiness-summary'); clear(summary);
   const word = details.kind === 'ctf' ? 'missions' : 'sections';
   summary.append(node('strong', '', `${details.durationMinutes} minutes · ${details.questionCount} questions · ${details.sectionCount} ${word}`),
-    node('p', 'small', `Run closes ${localDateTime(details.closesAt)}. All attempts end by this time.`));
+    node('p', 'small', `Activity closes ${localDateTime(details.closesAt)}. All attempts end by this time.`));
   const rules = $('readiness-rules'); clear(rules);
+  const guideNames = referenceTopics.filter(topic => details.referenceGuides?.includes(topic.id)).map(topic => topic.label);
+  rules.append(node('li', '', guideNames.length ? `Allowed reference guides: ${guideNames.join(', ')}.` : 'No programming reference guides are allowed for this assessment.'));
   for (const policy of details.retryPolicies)
     rules.append(node('li', '', `${details.retryPolicies.length > 1 ? `${policy.questionCount} questions: ` : ''}${retryPolicyText(policy)}`));
-  rules.append(node('li', '', 'Drafts save automatically. Saved drafts are submitted when you finish or time expires, subject to remaining retries.'),
+  rules.append(node('li', '', savedAnswerRule),
     node('li', '', details.feedbackMode === 'graded'
-      ? 'Scores and correctness stay hidden until faculty publishes your score.'
-      : 'Practice activity: you see correctness and scores after submitting each answer.'));
+      ? 'Your instructor will share your score after grading. Until then, you will not see which answers are correct.'
+      : 'This is practice. You will see a score after each answer, except answers that your instructor needs to grade.'));
   const completed = details.resumed && details.status !== 'in_progress';
-  $('begin-attempt').textContent = completed ? 'View attempt and results' : details.resumed ? 'Resume timed attempt' : 'Begin timed attempt';
+  $('begin-attempt').textContent = completed ? 'View submission and score' : details.resumed ? 'Continue activity' : 'Start activity';
   $('begin-attempt').dataset.allowFallback = 'false';
   $('readiness-error').textContent = '';
-  $('readiness-timing').textContent = completed ? 'Your attempt has ended. Opening results does not start another attempt.'
-    : details.resumed ? `Your existing timer is already running, with about ${Math.floor(details.availableSeconds / 60)} minutes remaining. Resuming keeps your original deadline.`
+  $('readiness-timing').textContent = completed ? 'This activity is finished. You can view your submission and score without starting again.'
+    : details.resumed ? `Your timer is still running. You have about ${Math.floor(details.availableSeconds / 60)} minutes left. Continuing does not add more time.`
     : details.availableSeconds < details.durationMinutes * 60
-      ? `The run closes soon. You will have at most ${Math.floor(details.availableSeconds / 60)} minutes, rather than the full ${details.durationMinutes} minutes. Your timer has not started.`
+      ? `This activity closes soon. You will have at most ${Math.floor(details.availableSeconds / 60)} minutes, rather than the full ${details.durationMinutes} minutes. Your timer has not started.`
       : 'Your timer has not started. Begin when you are ready.';
   $('readiness-fullscreen').classList.toggle('hidden', completed);
   $('readiness-fullscreen').textContent = document.fullscreenEnabled
-    ? 'The activity uses fullscreen. Your timer begins after you select Begin timed attempt and continues if you leave the page.'
+    ? 'The activity uses fullscreen. Your timer begins after you select Start activity and continues if you leave the page.'
     : 'Fullscreen is unavailable in this browser. You can continue here. Your timer begins when you start and continues if you leave the page.';
   $('readiness-title').focus();
 }
@@ -201,11 +234,12 @@ $('begin-attempt').addEventListener('click', () => perform(async () => {
     state.session = joined.session;
     state.timerWarnings.clear();
     $('timer-warning').classList.add('hidden');
+    message(joined.resumed ? 'Welcome back. Your saved answers and original time limit are still in place.' : 'Your activity has started. The timer is running.');
+    await showExam(joined.session);
     $('readiness-panel').classList.add('hidden');
-    message(joined.resumed ? 'Session resumed. Progress and deadline restored.' : 'Session started.');
-    await showExam();
   } catch (error) {
-    $('readiness-error').textContent = error.message;
+    $('readiness-error').textContent = userErrorMessage(error, 'student');
+    message(userErrorMessage(error, 'student'), { persistent: true });
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   } finally { state.joining = false; button.disabled = false; }
 }));
@@ -218,29 +252,55 @@ function clearDraftEditors() {
   for (const editor of state.draftEditors.values()) editor.dispose?.();
   state.draftEditors.clear();
 }
-window.addEventListener('online', () => { flushDrafts().catch(() => message('Reconnected. Some drafts still need saving.')); });
+window.addEventListener('offline', () => {
+  if (state.session) statusNotice('connection-status', 'You are offline. Keep this page open. When your connection returns, wait for “Saved” before leaving.');
+});
+window.addEventListener('online', async () => {
+  if (!state.session || state.session.status !== 'in_progress') return;
+  if (!await flushDrafts()) message('You are connected again, but some answers are not saved yet. Select Try saving again beside those questions.');
+  checkConnection();
+});
 
 function updateSaveStatus() {
+  if (state.session && state.session.status !== 'in_progress') {
+    $('save-status').textContent = 'This activity is finished. You cannot change or submit answers now.';
+    return;
+  }
   const editors = [...state.draftEditors.values()];
   const failed = editors.filter(editor => editor.status === 'failed').length;
   const pending = editors.some(editor => ['unsaved', 'saving'].includes(editor.status));
   const drafts = editors.filter(editor => editor.status === 'draft').length;
   const submitted = editors.filter(editor => editor.status === 'submitted').length;
-  $('save-status').textContent = failed ? `${failed} ${failed === 1 ? 'draft could' : 'drafts could'} not be saved. Retry beside the question.`
-    : pending ? 'You have unsubmitted changes. Check the status beside each answer.'
-    : drafts ? `This section: ${drafts} saved ${drafts === 1 ? 'draft' : 'drafts'}. Saved drafts are included when you finish or time expires.`
-    : submitted ? `This section: ${submitted} ${submitted === 1 ? 'answer' : 'answers'} submitted${submitted === editors.length ? '. You can continue.' : ` · ${editors.length - submitted} not submitted.`}`
-    : 'Drafts save automatically. Saved drafts are included when you finish or time expires.';
+  if (state.ibt) {
+    const local = editors.some(editor => editor.localPending);
+    $('ibt-save-status').textContent = failed ? (local ? 'Saved on this device only. Try saving again.' : 'Answer not saved. Try saving again.')
+      : pending && local ? 'Saved on this device. Waiting to save online…'
+      : pending ? 'Saving your answer…' : drafts || submitted ? 'Saved' : 'Your answers will save as you work.';
+    renderQuestionMatrix();
+  }
+  $('save-status').textContent = failed ? `${failed} ${failed === 1 ? 'answer could' : 'answers could'} not be saved. Select Try saving again beside ${failed === 1 ? 'the question' : 'those questions'}.`
+    : pending ? 'Some changes are still being saved. Check the message beside each answer.'
+    : drafts ? `This section has ${drafts} saved ${drafts === 1 ? 'answer' : 'answers'} ready to submit when you finish.`
+    : submitted ? `This section: ${submitted} ${submitted === 1 ? 'answer' : 'answers'} submitted${submitted === editors.length ? '. You can continue to the next question.' : ` · ${editors.length - submitted} not submitted.`}`
+    : 'Answers save as you work. Finish the activity to submit your saved answers.';
 }
 
 async function leaveSession() {
-  if (!await flushDrafts()) { message('Some drafts could not be saved. Retry saving before leaving.'); return; }
+  if (state.ibt?.opening || [...state.draftEditors.values()].some(editor => editor.submitting)) {
+    message('Please wait until your answer finishes saving or submitting before leaving.');
+    return;
+  }
+  if (!await flushDrafts()) { message('Some answers are not saved. Select Try saving again beside those questions before leaving.'); return; }
   try { await request('/api/me/logout', { method: 'POST' }); }
   catch (error) { if (error.status !== 401) throw error; }
   if (document.fullscreenElement === document.documentElement) document.exitFullscreen().catch(() => {});
   clearLocalDrafts(state.session.id);
+  clearIbtState();
   state.candidateAccess = null;
   state.session = null;
+  statusNotice('connection-status');
+  statusNotice('student-runtime-status');
+  dictionary.configure([], '');
   state.mission = null;
   clearDraftEditors();
   $('exam-panel').classList.add('hidden');
@@ -251,24 +311,28 @@ $('candidate-exit').addEventListener('click', () => perform(leaveSession));
 $('fullscreen-exit').addEventListener('click', () => perform(leaveSession));
 
 async function finalizeAttempt() {
-  if (state.finalizing || state.session?.status !== 'in_progress') return;
-  if (!await flushDrafts()) { message('Some drafts could not be saved. Retry saving before finishing.'); return; }
-  const remaining = state.session.order.filter(m => !m.completed).length;
-  const word = state.session.kind === 'ctf' ? 'mission' : 'section';
-  const unanswered = state.session.questionCount - state.session.submittedCount;
-  const draftNote = ` Saved drafts will be submitted for grading, subject to remaining retries. ${unanswered} questions have no explicit submission.`;
-  const prompt = (remaining
-    ? `Finish now with ${remaining} unfinished ${word}${remaining === 1 ? '' : 's'}? You cannot submit more answers.`
-    : 'Finish this attempt? You cannot submit more answers.') + draftNote;
-  if (!window.confirm(prompt)) return;
+  if (state.finalizing || state.ibt?.opening || state.session?.status !== 'in_progress') return;
+  if ([...state.draftEditors.values()].some(editor => editor.submitting)) {
+    message('Your answer is still being submitted. Wait for confirmation before finishing.');
+    return;
+  }
+  const prompt = `Finish this activity now? ${savedAnswerRule} You cannot change answers after finishing.`;
+  if (!state.ibt && !window.confirm(prompt)) return;
   state.finalizing = true;
+  $('exam-grid').inert = true;
   $('finalize').disabled = true;
   $('finalize-early').disabled = true;
   try {
+    if (!await flushDrafts()) { message('Some answers are not saved. Select Try saving again beside those questions before finishing.'); return; }
     state.session = await request('/api/me/finalize', { method: 'POST', data: {} });
     renderExamHeader();
     renderCompletion();
-  } finally { state.finalizing = false; renderFlow(); }
+  } finally {
+    $('exam-grid').inert = false;
+    $('finalize-early').disabled = false;
+    state.finalizing = false;
+    renderFlow();
+  }
 }
 $('finalize').addEventListener('click', () => perform(finalizeAttempt));
 $('finalize-early').addEventListener('click', () => perform(finalizeAttempt));
@@ -281,13 +345,18 @@ async function refreshResults({ background = false } = {}) {
     const session = await request('/api/me/results', { silent: background });
     // A response from an attempt that the student has left must not reopen it.
     if (state.candidateAccess !== access || state.session?.id !== sessionId) return;
+    statusNotice('connection-status');
     const wasReleased = state.session.resultsReleased;
     state.session = session;
     renderExamHeader();
     if (session.status !== 'in_progress') renderCompletion();
     else await showExam();
-    if (session.resultsReleased && !wasReleased) message('Your score has been published.');
-    else if (!background && !session.resultsReleased) message('Your score has not been published yet. This page checks automatically; you can also check again.');
+    if (session.resultsReleased && !wasReleased) message('Your score is ready to view.');
+    else if (!background && !session.resultsReleased) message('Your instructor has not shared your score yet. This page will check again automatically.');
+  } catch (error) {
+    if (state.candidateAccess === access && state.session?.id === sessionId)
+      statusNotice('connection-status', `Could not refresh your results. ${error.message}`);
+    if (!background) throw error;
   } finally {
     state.resultsRefreshing = false;
     $('check-results').disabled = false;
@@ -297,14 +366,29 @@ $('check-results').addEventListener('click', () => perform(refreshResults));
 $('refresh-score').addEventListener('click', () => perform(refreshResults));
 
 function checkForPublishedResults() {
-  if (document.hidden || (state.session?.feedbackMode !== 'graded' && !state.session?.pendingCodingCount)) return;
-  // Keep the last known result on a background failure; manual checks report errors.
-  refreshResults({ background: true }).catch(() => {});
+  if (document.hidden || (state.session?.resultsReleased && !state.session.pendingCodingCount)) return;
+  void refreshResults({ background: true });
 }
 window.setInterval(checkForPublishedResults, 15000);
-window.setInterval(() => {
-  if (!document.hidden && state.session?.status === 'in_progress') request('/api/me/heartbeat', { method: 'POST', silent: true }).catch(() => {});
-}, 15000);
+let checkingConnection = false;
+async function checkConnection() {
+  const session = state.session;
+  if (checkingConnection || document.hidden || session?.status !== 'in_progress') return;
+  checkingConnection = true;
+  try {
+    await request('/api/me/heartbeat', { method: 'POST', silent: true });
+    if (state.session?.id === session.id && state.session.status === 'in_progress') statusNotice('connection-status');
+  } catch (error) {
+    if (state.session?.id === session.id && state.session.status === 'in_progress')
+      statusNotice('connection-status', error.status === 401
+        ? 'Your sign-in expired. Keep this page open and tell your instructor so you can resume.'
+        : 'Your connection was interrupted. Keep this page open. When it returns, wait for Saved before leaving.');
+  } finally {
+    checkingConnection = false;
+  }
+}
+window.setInterval(checkConnection, 15000);
+window.setInterval(() => { if (!document.hidden) refreshRuntimeStatus(); }, 30000);
 window.addEventListener('focus', checkForPublishedResults);
 document.addEventListener('visibilitychange', checkForPublishedResults);
 $('continue-mission').addEventListener('click', () => perform(async () => {
@@ -314,8 +398,9 @@ $('continue-mission').addEventListener('click', () => perform(async () => {
   $('mission-content').scrollIntoView({ block: 'start' });
 }));
 
-async function showExam() {
-  state.session = await request('/api/me/session');
+async function showExam(session) {
+  state.session = session ?? await request('/api/me/session');
+  void refreshRuntimeStatus();
   $('join-panel').classList.add('hidden');
   $('exam-panel').classList.remove('hidden');
   renderExamHeader();
@@ -323,6 +408,17 @@ async function showExam() {
   $('exam-grid').classList.remove('hidden');
   $('exam-footer').classList.remove('hidden');
   $('completion-panel').classList.add('hidden');
+  if (Array.isArray(state.session.questions)) {
+    startIbt();
+    const current = state.session.questions.find(q => q.id === state.ibt.current);
+    const saved = new Set(state.session.savedAnswers);
+    const available = state.session.questions;
+    const first = current || available.find(q => !saved.has(q.id)) || available[0];
+    if (first) await openQuestion(first.id);
+    else renderQuestionMatrix();
+    syncFullscreenGate();
+    return;
+  }
   const first = state.session.order.find(x => x.unlocked && !x.completed) || state.session.order.findLast(x => x.unlocked);
   if (first) await loadMission(first.id);
   else renderMissionList();
@@ -335,7 +431,7 @@ function renderExamHeader() {
   $('exam-title').textContent = s.title;
   $('exam-description').textContent = s.description || '';
   $('candidate-name').textContent = `${s.displayName} (${s.section})`;
-  $('score').textContent = s.resultsReleased ? `${s.score} / ${s.maxPoints} pts` : 'Score hidden';
+  $('score').textContent = s.resultsReleased ? `${s.score} / ${s.maxPoints} pts` : 'Your instructor has not shared your score yet.';
   // Scores can only be published after an attempt ends; the completion screen provides refresh.
   $('refresh-score').classList.add('hidden');
   renderFlow();
@@ -343,6 +439,7 @@ function renderExamHeader() {
 }
 
 function renderFlow() {
+  dictionary.configure(state.session?.status === 'in_progress' ? state.session.referenceGuides || [] : [], state.session ? `${state.session.examId}@${state.session.version}` : '');
   if (!state.session) return;
   const s = state.session;
   const total = s.order.length, completed = s.order.filter(item => item.completed).length;
@@ -352,13 +449,14 @@ function renderFlow() {
   $('exam-panel').classList.toggle('attempt-active', active);
   const current = s.order.find(item => item.id === state.mission?.id);
   const next = s.order.find(item => item.unlocked && !item.completed);
-  const canContinue = active && current?.completed && next && next.id !== current.id;
+  const canContinue = !state.ibt && active && current?.completed && next && next.id !== current.id;
   $('continue-mission').classList.toggle('hidden', !canContinue);
   $('continue-mission').textContent = `Next ${word}`;
-  $('finalize').classList.toggle('hidden', !active || completed !== total);
+  $('finalize').classList.toggle('hidden', !!state.ibt || !active || completed !== total);
   $('finalize').disabled = !active || state.finalizing;
-  $('finish-early').classList.toggle('hidden', !active || completed === total);
+  $('finish-early').classList.toggle('hidden', !!state.ibt || !active || completed === total);
   if (!active || completed === total) $('finish-early').open = false;
+  if (state.ibt && active) renderQuestionMatrix();
 }
 
 function updateTimer() {
@@ -376,18 +474,21 @@ function updateTimer() {
   for (const threshold of [300000, 60000]) {
     if (remaining > 0 && remaining <= threshold && !state.timerWarnings.has(threshold)) {
       state.timerWarnings.add(threshold);
-      $('timer-warning').textContent = `${threshold === 60000 ? 'Less than 1 minute' : 'Less than 5 minutes'} remaining. Save your work; acknowledged drafts are graded at expiry, subject to remaining retries.`;
+      $('timer-warning').textContent = `${threshold === 60000 ? 'Less than 1 minute' : 'Less than 5 minutes'} remaining. Check that your answers say Saved. Saved answers are submitted automatically when time runs out. If you have used all tries for a question, your last submitted answer is kept.`;
       $('timer-warning').classList.remove('hidden');
     }
   }
   if (remaining === 0 && state.session.status === 'in_progress') {
     state.session.status = 'expired';
+    state.session.resultsReleased = false;
     renderCompletion();
+    checkForPublishedResults();
   }
 }
 window.setInterval(updateTimer, 1000);
 
 function renderMissionList() {
+  if (state.ibt) { renderQuestionMatrix(); return; }
   clear($('mission-list'));
   clear($('mobile-mission-select'));
   document.querySelector('.mobile-mission-nav').firstChild.textContent = state.session.kind === 'ctf' ? 'Current mission' : 'Current section';
@@ -410,11 +511,241 @@ function renderMissionList() {
   });
 }
 
-async function loadMission(id) {
-  if (state.mission && state.mission.id !== id) {
-    if (!await flushDrafts()) { message('Some drafts could not be saved. Retry beside the question before switching sections.'); return; }
+function startIbt() {
+  const s = state.session;
+  const key = `gotit:ibt:v1:${s.id}:${s.version}`;
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(key)); } catch { /* Optional storage. */ }
+  state.ibt = {
+    key, current: saved?.current, mounted: null, opening: false,
+    visited: new Set(Array.isArray(saved?.visited) ? saved.visited : []),
+    split: Number.isFinite(saved?.split) ? saved.split : 40,
+    collapsed: saved?.collapsed === true || (saved?.collapsed === undefined && matchMedia("(max-width: 850px)").matches)
+  };
+  document.body.classList.add('ibt-active');
+  for (const id of ['ibt-matrix', 'ibt-context', 'ibt-divider', 'ibt-actions', 'ibt-save-status', 'ibt-progress']) $(id).classList.remove('hidden');
+  $('mission-list').classList.add('hidden');
+  $('group-heading').classList.add('hidden');
+  setIbtSplit(state.ibt.split);
+  renderFlow();
+}
+
+function persistIbtState() {
+  const { key, current, visited, split, collapsed } = state.ibt;
+  try {
+    localStorage.setItem(key, JSON.stringify({ current, visited: [...visited], split, collapsed }));
+  } catch { /* Answer saves and navigation still work. */ }
+}
+
+function clearIbtState() {
+  if (!state.ibt) return;
+  $('ibt-review-dialog').close();
+  try { localStorage.removeItem(state.ibt.key); } catch { /* Optional storage. */ }
+  state.ibt = null;
+  document.body.classList.remove('ibt-active');
+  for (const id of ['ibt-matrix', 'ibt-context', 'ibt-divider', 'ibt-actions', 'ibt-save-status', 'ibt-progress']) $(id).classList.add('hidden');
+  $('mission-list').classList.remove('hidden');
+  $('group-heading').classList.remove('hidden');
+  const reference = $('collapsible-reference');
+  if (reference.parentElement === $('ibt-context')) $('mission-content').after(reference);
+}
+
+function updateSavedAnswer(id, answered) {
+  const saved = new Set(state.session.savedAnswers);
+  if (answered) saved.add(id);
+  else saved.delete(id);
+  state.session.savedAnswers = [...saved];
+}
+
+function questionStatuses() {
+  const acknowledged = new Set(state.session.savedAnswers);
+  return state.session.questions.map((q, index) => {
+    const editor = state.draftEditors.get(q.id);
+    const pending = ['unsaved', 'saving', 'failed'].includes(editor?.status)
+      || (!editor && !!localDraft(state.session.id, q.id).read());
+    const answered = acknowledged.has(q.id);
+    return { ...q, number: index + 1, answered, pending };
+  });
+}
+
+function renderQuestionMatrix() {
+  const ibt = state.ibt;
+  if (!ibt) return;
+  const questions = questionStatuses();
+  const current = questions.findIndex(q => q.id === ibt.current);
+  const answered = questions.filter(q => q.answered).length;
+  $('exam-progress').textContent = `${answered} of ${questions.length} saved`;
+  $('ibt-progress').max = questions.length || 1;
+  $('ibt-progress').value = answered;
+  $('ibt-matrix-body').classList.toggle('hidden', ibt.collapsed);
+  $('exam-grid').classList.toggle('ibt-collapsed', ibt.collapsed);
+  $('ibt-toggle-matrix').setAttribute('aria-expanded', String(!ibt.collapsed));
+  $('ibt-toggle-matrix').textContent = ibt.collapsed ? '☰' : 'Hide questions';
+  $('ibt-toggle-matrix').setAttribute('aria-label', ibt.collapsed ? 'Show questions' : 'Hide questions');
+  const list = $('ibt-question-list');
+  const focused = list.contains(document.activeElement) ? document.activeElement.dataset.question : null;
+  list.replaceChildren(...questions.map(q => {
+    const status = q.answered ? 'answered' : ibt.visited.has(q.id) ? 'empty' : 'unvisited';
+    const button = node('button', 'ibt-question', `${q.number}${q.pending ? ' •' : q.answered ? ' ✓' : ''}`);
+    button.type = 'button';
+    button.dataset.state = status;
+    button.dataset.question = q.id;
+    button.setAttribute('aria-label', `Question ${q.number}, ${q.answered ? 'answer saved' : status === 'unvisited' ? 'not opened yet' : 'no saved answer'}${q.pending ? ', latest changes not saved yet' : ''}`);
+    if (q.id === ibt.current) button.setAttribute('aria-current', 'step');
+    button.addEventListener('click', () => perform(() => openQuestion(q.id)));
+    return button;
+  }));
+  if (focused) [...list.children].find(button => button.dataset.question === focused)?.focus({ preventScroll: true });
+  $('ibt-previous').disabled = current <= 0;
+  $('ibt-next').disabled = current >= questions.length - 1;
+}
+
+function flushLocalAnswers() {
+  for (const editor of state.draftEditors.values()) editor.flushLocal?.();
+}
+window.addEventListener('pagehide', flushLocalAnswers);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushLocalAnswers(); });
+
+async function openQuestion(id) {
+  const ibt = state.ibt;
+  const question = state.session.questions.find(q => q.id === id);
+  if (!ibt || !question || ibt.opening || ibt.mounted === id || state.finalizing) return;
+  if ([...state.draftEditors.values()].some(editor => editor.submitting)) {
+    message('Your answer is still being submitted. Wait for confirmation before opening another question.');
+    return;
   }
-  state.mission = await request(`/api/me/missions/${encodeURIComponent(id)}`);
+  ibt.opening = true;
+  try {
+    flushLocalAnswers();
+    if (!await flushDrafts()) { message('Select Try saving again before opening another question.'); return; }
+    const mission = await request(`/api/me/missions/${encodeURIComponent(question.missionId)}`);
+    const activity = mission.activities.find(a => a.id === id);
+    if (!activity || state.ibt !== ibt || state.session.status !== 'in_progress') return;
+    if ([...state.draftEditors.values()].some(editor => editor.submitting)) return;
+    // A candidate can continue typing while the next question is loading.
+    flushLocalAnswers();
+    if (!await flushDrafts() || state.ibt !== ibt || state.session.status !== 'in_progress') return;
+    if ([...state.draftEditors.values()].some(editor => ['unsaved', 'saving', 'failed'].includes(editor.status) || editor.submitting)) return;
+    clearDraftEditors();
+    state.mission = mission;
+    ibt.current = ibt.mounted = id;
+    ibt.visited.add(id);
+    persistIbtState();
+    const number = state.session.questions.indexOf(question) + 1;
+    const heading = node('h2', '', `Question ${number} · ${mission.title}`);
+    heading.tabIndex = -1;
+    const context = $('ibt-context');
+    const reference = $('collapsible-reference');
+    context.replaceChildren(heading);
+    if (mission.story) context.append(node('p', '', mission.story));
+    context.append(renderPrompt(activity.prompt, 'activity-prompt'), reference);
+    renderActivityReference(activity);
+    const workspaceLabel = ['code_writing', 'web_project', 'datatable_code'].includes(activity.type) ? 'Your code' : 'Your answer';
+    $('mission-content').replaceChildren(node('h2', 'ibt-workspace-heading', workspaceLabel), renderActivity(activity, false, true));
+    context.scrollTop = 0;
+    $('mission-content').closest('.activity-area').scrollTop = 0;
+    updateSaveStatus();
+    heading.focus({ preventScroll: true });
+  } finally {
+    ibt.opening = false;
+  }
+}
+
+$('ibt-toggle-matrix').addEventListener('click', () => {
+  state.ibt.collapsed = !state.ibt.collapsed;
+  persistIbtState();
+  renderQuestionMatrix();
+});
+
+const ibtDivider = $('ibt-divider');
+const ibtStacked = matchMedia('(max-width: 850px)');
+function setIbtSplit(value) {
+  const split = Math.round(Math.max(20, Math.min(75, value)));
+  state.ibt.split = split;
+  $('exam-grid').style.setProperty('--ibt-context-size', `${split}fr`);
+  $('exam-grid').style.setProperty('--ibt-workspace-size', `${100 - split}fr`);
+  ibtDivider.setAttribute('aria-valuenow', String(split));
+  ibtDivider.setAttribute('aria-valuetext', `Question pane ${split}%`);
+}
+function updateIbtDividerOrientation() {
+  ibtDivider.setAttribute('aria-orientation', ibtStacked.matches ? 'horizontal' : 'vertical');
+}
+ibtStacked.addEventListener('change', updateIbtDividerOrientation);
+updateIbtDividerOrientation();
+
+ibtDivider.addEventListener('pointerdown', event => {
+  if (!state.ibt || !event.isPrimary || event.button !== 0) return;
+  ibtDivider.focus({ preventScroll: true });
+  ibtDivider.setPointerCapture(event.pointerId);
+});
+ibtDivider.addEventListener('pointermove', event => {
+  if (!state.ibt || !ibtDivider.hasPointerCapture(event.pointerId)) return;
+  const context = $('ibt-context').getBoundingClientRect();
+  const workspace = $('exam-workspace').getBoundingClientRect();
+  const divider = ibtDivider.getBoundingClientRect();
+  const vertical = ibtStacked.matches;
+  const start = vertical ? context.top : context.left;
+  const end = vertical ? workspace.bottom : workspace.right;
+  const thickness = vertical ? divider.height : divider.width;
+  const position = vertical ? event.clientY : event.clientX;
+  const available = end - start - thickness;
+  if (available > 0) setIbtSplit((position - start - thickness / 2) * 100 / available);
+});
+ibtDivider.addEventListener('lostpointercapture', () => {
+  if (state.ibt) persistIbtState();
+});
+ibtDivider.addEventListener('keydown', event => {
+  if (!state.ibt) return;
+  const decrease = ibtStacked.matches ? 'ArrowUp' : 'ArrowLeft';
+  const increase = ibtStacked.matches ? 'ArrowDown' : 'ArrowRight';
+  const step = event.shiftKey ? 10 : 2;
+  const sizes = { [decrease]: state.ibt.split - step, [increase]: state.ibt.split + step, Home: 20, End: 75 };
+  if (!Object.hasOwn(sizes, event.key)) return;
+  event.preventDefault();
+  setIbtSplit(sizes[event.key]);
+  persistIbtState();
+});
+
+for (const [button, offset] of [['ibt-previous', -1], ['ibt-next', 1]]) {
+  $(button).addEventListener('click', () => perform(async () => {
+    const available = state.session.questions;
+    const index = available.findIndex(q => q.id === state.ibt.current);
+    if (available[index + offset]) await openQuestion(available[index + offset].id);
+  }));
+}
+$('ibt-review').addEventListener('click', () => {
+  const questions = questionStatuses();
+  const unsaved = questions.filter(q => !q.answered).length;
+  const pending = questions.filter(q => q.pending).length;
+  $('ibt-review-summary').textContent = finishReviewMessage({ unanswered: unsaved, pending, hasPreviousSubmissions: state.session.submittedCount > 0 });
+  $('ibt-review-questions').replaceChildren(...questions.filter(q => !q.answered || q.pending).map(q => {
+    const button = node('button', '', `Question ${q.number}${q.pending ? ' · Not saved yet' : ''}`);
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      $('ibt-review-dialog').close();
+      perform(() => openQuestion(q.id));
+    });
+    return button;
+  }));
+  $('ibt-review-dialog').showModal();
+});
+$('ibt-confirm-finish').addEventListener('click', () => {
+  $('ibt-review-dialog').close();
+  perform(finalizeAttempt);
+});
+
+let missionLoad = 0;
+async function loadMission(id) {
+  if (state.finalizing || [...state.draftEditors.values()].some(editor => editor.submitting)) return;
+  const access = state.candidateAccess;
+  const load = ++missionLoad;
+  const current = () => load === missionLoad && state.candidateAccess === access && state.session?.status === 'in_progress' && !state.finalizing;
+  if (!await flushDrafts() || !current()) return;
+  const mission = await request(`/api/me/missions/${encodeURIComponent(id)}`);
+  if (!current() || [...state.draftEditors.values()].some(editor => editor.submitting)) return;
+  if (!await flushDrafts() || !current()) return;
+  if ([...state.draftEditors.values()].some(editor => ['unsaved', 'saving', 'failed'].includes(editor.status) || editor.submitting)) return;
+  state.mission = mission;
   clearDraftEditors();
   renderMissionList();
   renderMission();
@@ -441,12 +772,15 @@ function renderMission() {
   if (mission.story) area.append(node('p', '', mission.story));
   for (const activity of mission.activities) area.append(renderActivity(activity));
 
-  // Collapsible reference: only displayed if reference material exists
+  renderActivityReference(mission.activities.find(a => a.publicConfig?.apiReference || a.publicConfig?.columns));
+}
+
+function renderActivityReference(activity) {
   const refDetails = $('collapsible-reference');
   refDetails.open = false;
   const context = $('context-content');
   clear(context);
-  const reference = mission.activities.find(a => a.publicConfig?.apiReference || a.publicConfig?.columns)?.publicConfig;
+  const reference = activity?.publicConfig;
   if (reference && (reference.apiReference || reference.columns)) {
     refDetails.classList.remove('hidden');
     if (reference.columns) {
@@ -535,17 +869,18 @@ function renderInspection(form, activity) {
     columnSearch: searchColumn.value && searchColumnTerm.value ? { [searchColumn.value]: searchColumnTerm.value } : {},
     order: [
       { column: firstColumn.value, direction: firstDirection.value },
-      ...(secondColumn.value ? [{ column: secondColumn.value, direction: secondDirection.value }] : [])
+      ...(secondColumn.value && secondColumn.value !== firstColumn.value ? [{ column: secondColumn.value, direction: secondDirection.value }] : [])
     ]
   });
 
   const render = () => {
     const current = value();
     let rows = [...config.rows];
-    const term = current.globalSearch.trim().toLocaleLowerCase('en');
-    if (term) rows = rows.filter(row => config.columns.some(col => String(row[col.id]).toLocaleLowerCase('en').includes(term)));
+    const normalizeCell = value => String(value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en');
+    const term = normalizeCell(current.globalSearch);
+    if (term) rows = rows.filter(row => config.columns.some(col => normalizeCell(row[col.id]).includes(term)));
     for (const [col, text] of Object.entries(current.columnSearch)) {
-      rows = rows.filter(row => String(row[col]).toLocaleLowerCase('en').includes(text.trim().toLocaleLowerCase('en')));
+      rows = rows.filter(row => normalizeCell(row[col]).includes(normalizeCell(text)));
     }
     rows.sort((left, right) => {
       for (const item of current.order) {
@@ -581,12 +916,17 @@ function renderInspection(form, activity) {
       render();
     });
   }
-  back.addEventListener('click', () => { pageIndex--; render(); });
-  next.addEventListener('click', () => { pageIndex++; render(); });
+  const turnPage = step => {
+    pageIndex += step;
+    render();
+    form.dispatchEvent(new Event('change'));
+  };
+  back.addEventListener('click', () => turnPage(-1));
+  next.addEventListener('click', () => turnPage(1));
   render();
 
-  return () => {
-    if (secondColumn.value && secondColumn.value === firstColumn.value) {
+  return (draft = false) => {
+    if (!draft && secondColumn.value && secondColumn.value === firstColumn.value) {
       throw new Error('Choose different primary and secondary sort columns.');
     }
     return value();
@@ -680,13 +1020,13 @@ function renderCode(form, activity) {
       render(parseTableCode(editor.value, config));
       messageEl.textContent = 'Code applied to DataTables preview.';
     } catch (error) {
-      messageEl.textContent = error.message;
+      messageEl.textContent = userErrorMessage(error, 'student');
     }
   });
   try {
     render({ pageLength: 10, lengthMenu: [10, 25, 50], flags: { paging: true, searching: true, ordering: true }, globalSearch: '', columnSearch: {}, order: [{ column: config.columns[0].id, direction: 'asc' }] });
   } catch (error) {
-    messageEl.textContent = error.message;
+    messageEl.textContent = userErrorMessage(error, 'student');
   }
   return () => {
     parseTableCode(editor.value, config);
@@ -694,7 +1034,7 @@ function renderCode(form, activity) {
   };
 }
 
-function renderActivity(a, preview = false) {
+function renderActivity(a, preview = false, separatePrompt = false) {
   const recovery = !preview ? localDraft(state.session.id, a.id) : null;
   const recovered = recovery?.read();
   if (recovered && recovered.baseRevision === (a.lastDraft?.updatedAt ?? '')) {
@@ -702,21 +1042,21 @@ function renderActivity(a, preview = false) {
   }
   const card = node('article', 'activity-card');
   if (recovered && recovered.baseRevision !== (a.lastDraft?.updatedAt ?? '')) {
-    const download = node('button', '', 'Download unsynced local answer'); download.type = 'button';
+    const download = node('button', '', 'Download answer saved on this device'); download.type = 'button';
     download.addEventListener('click', () => {
       const link = node('a'); link.href = URL.createObjectURL(new Blob([JSON.stringify(recovered.response, null, 2)], { type: 'application/json' }));
       link.download = `${a.id}-unsynced.json`; link.click(); URL.revokeObjectURL(link.href);
     });
-    card.append(node('p', 'small', 'This browser has unsynced changes from an older server version. Review them before replacing the current answer.'), download);
+    card.append(node('p', 'small', 'There are changes saved only on this device, and they differ from the latest online answer. Download a copy before reloading or replacing your answer.'), download);
   }
-  card.append(renderPrompt(a.prompt, 'activity-prompt'));
+  if (!separatePrompt) card.append(renderPrompt(a.prompt, 'activity-prompt'));
   const policy = a.attemptPolicy;
   const attemptInfo = node('p', 'small');
   const showPolicy = !preview && policy && (policy.maxRetries !== null || policy.pointPenalty || policy.timePenaltySeconds);
   const updateAttemptInfo = () => {
     if (!showPolicy) return;
     const limit = policy.maxRetries === null ? 'unlimited' : String(policy.maxRetries + 1);
-    attemptInfo.textContent = `Attempts: ${a.attemptsUsed}/${limit} · Each retry: −${policy.pointPenalty} pts, −${policy.timePenaltySeconds} sec`;
+    attemptInfo.textContent = `Submissions used: ${a.attemptsUsed}${policy.maxRetries === null ? ' (no limit)' : ` of ${limit}`}. ${retryPolicyText(policy)}`;
   };
   if (showPolicy) { updateAttemptInfo(); card.append(attemptInfo); }
   const form = node('form', 'activity-form');
@@ -822,14 +1162,20 @@ function renderActivity(a, preview = false) {
     const target = node('div'); form.append(target);
     const workspace = mountWeb(target, a, {
       changed: () => form.dispatchEvent(new Event('input', { bubbles: true })),
+      discardPreview: () => request(`/api/me/activities/${encodeURIComponent(a.id)}/web-preview`, { method: 'DELETE' }),
       preview: (value, reset) => request(`/api/me/activities/${encodeURIComponent(a.id)}/web-preview`, { method: 'POST', data: { value, reset } })
     });
     readValue = workspace.value; form._disposeWorkspace = workspace.unmount;
   } else if (a.type === 'code_writing') {
-    readValue = renderCodingQuestion(form, a, value => request(preview ? '/api/instructor/code/preview'
+    readValue = renderCodingQuestion(form, a, (value, input) => request(preview ? '/api/instructor/code/preview'
       : `/api/me/activities/${encodeURIComponent(a.id)}/preview`, {
-        method: 'POST', data: preview ? { config: cfg, value } : { value }
-      }));
+        method: 'POST', data: preview ? { config: cfg, value, input } : { value, input }
+      }), preview || cfg.language === 'sql' || !state.liveTerminalAvailable ? undefined : {
+        open: value => request(`/api/me/activities/${encodeURIComponent(a.id)}/terminal`, { method: 'POST', data: { value } }),
+        read: id => request(`/api/me/activities/${encodeURIComponent(a.id)}/terminal/${id}`, { silent: true }),
+        write: (id, input) => request(`/api/me/activities/${encodeURIComponent(a.id)}/terminal/${id}`, { method: 'POST', data: input, silent: true }),
+        stop: id => request(`/api/me/activities/${encodeURIComponent(a.id)}/terminal/${id}`, { method: 'DELETE', silent: true }),
+      }, !preview && cfg.language !== 'sql' && !state.liveTerminalAvailable);
   } else if (a.type === 'datatable_code') {
     readValue = renderCode(form, a);
   }
@@ -844,13 +1190,17 @@ function renderActivity(a, preview = false) {
   feedback.setAttribute('role', 'status');
   const answerState = node('p', 'answer-state');
   answerState.setAttribute('role', 'status');
-  const retrySave = node('button', 'text-button hidden', 'Retry saving draft'); retrySave.type = 'button';
+  const retrySave = node('button', 'text-button hidden', 'Try saving again'); retrySave.type = 'button';
 
   let draftTimer;
-  let draftRequest = Promise.resolve();
+  let localTimer;
+  let localDirty = false;
+  let localPending = false;
+  let draftRequest = Promise.resolve(true);
   let draftDirty = false, draftRevision = 0, submitting = false;
+  let retryRecord;
   let serverRevision = a.lastDraft?.updatedAt ?? '';
-  let saveState = a.lastDraft ? 'draft' : a.lastSubmission ? 'submitted' : 'empty';
+  let saveState = a.lastDraft?.gradable ? 'draft' : a.lastSubmission ? 'submitted' : 'empty';
   function setAnswerState(status, text) {
     saveState = status; answerState.dataset.state = status; answerState.textContent = text;
     retrySave.classList.toggle('hidden', status !== 'failed');
@@ -858,7 +1208,7 @@ function renderActivity(a, preview = false) {
   }
   const readDraftSubmission = () => {
     try {
-      const read = readValue();
+      const read = readValue(true);
       return a.type === 'numeric_entry' ? { value: read.number, unit: read.unit } : { value: read };
     } catch {
       if (a.type === 'datatable_code') return { value: form.querySelector('textarea')?.value ?? '' };
@@ -866,30 +1216,66 @@ function renderActivity(a, preview = false) {
       if (a.type === 'single_choice' || a.type === 'multiple_choice' || a.type === 'true_false') {
         const selected = [...form.querySelectorAll('input:checked')].map(input => input.value);
         return { value: a.type === 'multiple_choice' ? selected : a.type === 'true_false'
-          ? selected[0] === 'true' : selected[0] ?? '' };
+          ? selected.length ? selected[0] === 'true' : null : selected[0] ?? '' };
       }
       return { value: form.querySelector('input,textarea')?.value ?? '' };
     }
   };
+  function showAcknowledgedDraft(saved) {
+    if (a.attemptsRemaining === 0) {
+      setAnswerState('submitted', 'You have used all tries for this question. Your last submitted answer is kept.');
+    } else if (saved?.warning) {
+      setAnswerState('draft', saved.warning);
+    } else if (saved?.gradable) {
+      setAnswerState('draft', `Saved at ${new Date(saved.updatedAt).toLocaleTimeString()}. ${a.attemptsUsed ? 'Submitting this changed answer uses another try. Any listed point or time deduction applies.' : 'This answer will be submitted when you finish or time runs out.'}`);
+    } else if (a.attemptsUsed > 0) {
+      setAnswerState('submitted', 'Your last submitted answer is kept.');
+    } else {
+      setAnswerState('empty', 'No answer saved yet.');
+    }
+  }
   if (!preview) {
     state.draftEditors.set(a.id, {
       get status() { return saveState; },
-      dispose() { clearTimeout(draftTimer); form._disposeWorkspace?.(); },
+      get submitting() { return submitting; },
+      get localPending() { return localPending && !localDirty; },
+      flushLocal,
+      dispose() { clearTimeout(draftTimer); clearTimeout(localTimer); form._disposeWorkspace?.(); },
       flush: saveDraft
     });
-    form.addEventListener('input', scheduleDraft);
-    form.addEventListener('change', scheduleDraft);
-    setAnswerState(saveState, saveState === 'submitted' ? 'Answer submitted · Included in your attempt'
-      : saveState === 'draft' ? 'Draft saved · Included when you finish or time expires' : 'No answer submitted');
+    const answerChanged = event => {
+      if (['code_writing', 'web_project'].includes(a.type) && event.target !== form) return;
+      if (a.type === 'datatable_code' && event.target.tagName !== 'TEXTAREA') return;
+      scheduleDraft();
+    };
+    form.addEventListener('input', answerChanged);
+    form.addEventListener('change', answerChanged);
+    showAcknowledgedDraft(a.lastDraft);
+  }
+  function flushLocal() {
+    clearTimeout(localTimer);
+    localTimer = undefined;
+    if (!localDirty) return;
+    localDirty = false;
+    localPending = recovery?.write(readDraftSubmission(), serverRevision) === true;
+    if (!localPending) {
+      answerState.textContent = 'We could not save a backup on this device. Keep this page open until the message says Saved.';
+    }
+    if (separatePrompt && !document.hidden) updateSaveStatus();
   }
   function scheduleDraft() {
+    if (a.attemptsRemaining === 0) {
+      setAnswerState('submitted', 'You have used all tries for this question. Changes you make here will not be submitted. Your last submitted answer is kept.');
+      return;
+    }
     clearTimeout(draftTimer);
     draftDirty = true; draftRevision++;
-    const stored = recovery?.write(readDraftSubmission(), serverRevision);
+    localDirty = true;
     setAnswerState('unsaved', a.attemptsUsed > 0
-      ? 'Changes not submitted · Your previous submission still counts'
-      : 'Draft not saved yet · Not submitted');
-    if (stored === false) answerState.textContent = 'Local recovery unavailable. Keep this page open until the server saves.';
+      ? 'Your latest changes are not submitted. Your last submitted answer is kept until the new answer is submitted.'
+      : 'Your answer has not been saved yet.');
+    if (!separatePrompt) flushLocal();
+    else localTimer ??= setTimeout(flushLocal, 2000);
     draftTimer = setTimeout(saveDraft, 800);
   }
   async function saveDraft() {
@@ -898,18 +1284,29 @@ function renderActivity(a, preview = false) {
     if (!draftDirty) return draftRequest;
     const snapshot = readDraftSubmission(), revision = draftRevision;
     draftDirty = false;
-    setAnswerState('saving', 'Saving draft… · Not submitted');
+    setAnswerState('saving', 'Saving your answer…');
     draftRequest = draftRequest.then(async () => {
       try {
         const saved = await request(`/api/me/activities/${encodeURIComponent(a.id)}/draft`, { method: 'PUT', data: snapshot, headers: { 'If-Match': serverRevision }, silent: true });
         serverRevision = saved.updatedAt;
-        if (revision === draftRevision) { recovery?.clear(); setAnswerState('draft', `Draft saved at ${new Date(saved.updatedAt).toLocaleTimeString()} · Included when you finish or time expires`); }
-        else recovery?.write(readDraftSubmission(), serverRevision);
+        if (revision === draftRevision) {
+          localDirty = localPending = false;
+          recovery?.clear();
+          if (separatePrompt && state.ibt) updateSavedAnswer(a.id, a.attemptsUsed > 0 || saved.gradable);
+          showAcknowledgedDraft(saved);
+        }
+        else {
+          localDirty = true;
+          flushLocal();
+        }
         return true;
-      } catch {
+      } catch (error) {
+        flushLocal();
         if (revision === draftRevision) {
           draftDirty = true;
-          setAnswerState('failed', 'Draft could not be saved · Your answer is still on this page. Retry saving.');
+          setAnswerState('failed', error.code
+            ? `Answer not saved. ${userErrorMessage(error, 'student')}`
+            : 'We could not save your answer. It is still on this page. Select Try saving again.');
         }
         return false;
       }
@@ -922,65 +1319,93 @@ function renderActivity(a, preview = false) {
   form.addEventListener('submit', event => {
     event.preventDefault();
     (async () => {
-      if (!preview && submit.disabled) return;
+      if (!preview && (submit.disabled || state.finalizing)) return;
       let read;
       try { read = readValue(); }
-      catch (error) { feedback.textContent = error.message; return; }
+      catch (error) { feedback.textContent = userErrorMessage(error, 'student'); return; }
+      if (typeof read === 'string' && !read.trim()) { feedback.textContent = 'Enter an answer before submitting.'; return; }
       const submittedRevision = draftRevision;
       if (preview) {
-        feedback.textContent = 'Preview response captured.';
+        feedback.textContent = 'This is a preview. Your answer has not been submitted for grading.';
         return;
       }
       submit.disabled = true;
+      submitting = true;
+      form.inert = true;
       clearTimeout(draftTimer);
       await draftRequest;
       const value = a.type === 'numeric_entry' ? read.number : read;
       const submission = a.type === 'numeric_entry' ? { value, unit: read.unit } : { value };
-      await saveDraft();
+      if (draftRevision === submittedRevision) {
+        submitting = false;
+        const saving = saveDraft();
+        submitting = true;
+        if (!await saving) {
+          submitting = false;
+          form.inert = false;
+          submit.disabled = false;
+          feedback.textContent = 'Your answer could not be saved. Select Try saving again before submitting.';
+          return;
+        }
+      }
       const retryStorageKey = `gotit:submission:${state.session.id}:${a.id}`;
-      let retryRecord;
-      try { retryRecord = JSON.parse(sessionStorage.getItem(retryStorageKey) || 'null'); } catch { retryRecord = null; }
+      if (!retryRecord) {
+        try { retryRecord = JSON.parse(sessionStorage.getItem(retryStorageKey) || 'null'); } catch { /* Use the in-memory key. */ }
+      }
       if (!retryRecord || retryRecord.payload !== JSON.stringify(submission)) {
         retryRecord = { key: randomId(), payload: JSON.stringify(submission) };
-        sessionStorage.setItem(retryStorageKey, JSON.stringify(retryRecord));
+        try { sessionStorage.setItem(retryStorageKey, JSON.stringify(retryRecord)); } catch { /* Use the in-memory key. */ }
       }
       submit.disabled = true;
       submitting = true;
       feedback.textContent = 'Submitting answer…';
       try {
         const result = await request(`/api/me/activities/${encodeURIComponent(a.id)}/submit`, {
-          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key, ...(['code_writing', 'web_project'].includes(a.type) ? { Prefer: 'respond-async' } : {}) }
+          method: 'POST', data: submission, headers: { 'Idempotency-Key': retryRecord.key, 'If-Match': serverRevision, ...(['code_writing', 'web_project'].includes(a.type) ? { Prefer: 'respond-async' } : {}) }
         });
-        sessionStorage.removeItem(retryStorageKey);
+        retryRecord = null;
+        try { sessionStorage.removeItem(retryStorageKey); } catch { /* Storage is optional. */ }
         a.attemptsUsed = result.attemptNumber;
         a.attemptsRemaining = result.attemptsRemaining;
         updateAttemptInfo();
-        const outcome = result.duplicate ? 'Answer was already submitted.'
+        const outcome = result.duplicate ? 'This answer has already been submitted. It was not submitted a second time.'
           : state.session.feedbackMode === 'graded' ? 'Answer submitted.'
-          : result.result === 'correct' ? 'Correct.' : result.result === 'partially_correct' ? 'Partially correct.' : 'Incorrect.';
-        const cost = result.penaltyApplied && !result.duplicate
-          ? ` Retry cost: ${result.penaltyApplied.points} points and ${result.penaltyApplied.seconds} seconds.` : '';
-        feedback.textContent = `${outcome}${cost}${result.attemptsRemaining === 0 ? ' No attempts left.' : ''}`;
+          : result.result === 'pending_review' ? 'Your code has been submitted. Your instructor will grade it.' : result.result === 'correct' ? 'Correct.' : result.result === 'partially_correct' ? 'Partially correct.' : 'Incorrect.';
+        const deductions = [];
+        if (result.penaltyApplied?.points) deductions.push(`${result.penaltyApplied.points} ${result.penaltyApplied.points === 1 ? 'point' : 'points'}`);
+        if (result.penaltyApplied?.seconds) deductions.push(`${result.penaltyApplied.seconds} seconds from your remaining time`);
+        const cost = deductions.length && !result.duplicate ? ` This extra try deducted ${deductions.join(' and ')}.` : '';
+        feedback.textContent = `${outcome}${cost}${result.attemptsRemaining === 0 ? ' You have used all tries for this question.' : ''}`;
+        serverRevision = '';
+        if (draftRevision === submittedRevision) {
+          localDirty = localPending = false;
+          recovery?.clear();
+          draftDirty = false;
+          setAnswerState('submitted', `Submitted at ${new Date().toLocaleTimeString()}. This answer has been received.`);
+        } else {
+          localDirty = true;
+          flushLocal();
+          setAnswerState('unsaved', 'Your latest changes are not submitted. Your last submitted answer is kept until the new answer is submitted.');
+        }
         state.session = await request('/api/me/session');
         renderExamHeader();
         renderMissionList();
-        if (draftRevision === submittedRevision) {
-          recovery?.clear(); serverRevision = '';
-          draftDirty = false;
-          setAnswerState('submitted', `Answer submitted at ${new Date().toLocaleTimeString()} · Included in your attempt`);
-        } else setAnswerState('unsaved', 'Changes not submitted · Your previous submission still counts');
       } catch (error) {
-        feedback.textContent = error.message;
+        feedback.textContent = userErrorMessage(error, 'student');
         if (error.code === 'SESSION_CLOSED') {
           state.session = await request('/api/me/session');
           renderCompletion();
         }
       } finally {
         submitting = false;
+        form.inert = false;
         submit.disabled = state.session.status !== 'in_progress' || a.attemptsRemaining === 0;
+        if (!submit.disabled && draftDirty && saveState === 'unsaved') draftTimer = setTimeout(saveDraft, 800);
       }
     })().catch(error => {
-      feedback.textContent = error.message;
+      submitting = false;
+      form.inert = false;
+      feedback.textContent = userErrorMessage(error, 'student');
       submit.disabled = state.session?.status !== 'in_progress' || a.attemptsRemaining === 0;
     });
   });
@@ -990,20 +1415,23 @@ function renderActivity(a, preview = false) {
 }
 
 function renderCompletion() {
+  $('ibt-review-dialog').close();
   const s = state.session;
+  if (state.ibt) {
+    flushLocalAnswers();
+    clearDraftEditors();
+    clearIbtState();
+  }
   $('exam-grid').classList.add('hidden');
   $('exam-footer').classList.add('hidden');
   $('completion-panel').classList.remove('hidden');
-  $('completion-title').textContent = s.status === 'submitted' ? 'Attempt submitted' : 'Time ended';
-  $('completion-summary').textContent = s.pendingCodingCount
-    ? `${s.pendingCodingCount} coding submission is waiting for grading. Your on-time receipt is saved. This page checks for the result automatically.`
-    : s.resultsReleased
-    ? `Score: ${s.score} / ${s.maxPoints} points.`
-    : `${s.submittedCount} of ${s.questionCount} answers submitted. Saved drafts are included, subject to remaining retries. Your score will appear automatically after faculty publishes it. You can also check below.`;
-  $('save-status').textContent = 'Attempt finished. You cannot submit more answers.';
+  $('completion-title').textContent = s.status === 'submitted' ? 'Activity submitted' : 'Time ended';
+  if (!s.pendingCodingCount) statusNotice('student-runtime-status');
+  $('completion-summary').textContent = completionMessage(s);
+  $('save-status').textContent = 'This activity is finished. You cannot change or submit answers now.';
   $('timer-warning').classList.add('hidden');
-  $('check-results').textContent = s.resultsReleased ? 'Refresh score' : 'Check for published score';
-  $('check-results').classList.toggle('hidden', s.feedbackMode !== 'graded' && !s.pendingCodingCount);
+  $('check-results').textContent = s.resultsReleased ? 'Refresh score' : 'Check my score';
+  $('check-results').classList.toggle('hidden', s.feedbackMode !== 'graded' && !s.pendingCodingCount && !s.pendingReview);
   renderFlow();
   syncFullscreenGate();
 }
@@ -1015,6 +1443,6 @@ if (state.candidateAccess) {
   try { await showExam(); }
   catch (error) {
     state.candidateAccess = null;
-    if (error.status !== 401) message('Sign in to resume this attempt.');
+    if (error.status !== 401) message(userErrorMessage(error, 'student'), { persistent: true });
   }
 }

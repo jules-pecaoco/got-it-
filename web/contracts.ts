@@ -4,10 +4,12 @@ export interface CodingActivity {
   lastDraft?: { value: string | Project };
   lastSubmission?: { value: string | Project };
   publicConfig: {
+    expectedHtml?: string;
+    seedSql?: string;
     language?: string;
     starterCode?: string;
     files?: Record<string, string>;
-    samples?: { input: string; output: string }[];
+    samples?: { input: string; output: string; transcript?: string }[];
   };
 }
 export interface Project {
@@ -16,12 +18,26 @@ export interface Project {
 }
 export interface ExecutionSample {
   output: string;
-  expectedOutput: string;
+  input: string;
   error?: string;
-  matches: boolean;
+  succeeded: boolean;
 }
 export interface WorkspaceActions {
-  run: (value: string) => Promise<{ samples: ExecutionSample[] }>;
-  preview?: (value: Project, reset?: boolean) => Promise<{ url: string; database?: string }>;
+  discardPreview?: () => Promise<unknown>;
+  terminalUnavailable?: boolean;
+  run: (value: string, input?: string) => Promise<{ samples: ExecutionSample[] }>;
+  preview?: (
+    value: Project,
+    reset?: boolean,
+  ) => Promise<{ url: string; database?: string; warning?: string }>;
   changed?: () => void;
+  terminal?: {
+    open: (value: string) => Promise<import('../src/terminal.mts').TerminalState>;
+    read: (id: string) => Promise<import('../src/terminal.mts').TerminalState>;
+    write: (
+      id: string,
+      input: { line?: string; eof?: boolean },
+    ) => Promise<import('../src/terminal.mts').TerminalState>;
+    stop: (id: string) => Promise<import('../src/terminal.mts').TerminalState>;
+  };
 }

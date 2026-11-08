@@ -1,9 +1,10 @@
 import Fastify from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
-import { executeCode } from './code-runner.mjs';
+import { codingStatus, executeCode } from './code-runner.mjs';
 import { PhpWorkspace } from './php-workspace.mts';
 import { randomUUID } from 'node:crypto';
 import type { Project } from '../web/contracts.js';
+import { TerminalManager } from './terminal.mts';
 
 const secret = process.env.EXECUTION_SECRET;
 if (!secret || secret.length < 32) throw new Error('Set EXECUTION_SECRET to at least 32 characters.');
@@ -14,7 +15,42 @@ app.addHook('onRequest', async (request, reply) => {
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
     return reply.code(401).send({ error: 'Unauthorized' });
 });
+app.get('/status', () => codingStatus());
 let active = 0;
+const terminals = new TerminalManager();
+app.post<{
+  Params: { action: string };
+  Body: {
+    owner: string;
+    id: string;
+    language: string;
+    code: string;
+    input: { line?: string; eof?: boolean };
+  };
+}>('/terminal/:action', async (request, reply) => {
+  const { owner, id, language, code, input } = request.body || {};
+  if (typeof owner !== 'string' || !owner || owner.length > 128)
+    return reply.code(400).send({ code: 'INVALID_OWNER', message: 'Invalid terminal owner.' });
+  try {
+    switch (request.params.action) {
+      case 'open':
+        return await terminals.open(owner, language, code);
+      case 'read':
+        return terminals.read(owner, id);
+      case 'write':
+        return terminals.write(owner, id, input);
+      case 'stop':
+        return await terminals.stop(owner, id);
+      default:
+        return reply.code(404).send({ message: 'Not found.' });
+    }
+  } catch (error) {
+    const issue = error as Error & { status?: number; code?: string };
+    return reply
+      .code(issue.status || 503)
+      .send({ code: issue.code || 'TERMINAL_UNAVAILABLE', message: issue.message });
+  }
+});
 app.post<{ Body: { language: string; code: string; input: string } }>(
   '/execute',
   {
@@ -32,10 +68,18 @@ app.post<{ Body: { language: string; code: string; input: string } }>(
     },
   },
   async (request, reply) => {
-    if (active >= 2) return reply.code(503).send({ error: 'Busy' });
+    if (active >= 2)
+      return reply
+        .code(429)
+        .send({ code: 'CODE_RUNNER_BUSY', message: 'The code runner is busy. Try again shortly.' });
     active++;
     try {
       return await executeCode(request.body.language, request.body.code, request.body.input);
+    } catch (error) {
+      const issue = error as Error & { code?: string; status?: number };
+      if (issue.code === 'CODE_RUNNER_UNAVAILABLE' || issue.code === 'CODE_RUNNER_BUSY')
+        return reply.code(issue.status ?? 503).send({ code: issue.code, message: issue.message });
+      throw error;
     } finally {
       active--;
     }
@@ -94,6 +138,7 @@ const timer = setInterval(() => {
 }, 30000);
 timer.unref();
 app.addHook('onClose', async () => {
+  await terminals.close();
   clearInterval(timer);
   await Promise.all([...workspaces.values()].map((item) => item.workspace.close()));
 });

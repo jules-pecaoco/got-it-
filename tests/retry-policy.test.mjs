@@ -47,8 +47,9 @@ test('each retry costs points and time, stops at the attempt limit, and appears 
     const correct = { pageLength: values.page_length, pageIndex: 0, globalSearch: values.global_search,
       columnSearch: {}, order: values.order };
     const initialDeadline = Date.parse(store.sessionView(sid).deadlineAt);
-    assert.equal(store.submit(sid, table.id, { value: {} }).attemptNumber, 1);
-    assert.equal(store.score(sid), 0);
+    assert.throws(() => store.submit(sid, table.id, { value: {} }), { code: 'INVALID_ANSWER' });
+    const wrong = { ...correct, globalSearch: 'wrong', order: correct.order.map(item => ({ ...item, direction: item.direction === 'asc' ? 'desc' : 'asc' })) };
+    assert.equal(store.submit(sid, table.id, { value: wrong }).attemptNumber, 1);
     const second = store.submit(sid, table.id, { value: correct });
     assert.equal(second.result, 'correct');
     assert.deepEqual(second.penaltyApplied, { points: 1, seconds: 10 });

@@ -43,3 +43,12 @@ try {
   allowed = false; assert.equal((await fetch(preview.url)).status, 404);
   console.log('PASS: cross-origin preview proxy, console bridge, cookie scoping and expired-access rejection.');
 } finally { await previews.close(); }
+
+// Frontend-only projects have no database setup SQL.
+const frontend = new PhpWorkspace();
+try {
+  await frontend.start({ files: { 'index.html': '<h1>Frontend</h1>', 'script.js': 'console.log("ready");' } });
+  assert.match((await frontend.request('GET', '/index.html')).body.toString(), /Frontend/);
+  assert.equal((await frontend.request('GET', '/script.js')).status, 200);
+  console.log('PASS: frontend-only preview without database seed.');
+} finally { await frontend.close(); }

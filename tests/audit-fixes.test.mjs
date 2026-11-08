@@ -43,9 +43,10 @@ test('500 students can preview and join through one socket IP; forwarded headers
       method: 'POST', data: target, headers: { 'X-Forwarded-For': `192.0.2.${index}` }
     })).response.status, 401);
   }
-  const limited = await call('/api/auth/student/join', { method: 'POST', data: { ...target, pin: 'audit-pin' } });
+  const limited = await call('/api/auth/student/join', { method: 'POST', data: target });
   assert.equal(limited.response.status, 429);
   assert.ok(Number(limited.response.headers.get('retry-after')) > 0);
+  assert.equal((await call('/api/auth/student/join', { method: 'POST', data: { ...target, pin: 'audit-pin' } })).response.status, 200);
   assert.equal((await call('/api/auth/student/join', {
     method: 'POST', data: { ...credentials(run), candidateId: 'LAB-1' }
   })).response.status, 200);

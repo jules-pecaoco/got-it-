@@ -4,6 +4,7 @@ export function answerText(activity, rule) {
   const first = criteria[0]?.answer;
   const option = id => config.options?.find(item => item.id === id)?.label ?? String(id);
   if (activity.type === 'web_project') return criteria.map(item => `${item.points} points: ${item.answer.kind === 'manual' ? item.answer.description : `${item.answer.method || 'GET'} ${item.answer.path} → ${item.answer.status}, contains ${item.answer.contains}`}`).join('\n');
+  if (activity.type === 'code_writing' && criteria.every(item => item.answer.kind === 'manual')) return criteria.map(item => `${item.points} points: ${item.answer.description}`).join('\n');
   if (activity.type === 'code_writing') return `Language: ${config.language}\n\nReference solution:\n${rule.referenceCode}\n\n` +
     criteria.map((test, index) => `Test ${index + 1} (${test.points} points)\nInput:\n${test.answer.input}\nExpected output:\n${test.answer.output}`).join('\n\n');
   if (activity.type === 'single_choice') return option(first);

@@ -4,26 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Got It! · Proctor</title>
+  <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/ui-refinements.css">
+  <link rel="stylesheet" href="/app-theme.css">
   <script type="module" src="/proctor.js"></script>
 </head>
-<body>
+<body class="workspace-proctor">
   <header class="masthead">
-    <div class="brand-lockup"><div class="brand" id="platform-label">Got It!</div><small class="brand-tagline" id="platform-tagline">Gotta Catch Ed All</small></div>
-    <button type="button" id="proctor-logout" class="hidden text-button">Sign out</button>
+    <div class="masthead-branding">
+      <div class="brand-lockup"><div class="brand" id="platform-label">Got It!</div><small class="brand-tagline" id="platform-tagline">Gotta Catch Ed All</small></div>
+    </div>
+    <div class="masthead-actions"><span class="workspace-badge">Proctor</span><button type="button" id="proctor-logout" class="hidden text-button">Sign out</button></div>
   </header>
   <div id="request-status" class="request-status hidden" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
     <span class="request-spinner" aria-hidden="true"></span><span id="request-status-text">Loading proctor settings…</span>
   </div>
   <main>
     <div id="notice" role="status" aria-live="polite"></div>
-    <section id="proctor-login-panel" class="page-width">
-      <form id="proctor-login" class="card stack compact proctor-login">
-        <h1>Proctor sign in</h1>
-        <label>Run ID<input id="proctor-run-id" required autocomplete="off"></label>
+    <section id="proctor-login-panel" class="page-width auth-page" aria-labelledby="proctor-login-heading">
+      <form id="proctor-login" class="card stack compact proctor-login auth-form-panel">
+        <h1 id="proctor-login-heading">Proctor sign in</h1>
+        <label>Activity code<input id="proctor-run-id" required autocomplete="off"></label>
         <label>Proctor code<input id="proctor-code" type="password" required autocomplete="off"></label>
-        <button type="submit" class="primary">View run</button>
+        <button type="submit" class="primary">View student progress</button>
       </form>
     </section>
     <section id="proctor-dashboard" class="page-width hidden">
@@ -51,12 +55,12 @@
         <table class="proctor-table">
           <thead><tr>
             <th scope="col">Student</th><th scope="col">Section</th><th scope="col">Status</th>
-            <th scope="col">Questions</th><th scope="col">Last submission</th><th scope="col">Last seen</th><th scope="col">Time left</th>
+            <th scope="col">Answers saved</th><th scope="col">Last submission</th><th scope="col">Last connection update</th><th scope="col">Time left</th>
           </tr></thead>
           <tbody id="proctor-rows"></tbody>
         </table>
       </div>
-      <p class="small proctor-footnote">In progress means an attempt has started; it does not indicate whether the student's browser is open.</p>
+      <p class="small proctor-footnote">The Answers saved count includes submitted answers and answers still being worked on. In progress means the student has started and has not finished. It does not confirm that their activity page is still open. If connection updates stop, check with the student; it does not always mean they are offline.</p>
     </section>
   </main>
 </body>

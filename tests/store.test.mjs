@@ -211,7 +211,11 @@ test('retry, partial credit and duplicate submissions cannot award a criterion t
   };
   const first = firstMission === 'catalog' ? ['archive-location', 'archive-fields', 'archive-claim'] : ['archive-code', 'archive-total', 'archive-match'];
   const second = firstMission === 'catalog' ? ['archive-code', 'archive-total', 'archive-match'] : ['archive-location', 'archive-fields', 'archive-claim'];
-  assert.throws(() => store.submit(id, second[0], values[second[0]]), /locked/);
+  const lastMission = joined.session.order.at(-1).id;
+  assert.ok(joined.session.questions.every(question => question.unlocked));
+  assert.ok(store.missionView(id, lastMission).activities.some(activity => activity.id === 'archive-sequence'));
+  assert.equal(store.saveDraft(id, 'archive-sequence', values['archive-sequence']).saved, true);
+  store.submit(id, 'archive-sequence', values['archive-sequence']);
   for (const activity of first) store.submit(id, activity, values[activity]);
   for (const activity of second) store.submit(id, activity, values[activity]);
   const before = store.score(id);
@@ -222,7 +226,6 @@ test('retry, partial credit and duplicate submissions cannot award a criterion t
   assert.equal(partial.awardedNow, 10);
   const repeatedFull = store.submit(id, 'archive-match', { value: { a: '1998', b: '2006' } });
   assert.equal(repeatedFull.awardedNow, 0);
-  store.submit(id, 'archive-sequence', values['archive-sequence']);
   assert.equal(store.score(id), 100);
   const finalized = store.finalize(id);
   assert.equal(finalized.status, 'submitted');
@@ -258,17 +261,24 @@ test('idempotent retries return the original attempt without a second penalty', 
   } finally { store.close(); }
 });
 
-test('candidate drafts restore through mission view and clear after submission', () => {
+test('candidate question index follows assigned order and tracks drafts and submissions', () => {
   const { store, run } = setup('garden');
   try {
     const joined = store.join({ runId: run.id, candidateId: 'A', pin: '4242' });
     const missionId = joined.session.order[0].id;
-    const activityId = store.missionView(joined.session.id, missionId).activities[0].id;
+    const activities = store.missionView(joined.session.id, missionId).activities;
+    const activityId = activities[0].id;
+    assert.deepEqual(joined.session.questions.filter(q => q.missionId === missionId), activities.map(a => ({
+      id: a.id, missionId, unlocked: true
+    })));
+    assert.deepEqual(joined.session.savedAnswers, []);
     const draft = activityId === 'garden-area' ? { value: 9, unit: 'm2' } : { value: 'a' };
     assert.equal(store.saveDraft(joined.session.id, activityId, draft).saved, true);
+    assert.deepEqual(store.sessionView(joined.session.id).savedAnswers, [activityId]);
     assert.deepEqual(store.missionView(joined.session.id, missionId).activities[0].lastDraft.value, draft.value);
     const answer = activityId === 'garden-area' ? { value: 12, unit: 'm2' } : { value: 'b' };
     store.submit(joined.session.id, activityId, answer, 'draft-submit-key-01');
+    assert.deepEqual(store.sessionView(joined.session.id).savedAnswers, [activityId]);
     assert.equal(store.missionView(joined.session.id, missionId).activities[0].lastDraft, null);
     assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM answer_drafts WHERE session_id=?').get(joined.session.id).count, 0);
   } finally { store.close(); }
