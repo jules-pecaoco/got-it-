@@ -23,6 +23,7 @@ export interface ExecutionSample {
   succeeded: boolean;
 }
 export interface WorkspaceActions {
+  snapshot?: () => Promise<{ database?: string }>;
   discardPreview?: () => Promise<unknown>;
   terminalUnavailable?: boolean;
   run: (value: string, input?: string) => Promise<{ samples: ExecutionSample[] }>;

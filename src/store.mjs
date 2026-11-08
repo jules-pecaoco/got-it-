@@ -45,8 +45,8 @@ function gradableDraft(activity, response) {
     case 'single_choice':
     case 'text_entry':
     case 'datatable_code': return typeof value === 'string' && Boolean(value.trim());
-    case 'multiple_choice':
-    case 'sequencing': return Array.isArray(value) && value.some(item => typeof item === 'string' && item.trim());
+    case 'sequencing': return Array.isArray(value) && value.length === activity.publicConfig.items.length && new Set(value).size === value.length && value.every(id => activity.publicConfig.items.some(item => item.id === id));
+    case 'multiple_choice': return Array.isArray(value) && value.some(item => typeof item === 'string' && item.trim());
     case 'matching': return value && typeof value === 'object' && !Array.isArray(value) && hasAnswerValue(value);
     default: return hasAnswerValue(value);
   }
@@ -858,7 +858,7 @@ export class Store {
     invariant(session.status === 'in_progress' && Date.now() < Date.parse(session.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
     const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
     invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
-    this.missionView(sessionId, mission.id);
+    invariant(this.progress(sessionId).find(item => item.id === mission.id)?.unlocked, 'LOCKED', 'Mission is locked or unavailable.', 403);
     invariant(response && typeof response === 'object' && !Array.isArray(response), 'INVALID_DRAFT', 'Draft must be an answer object.');
     const encoded = JSON.stringify(response);
     const activity = mission.activities.find(a => a.id === activityId);
@@ -889,7 +889,7 @@ export class Store {
     invariant(context.session.status === 'in_progress' && Date.now() < Date.parse(context.session.deadline_at), 'SESSION_CLOSED', 'The session is closed.', 403);
     const mission = context.exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
     invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
-    this.missionView(sessionId, mission.id);
+    invariant(this.progress(sessionId).find(item => item.id === mission.id)?.unlocked, 'LOCKED', 'Mission is locked or unavailable.', 403);
     const activity = mission.activities.find(a => a.id === activityId);
     invariant(['code_writing', 'web_project'].includes(activity.type), 'INVALID_CODE_ACTIVITY', 'This question is not a coding question.');
     return { ...context, mission, activity, rule: context.exam.private.rules[activity.gradingRuleId] };
@@ -922,7 +922,7 @@ export class Store {
     const { run, exam } = this.context(sessionId);
     const mission = exam.public.missions.find(m => m.activities.some(a => a.id === activityId));
     invariant(mission, 'ACTIVITY_NOT_FOUND', 'Activity not found.', 404);
-    this.missionView(sessionId, mission.id);
+    invariant(this.progress(sessionId).find(item => item.id === mission.id)?.unlocked, 'LOCKED', 'Mission is locked or unavailable.', 403);
     const activity = mission.activities.find(a => a.id === activityId);
     const rule = exam.private.rules[activity.gradingRuleId];
     const evaluation = executionResult ?? evaluate(activity, rule, submission);
@@ -1059,6 +1059,7 @@ export class Store {
     const pending = new Map(this.db.prepare(`SELECT session_id, COUNT(CASE WHEN status='failed' THEN 1 END) AS failed
       FROM coding_jobs WHERE kind='submit' AND status IN ('queued','running','failed')
       AND session_id IN (SELECT id FROM sessions WHERE run_id=?) GROUP BY session_id`).all(runId).map(r => [r.session_id, r.failed]));
+    const pendingReview = this.pendingReviewSessions(runId, exam);
     return { runId, examId: run.exam_id, version: run.version, title: exam.public.title,
       classId: run.class_id, className: run.class_name,
       name: run.name || exam.public.title,
@@ -1071,8 +1072,8 @@ export class Store {
         deadlineAt: r.deadline_at, score: Math.max(0, totals.get(r.session_id) || 0), pendingCoding: pending.has(r.session_id),
         failedCodingCount: pending.get(r.session_id) || 0,
         finalizationPending: r.status === 'in_progress' && Date.now() >= Date.parse(r.deadline_at),
-        pendingReview: !!r.session_id && this.hasPendingReview(r.session_id),
-        resultsReleased: !pending.has(r.session_id) && !this.hasPendingReview(r.session_id) && resultsReleased(run, r) })) };
+        pendingReview: !!r.session_id && pendingReview.has(r.session_id),
+        resultsReleased: !pending.has(r.session_id) && !pendingReview.has(r.session_id) && resultsReleased(run, r) })) };
   }
   publishStudentResults(runId, candidateId, actor = 'instructor') {
     const review = this.reviewStudent(runId, candidateId);
@@ -1089,19 +1090,25 @@ export class Store {
     return { runId, candidateId, resultsReleased: true, publishedAt };
   }
   publishCompletedResults(runId, actor = 'instructor') {
-    const run = this.db.prepare('SELECT owner_id FROM runs WHERE id=?').get(runId);
+    const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
     assertOwner(run.owner_id);
     if (this.automaticSettlement) this.settleExpired(runId);
+    const exam = this.getExam(run.exam_id, run.version);
+    const review = this.pendingReviewSessions(runId, exam);
+    const pending = new Set(this.db.prepare(`SELECT DISTINCT session_id FROM coding_jobs
+      WHERE kind='submit' AND status IN ('queued','running','failed')
+      AND session_id IN (SELECT id FROM sessions WHERE run_id=?)`).all(runId).map(row => row.session_id));
     const publishedAt = stamp();
     const eligible = this.db.prepare(`SELECT id FROM sessions WHERE run_id=?
-      AND status <> 'in_progress' AND results_published_at IS NULL`).all(runId);
+      AND status <> 'in_progress' AND results_published_at IS NULL`).all(runId)
+      .filter(session => !pending.has(session.id) && !review.has(session.id));
     this.tx(() => {
       const update = this.db.prepare('UPDATE sessions SET results_published_at=? WHERE id=?');
-      for (const session of eligible) if (!this.hasPendingCode(session.id) && !this.hasPendingReview(session.id)) update.run(publishedAt, session.id);
-      this.audit(actor, 'publish_completed_results', runId, { publishedCount: eligible.filter(s => !this.hasPendingCode(s.id) && !this.hasPendingReview(s.id)).length });
+      for (const session of eligible) update.run(publishedAt, session.id);
+      this.audit(actor, 'publish_completed_results', runId, { publishedCount: eligible.length });
     });
-    return { runId, publishedCount: eligible.filter(s => !this.hasPendingCode(s.id) && !this.hasPendingReview(s.id)).length, publishedAt };
+    return { runId, publishedCount: eligible.length, publishedAt };
   }
   hasPendingCode(sessionId) {
     return !!this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id=? AND kind='submit' AND status IN ('queued','running','failed') LIMIT 1").get(sessionId);
@@ -1112,15 +1119,55 @@ export class Store {
     this.audit('instructor', 'retry_grading', runId, { count }); this.codingQueue.pump();
     return { retried: Number(count) };
   }
+  pendingReviewSessions(runId, exam) {
+    const manual = new Set(exam.public.missions.flatMap(m => m.activities).filter(a =>
+      a.type === 'web_project' && exam.private.rules[a.gradingRuleId].criteria.some(c => c.answer.kind === 'manual')
+    ).map(a => a.id));
+    const consoleIds = new Set(exam.public.missions.flatMap(m => m.activities).filter(a => a.type === 'code_writing').map(a => a.id));
+    if (!manual.size && !consoleIds.size) return new Set();
+    const latest = this.db.prepare(`SELECT sub.session_id,sub.activity_id,sub.result FROM submissions sub
+      JOIN sessions s ON s.id=sub.session_id
+      LEFT JOIN score_overrides o ON o.session_id=sub.session_id AND o.activity_id=sub.activity_id
+      WHERE s.run_id=? AND o.session_id IS NULL AND NOT EXISTS (
+        SELECT 1 FROM submissions newer WHERE newer.session_id=sub.session_id
+        AND newer.activity_id=sub.activity_id AND newer.rowid>sub.rowid)`).all(runId);
+    return new Set(latest.filter(row => manual.has(row.activity_id) ||
+      (consoleIds.has(row.activity_id) && row.result === 'pending_review')).map(row => row.session_id));
+  }
   hasPendingReview(sessionId) {
     if (!sessionId) return false;
-    const { exam } = this.context(sessionId);
-    return exam.public.missions.flatMap(m => m.activities).some(activity => {
-      const latest = this.db.prepare('SELECT result FROM submissions WHERE session_id=? AND activity_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId, activity.id);
-      const manual = activity.type === 'code_writing' ? latest?.result === 'pending_review' :
-        activity.type === 'web_project' && exam.private.rules[activity.gradingRuleId].criteria.some(criterion => criterion.answer.kind === 'manual');
-      return manual && !!latest && !this.db.prepare('SELECT 1 FROM score_overrides WHERE session_id=? AND activity_id=?').get(sessionId, activity.id);
-    });
+    const { session, exam } = this.context(sessionId);
+    const manual = new Set(exam.public.missions.flatMap(m => m.activities).filter(a =>
+      a.type === 'web_project' && exam.private.rules[a.gradingRuleId].criteria.some(c => c.answer.kind === 'manual')
+    ).map(a => a.id));
+    const consoleIds = new Set(exam.public.missions.flatMap(m => m.activities).filter(a => a.type === 'code_writing').map(a => a.id));
+    if (!manual.size && !consoleIds.size) return false;
+    return this.db.prepare(`SELECT sub.activity_id,sub.result FROM submissions sub
+      LEFT JOIN score_overrides o ON o.session_id=sub.session_id AND o.activity_id=sub.activity_id
+      WHERE sub.session_id=? AND o.session_id IS NULL AND NOT EXISTS (
+        SELECT 1 FROM submissions newer WHERE newer.session_id=sub.session_id
+        AND newer.activity_id=sub.activity_id AND newer.rowid>sub.rowid)`).all(session.id)
+      .some(row => manual.has(row.activity_id) || (consoleIds.has(row.activity_id) && row.result === 'pending_review'));
+  }
+  webCheckpointStore() {
+    return {
+      load: (sessionId, activityId) => {
+        const saved = this.db.prepare('SELECT database_snapshot FROM web_checkpoints WHERE session_id=? AND activity_id=?').get(sessionId, activityId);
+        if (saved) return saved.database_snapshot ?? undefined;
+        const draft = this.db.prepare('SELECT response_json FROM answer_drafts WHERE session_id=? AND activity_id=?').get(sessionId, activityId);
+        const submitted = draft || this.db.prepare('SELECT response_json FROM submissions WHERE session_id=? AND activity_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId, activityId);
+        return submitted ? parse(submitted.response_json).value?.database : undefined;
+      },
+      save: (sessionId, activityId, database) => {
+        invariant(typeof database === 'string' && database.length <= 1400000 && /^[A-Za-z0-9+/]*={0,2}$/.test(database), 'INVALID_DATABASE', 'Invalid database checkpoint.');
+        this.db.prepare(`INSERT INTO web_checkpoints VALUES (?,?,?,?) ON CONFLICT(session_id,activity_id)
+          DO UPDATE SET database_snapshot=excluded.database_snapshot,saved_at=excluded.saved_at`).run(sessionId, activityId, database, stamp());
+      },
+      clear: (sessionId, activityId) => {
+        this.db.prepare(`INSERT INTO web_checkpoints VALUES (?,?,NULL,?) ON CONFLICT(session_id,activity_id)
+          DO UPDATE SET database_snapshot=NULL,saved_at=excluded.saved_at`).run(sessionId, activityId, stamp());
+      }
+    };
   }
   reviewStudent(runId, candidateId) {
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);

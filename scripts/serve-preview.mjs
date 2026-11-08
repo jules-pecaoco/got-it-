@@ -1,3 +1,4 @@
+import { requestChildShutdown } from '../src/child-shutdown.mjs';
 import { spawn } from 'node:child_process';
 import { statfsSync, readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
@@ -13,7 +14,7 @@ for (const drive of new Set([parse(os.tmpdir()).root, parse(root).root, parse(da
 }
 const prepare = spawn(process.execPath, [join(root, 'scripts/prepare-local.mjs')], { cwd: root, windowsHide: true, stdio: 'inherit' });
 let tunnel, app, started = false, stopping = false;
-function stop() { stopping = true; app?.kill(); tunnel?.kill(); }
+function stop() { stopping = true; requestChildShutdown(app); tunnel?.kill(); }
 prepare.on('exit', code => {
   if (code !== 0 || stopping) { process.exitCode = code || 1; return; }
   // cloudflared must already be installed. This command does not create an
@@ -28,7 +29,7 @@ prepare.on('exit', code => {
     started = true; clearTimeout(timeout);
     console.log(`Temporary preview address: ${url}\nThe address changes when this preview restarts. Use a named tunnel for regular classes.`);
     const prepared = parseEnv(readFileSync(join(root, '.env'), 'utf8'));
-    app = spawn(process.execPath, [join(root, 'scripts/serve-local.mjs')], { cwd: root, windowsHide: true, stdio: 'inherit', env: { ...process.env, INSTRUCTOR_PASSWORD: prepared.INSTRUCTOR_PASSWORD || process.env.INSTRUCTOR_PASSWORD, PUBLIC_ORIGIN: url, DEMO_MODE: '0', HOST: '127.0.0.1' } });
+    app = spawn(process.execPath, [join(root, 'scripts/serve-local.mjs')], { cwd: root, windowsHide: true, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], env: { ...process.env, INSTRUCTOR_PASSWORD: prepared.INSTRUCTOR_PASSWORD || process.env.INSTRUCTOR_PASSWORD, PUBLIC_ORIGIN: url, DEMO_MODE: '0', HOST: '127.0.0.1' } });
     app.on('exit', code => { process.exitCode = code || 0; stop(); });
   };
   tunnel.stdout.on('data', receive); tunnel.stderr.on('data', receive);

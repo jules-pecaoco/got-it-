@@ -121,7 +121,13 @@ app.post<{ Body: { id: string; method: string; path: string; body: string; cooki
 app.post<{ Body: { id: string } }>('/web/snapshot', async (request, reply) => {
   const item = workspaces.get(request.body.id);
   if (!item) return reply.code(404).send({ error: 'Ended' });
-  return { database: await item.workspace.snapshot() };
+  try {
+    return { database: await item.workspace.snapshot() };
+  } catch (error) {
+    if ((error as { code?: string }).code === 'WEB_WORKSPACE_ENDED')
+      return reply.code(404).send({ error: 'Ended' });
+    throw error;
+  }
 });
 app.post<{ Body: { id: string } }>('/web/close', async (request) => {
   const item = workspaces.get(request.body.id);

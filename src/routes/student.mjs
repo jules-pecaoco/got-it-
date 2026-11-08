@@ -57,7 +57,11 @@ export async function studentApi({
     if (method === 'POST' && id)
       return send(res, requestId, await terminals.write(sessionId, id, await body(req, 20000)));
   }
-  if (method === 'POST' && path === '/api/me/heartbeat') return send(res, requestId, { acknowledged: true });
+  if (method === 'POST' && path === '/api/me/heartbeat')
+    return send(res, requestId, {
+      acknowledged: true,
+      deadlineAt: store.context(sessionId).session.deadline_at,
+    });
   const jobPath = /^\/api\/me\/coding-jobs\/([a-f0-9-]{36})$/.exec(path);
   if (method === 'GET' && jobPath) return send(res, requestId, store.codingQueue.view(sessionId, jobPath[1]));
   if (method === 'POST' && path === '/api/me/logout') {
@@ -148,7 +152,8 @@ export async function studentApi({
       try {
         input.value.database = (await webPreviews.snapshot(sessionId, draftPath[1])) || input.value.database;
       } catch (error) {
-        if (error.code !== 'WEB_RUNTIME_UNAVAILABLE' && error.code !== 'WEB_WORKSPACE_ENDED') throw error;
+        if (!['WEB_RUNTIME_UNAVAILABLE', 'WEB_WORKSPACE_ENDED', 'WEB_CAPACITY'].includes(error.code))
+          throw error;
         const previous = store.db
           .prepare('SELECT response_json FROM answer_drafts WHERE session_id=? AND activity_id=?')
           .get(sessionId, draftPath[1]);
@@ -162,6 +167,10 @@ export async function studentApi({
     return send(res, requestId, { ...saved, ...(warning ? { warning } : {}) });
   }
   const webPath = /^\/api\/me\/activities\/([a-zA-Z0-9-]+)\/web-preview$/.exec(path);
+  if (method === 'GET' && webPath) {
+    store.codingContext(sessionId, webPath[1]);
+    return send(res, requestId, { database: await webPreviews?.snapshot(sessionId, webPath[1]) });
+  }
   if (method === 'DELETE' && webPath) {
     store.codingContext(sessionId, webPath[1]);
     await webPreviews?.discard(sessionId, webPath[1]);
@@ -178,6 +187,7 @@ export async function studentApi({
         { status: 503, code: 'WEB_NOT_CONFIGURED' },
       );
     const input = await body(req, 1_700_000);
+
     return send(
       res,
       requestId,

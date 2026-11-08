@@ -15,8 +15,8 @@
     "prepare:local": "node --import ./src/runtime-temp.mjs scripts/prepare-local.mjs",
     "serve:preview": "node --import ./src/runtime-temp.mjs scripts/serve-preview.mjs",
     "test:load": "node --import ./src/runtime-temp.mjs --import tsx --experimental-sqlite scripts/load-test-local.mjs",
-    "format": "prettier --write public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes \"src/**/*.mts\" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/runtime-temp.mjs src/ai-provider.mjs",
-    "format:check": "prettier --check public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes \"src/**/*.mts\" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/runtime-temp.mjs src/ai-provider.mjs",
+    "format": "prettier --write public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes \"src/**/*.mts\" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/runtime-temp.mjs src/ai-provider.mjs src/settlement-timers.mjs",
+    "format:check": "prettier --check public/paper-copy.js public/password-toggle.js src/store-schema.mjs src/routes \"src/**/*.mts\" src/faculty-access.mjs src/migrations.mjs src/material-extraction.mjs src/material-worker.mjs src/migration-database.mjs web vite.config.mts tsconfig.json public/local-drafts.js public/web-project.js src/runtime-temp.mjs src/ai-provider.mjs src/settlement-timers.mjs",
     "build": "node --import ./src/runtime-temp.mjs node_modules/vite/bin/vite.js build",
     "typecheck": "node --import ./src/runtime-temp.mjs node_modules/vue-tsc/bin/vue-tsc.js --noEmit",
     "prestart": "npm run build",
@@ -26,7 +26,9 @@
     "worker": "node --import ./src/runtime-temp.mjs --import tsx src/execution-worker.mts",
     "syntax:check": "node --import ./src/runtime-temp.mjs scripts/check-syntax.mjs",
     "verify:web": "node --import ./src/runtime-temp.mjs --import tsx scripts/verify-web.mts",
-    "check": "npm run typecheck && npm run syntax:check && npm run format:check && npm test"
+    "check": "npm run typecheck && npm run syntax:check && npm run format:check && npm test",
+    "verify:recovery": "node --import ./src/runtime-temp.mjs --import tsx scripts/verify-workspace-recovery.mts",
+    "test:load:mixed": "node --import ./src/runtime-temp.mjs --import tsx --experimental-sqlite scripts/load-test-mixed.mts"
   },
   "engines": {
     "node": ">=22.13.0"

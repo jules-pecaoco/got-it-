@@ -47,6 +47,11 @@ export function initializeStoreSchema(db) {
         updated_at TEXT NOT NULL, PRIMARY KEY(session_id,activity_id),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS web_checkpoints (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        activity_id TEXT NOT NULL, database_snapshot TEXT, saved_at TEXT NOT NULL,
+        PRIMARY KEY(session_id,activity_id)
+      );
       CREATE TABLE IF NOT EXISTS score_events (
         session_id TEXT NOT NULL, activity_id TEXT NOT NULL, criterion_id TEXT NOT NULL,
         points INTEGER NOT NULL, at TEXT NOT NULL,

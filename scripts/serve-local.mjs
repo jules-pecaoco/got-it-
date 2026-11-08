@@ -1,3 +1,4 @@
+import { requestChildShutdown } from '../src/child-shutdown.mjs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { loadConfig } from '../src/config.mjs';
@@ -10,7 +11,7 @@ if (process.env.MIGRATION_ACTIVE !== '1') {
 }
 let child, backupTimer, backupRunning = false, stopping = false, failures = 0;
 function run(script, inherit = true) {
-  return spawn(process.execPath, ['--import', 'tsx', '--experimental-sqlite', join(root, script)], { cwd: root, windowsHide: true, stdio: inherit ? 'inherit' : 'ignore', env: { ...process.env, NODE_ENV: 'production' } });
+  return spawn(process.execPath, ['--import', 'tsx', '--experimental-sqlite', join(root, script)], { cwd: root, windowsHide: true, stdio: script === 'src/server.mjs' ? ['inherit', 'inherit', 'inherit', 'ipc'] : inherit ? 'inherit' : 'ignore', env: { ...process.env, NODE_ENV: 'production' } });
 }
 const preflight = run('scripts/preflight.mjs');
 preflight.on('exit', code => {
@@ -33,11 +34,13 @@ function start() {
   const began = Date.now();
   child = run('src/server.mjs');
   child.on('exit', code => {
-    if (stopping || code === 0) return;
+    if (stopping) return;
     failures = Date.now() - began > 60000 ? 1 : failures + 1;
     if (failures > 5) { console.error('Server repeatedly failed. Resolve the logged error before restarting.'); process.exitCode = 1; return; }
     console.error(`Server interrupted; restarting in ${failures * 2} seconds.`);
     setTimeout(start, failures * 2000);
   });
 }
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { stopping = true; clearInterval(backupTimer); child?.kill(); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { stopping = true; clearInterval(backupTimer); requestChildShutdown(child); });
+
+process.on('message', message => { if (message?.type === 'gotit:shutdown') { stopping = true; clearInterval(backupTimer); requestChildShutdown(child); } });

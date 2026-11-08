@@ -1,25 +1,74 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { PhpWorkspace } from './php-workspace.mts';
 import { createWorkspace } from './workspace-client.mts';
+import { WorkspaceQueue } from './workspace-queue.mts';
+import type { PhpWorkspace } from './php-workspace.mts';
 import type { Project } from '../web/contracts.js';
 
+type Workspace = Pick<PhpWorkspace, 'start' | 'request' | 'snapshot' | 'close'>;
+interface Checkpoints {
+  load(sessionId: string, activityId: string): string | undefined;
+  save(sessionId: string, activityId: string, database: string): void;
+  clear(sessionId: string, activityId: string): void;
+}
 interface Preview {
-  workspace: ReturnType<typeof createWorkspace>;
+  workspace: Workspace;
   sessionId: string;
   activityId: string;
   expires: number;
-  busy: Promise<unknown>;
+  queue: WorkspaceQueue;
 }
+interface Options {
+  checkpoints?: Checkpoints;
+  workspaceFactory?: () => Workspace;
+  capacity?: number;
+  lifetimeMs?: number;
+  now?: () => number;
+}
+const busy = () =>
+  Object.assign(new Error('Preview busy. Retry shortly.'), { status: 503, code: 'WEB_CAPACITY' });
 export function createPreviewService(
   origin: string,
   allowed: (sessionId: string) => boolean,
   parentOrigin = '*',
   finished = (sessionId: string) => !allowed(sessionId),
+  options: Options = {},
 ) {
   const previews = new Map<string, Preview>();
-  const opening = new Set<string>();
+  const opening = new Map<string, Promise<unknown>>();
+  const memory = new Map<string, string>();
+  const checkpoints: Checkpoints = options.checkpoints ?? {
+    load: (session, activity) => memory.get(`${session}:${activity}`),
+    save: (session, activity, database) => {
+      memory.set(`${session}:${activity}`, database);
+      if (memory.size > 160) memory.delete(memory.keys().next().value!);
+    },
+    clear: (session, activity) => {
+      memory.delete(`${session}:${activity}`);
+    },
+  };
+  const factory = options.workspaceFactory ?? createWorkspace;
+  const capacity = options.capacity ?? 80;
+  const lifetime = options.lifetimeMs ?? 10 * 60000;
+  const now = options.now ?? Date.now;
   const parsed = new URL(origin);
+  let closed = false,
+    closing: Promise<void> | undefined;
+  function lock<T>(key: string, action: () => Promise<T>): Promise<T> {
+    if (closed || opening.has(key)) return Promise.reject(busy());
+    const work = Promise.resolve()
+      .then(action)
+      .finally(() => opening.delete(key));
+    opening.set(key, work);
+    return work;
+  }
+  async function snapshot(preview: Preview) {
+    return preview.queue.run(async () => {
+      const database = await preview.workspace.snapshot();
+      checkpoints.save(preview.sessionId, preview.activityId, database);
+      return database;
+    }, true);
+  }
   const server = createServer(async (req, res) => {
     const match = /^\/p\/([a-f0-9]{48})(\/.*)?$/.exec(req.url ?? '');
     const preview = match ? previews.get(match[1]) : undefined;
@@ -30,7 +79,7 @@ export function createPreviewService(
       'Content-Security-Policy',
       "default-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'",
     );
-    if (!preview || preview.expires < Date.now() || !allowed(preview.sessionId)) {
+    if (closed || !preview || preview.expires < now() || !allowed(preview.sessionId)) {
       res.writeHead(404);
       res.end('This preview has ended. Return to your answer and select Run web preview to open a new one.');
       return;
@@ -43,27 +92,25 @@ export function createPreviewService(
         if (size > 100000) throw new Error('Request too large.');
         chunks.push(chunk);
       }
-      if (!allowed(preview.sessionId) || opening.has(`${preview.sessionId}:${preview.activityId}`)) {
-        res.writeHead(404);
-        res.end(
-          'This preview has ended. Return to your answer and select Run web preview to open a new one.',
-        );
-        return;
-      }
+      if (closed || !allowed(preview.sessionId) || opening.has(`${preview.sessionId}:${preview.activityId}`))
+        throw busy();
       const path = match![2] || '/';
-      // Serialize requests and snapshots so SQLite snapshots never race PHP writes.
-      let result;
-      const work = preview.busy.then(async () => {
-        result = await preview.workspace.request(
+      const response = await preview.queue.run(async () => {
+        // A request may have waited behind another PHP operation until the
+        // deadline. Recheck immediately before starting student code.
+        if (closed || !allowed(preview.sessionId) || preview.expires < now()) throw busy();
+        const result = await preview.workspace.request(
           req.method || 'GET',
           path,
           Buffer.concat(chunks).toString('utf8'),
           req.headers.cookie || '',
         );
+        if (req.method === 'POST') {
+          const database = await preview.workspace.snapshot();
+          checkpoints.save(preview.sessionId, preview.activityId, database);
+        }
+        return result;
       });
-      preview.busy = work.catch(() => {});
-      await work;
-      const response = result as unknown as Awaited<ReturnType<PhpWorkspace['request']>>;
       const prefix = `/p/${match![1]}`;
       const location = response.headers.location;
       if (typeof location === 'string') {
@@ -91,103 +138,134 @@ export function createPreviewService(
       }
       res.writeHead(response.status, response.headers);
       res.end(body);
-    } catch {
-      res.writeHead(503);
+    } catch (error) {
+      res.writeHead((error as { status?: number }).status || 503);
       res.end(
-        'Your project preview stopped. Open a new preview to try again. If it still does not work, tell your instructor.',
+        'Your project preview is busy or stopped. Retry, or open a new preview. If it still does not work, tell your instructor.',
       );
     }
   });
+  server.requestTimeout = 15000;
+  server.headersTimeout = 10000;
+  server.setTimeout(30000);
+  async function sweep() {
+    await Promise.allSettled(
+      [...previews.entries()].map(async ([token, preview]) => {
+        const key = `${preview.sessionId}:${preview.activityId}`;
+        if (opening.has(key) || (!finished(preview.sessionId) && preview.expires >= now())) return;
+        await lock(key, async () => {
+          if (!finished(preview.sessionId)) await snapshot(preview);
+          await preview.queue.close();
+          await preview.workspace.close();
+          previews.delete(token);
+        });
+      }),
+    );
+  }
   const timer = setInterval(() => {
-    for (const [token, preview] of previews)
-      if (preview.expires < Date.now() || finished(preview.sessionId)) {
-        previews.delete(token);
-        void preview.workspace.close();
-      }
+    void sweep();
   }, 30000);
   timer.unref();
   return {
     server,
+    sweep,
+    stats: () => ({
+      active: previews.size,
+      opening: opening.size,
+      capacity,
+      queued: [...previews.values()].reduce((n, preview) => n + preview.queue.stats().queued, 0),
+    }),
     async open(sessionId: string, activityId: string, project: Project, seedSql = '', reset = false) {
       const key = `${sessionId}:${activityId}`;
-      if (opening.has(key) || previews.size + opening.size >= 80)
-        throw Object.assign(new Error('Preview busy. Retry shortly.'), { status: 503, code: 'WEB_CAPACITY' });
-      opening.add(key);
-      try {
+      return lock(key, async () => {
         const existing = [...previews.entries()].find(
           ([, item]) => item.sessionId === sessionId && item.activityId === activityId,
         );
+        // Every opening holds a reservation, including replacements that release an old slot.
+        if (!existing && previews.size + opening.size - 1 >= capacity) throw busy();
         let warning: string | undefined;
-        if (existing) {
-          const [, preview] = existing;
-          if (!reset) {
+        if (!reset) {
+          const saved = checkpoints.load(sessionId, activityId);
+          if (saved !== undefined) project = { ...project, database: saved };
+          if (existing) {
             try {
-              const snapshot = preview.busy.then(() => preview.workspace.snapshot());
-              preview.busy = snapshot.catch(() => {});
-              project = { ...project, database: await snapshot };
+              project = { ...project, database: await snapshot(existing[1]) };
             } catch (error) {
               if ((error as { code?: string }).code !== 'WEB_WORKSPACE_ENDED') throw error;
               warning =
-                'The previous preview ended. Reopened with the database available in this editor. Newer preview changes may be missing.';
+                'The previous preview ended. Reopened from the last saved database. Newer changes may be missing.';
             }
           }
+        } else project = { files: project.files };
+        // Persist before releasing the old slot. On failed replacement this remains recoverable.
+        if (existing) {
+          if (!reset && project.database !== undefined)
+            checkpoints.save(sessionId, activityId, project.database);
+          await existing[1].queue.close();
+          await existing[1].workspace.close();
+          previews.delete(existing[0]);
         }
-        if (previews.size >= 80)
-          throw Object.assign(new Error('All preview environments are busy. Retry shortly.'), {
-            status: 503,
-            code: 'WEB_CAPACITY',
+        const workspace = factory();
+        try {
+          await workspace.start(project, seedSql);
+          const database = await workspace.snapshot();
+          checkpoints.save(sessionId, activityId, database);
+          const token = randomBytes(24).toString('hex');
+          previews.set(token, {
+            workspace,
+            sessionId,
+            activityId,
+            expires: now() + lifetime,
+            queue: new WorkspaceQueue(),
           });
-        if (reset) project = { files: project.files };
-        const workspace = createWorkspace();
-        await workspace.start(project, seedSql);
-        const database = await workspace.snapshot().catch(async (error) => {
+          return { url: `${parsed.origin}/p/${token}/`, database, warning };
+        } catch (error) {
           await workspace.close();
           throw error;
-        });
-        if (existing) {
-          previews.delete(existing[0]);
-          await existing[1].busy;
-          await existing[1].workspace.close();
         }
-        const token = randomBytes(24).toString('hex');
-        previews.set(token, {
-          workspace,
-          sessionId,
-          activityId,
-          expires: Date.now() + 10 * 60000,
-          busy: Promise.resolve(),
-        });
-        return { url: `${parsed.origin}/p/${token}/`, database, warning };
-      } finally {
-        opening.delete(key);
-      }
+      });
     },
     async discard(sessionId: string, activityId: string) {
-      if (opening.has(`${sessionId}:${activityId}`))
-        throw Object.assign(new Error('Preview busy. Retry shortly.'), { status: 503, code: 'WEB_CAPACITY' });
-      const existing = [...previews.entries()].find(
-        ([, item]) => item.sessionId === sessionId && item.activityId === activityId,
-      );
-      if (!existing) return;
-      const [token, preview] = existing;
-      previews.delete(token);
-      await preview.busy;
-      await preview.workspace.close();
+      return lock(`${sessionId}:${activityId}`, async () => {
+        const existing = [...previews.entries()].find(
+          ([, item]) => item.sessionId === sessionId && item.activityId === activityId,
+        );
+        if (existing) {
+          await existing[1].queue.close();
+          await existing[1].workspace.close();
+          previews.delete(existing[0]);
+        }
+        checkpoints.clear(sessionId, activityId);
+      });
     },
     async snapshot(sessionId: string, activityId: string) {
+      const pending = opening.get(`${sessionId}:${activityId}`);
+      if (pending) await pending;
       const preview = [...previews.values()].find(
         (item) => item.sessionId === sessionId && item.activityId === activityId,
       );
-      if (!preview) return undefined;
-      const work = preview.busy.then(() => preview.workspace.snapshot());
-      preview.busy = work.catch(() => {});
-      return work;
+      return preview ? snapshot(preview) : checkpoints.load(sessionId, activityId);
     },
-    async close() {
-      clearInterval(timer);
-      await Promise.all([...previews.values()].map((item) => item.workspace.close()));
-      previews.clear();
-      if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    close() {
+      closing ??= (async () => {
+        closed = true;
+        clearInterval(timer);
+        await Promise.allSettled([...opening.values()]);
+        await Promise.allSettled(
+          [...previews.values()].map(async (preview) => {
+            try {
+              await snapshot(preview);
+            } finally {
+              await preview.queue.close();
+              await preview.workspace.close();
+            }
+          }),
+        );
+        previews.clear();
+        memory.clear();
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+      })();
+      return closing;
     },
   };
 }

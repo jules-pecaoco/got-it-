@@ -1,4 +1,4 @@
-import { aiProviderCatalog, resolveAiSelection } from '../ai-provider.mjs';
+import { aiProviderCatalog, resolveAiSelection, aiUsageSnapshot } from '../ai-provider.mjs';
 import { suggestGrade } from '../ai-grading.mjs';
 import {
   aiAvailable,
@@ -31,6 +31,7 @@ export async function facultyApi({
   body,
   limit,
   metricsSnapshot,
+  webPreviews,
   settlement,
   runtimeStatus,
 }) {
@@ -39,16 +40,34 @@ export async function facultyApi({
   const instructorToken = accessToken(req, 'instructor');
   const owner = store.requireInstructor(instructorToken);
   return asFaculty(owner, async () => {
-    const savedAI = store.db.prepare('SELECT settings_json FROM faculty_ai_settings WHERE faculty_id=?').get(owner);
+    const savedAI = store.db
+      .prepare('SELECT settings_json FROM faculty_ai_settings WHERE faculty_id=?')
+      .get(owner);
     const storedSelection = savedAI ? JSON.parse(savedAI.settings_json) : {};
-    const selection = { provider: storedSelection.aiProvider || 'gemini', model: storedSelection.aiModel || aiProviderCatalog()[0].models[0].id };
-    const selectedInput = async () => ({ ...await body(req), aiProvider: selection.provider, aiModel: selection.model });
+    const selection = {
+      provider: storedSelection.aiProvider || 'gemini',
+      model: storedSelection.aiModel || resolveAiSelection({}).model,
+    };
+    const selectedInput = async () => ({
+      ...(await body(req)),
+      aiProvider: selection.provider,
+      aiModel: selection.model,
+    });
     if (path === '/api/instructor/ai/settings') {
-      if (method === 'GET') return send(res, requestId, { aiProvider: selection.provider, aiModel: selection.model, providers: aiProviderCatalog() });
+      if (method === 'GET')
+        return send(res, requestId, {
+          aiProvider: selection.provider,
+          aiModel: selection.model,
+          providers: aiProviderCatalog(),
+        });
       if (method === 'PUT') {
         const chosen = resolveAiSelection(await body(req));
         const settings = { aiProvider: chosen.provider, aiModel: chosen.model };
-        store.db.prepare('INSERT INTO faculty_ai_settings(faculty_id,settings_json) VALUES (?,?) ON CONFLICT(faculty_id) DO UPDATE SET settings_json=excluded.settings_json').run(owner, JSON.stringify(settings));
+        store.db
+          .prepare(
+            'INSERT INTO faculty_ai_settings(faculty_id,settings_json) VALUES (?,?) ON CONFLICT(faculty_id) DO UPDATE SET settings_json=excluded.settings_json',
+          )
+          .run(owner, JSON.stringify(settings));
         return send(res, requestId, settings);
       }
     }
@@ -57,7 +76,11 @@ export async function facultyApi({
       return send(res, requestId, { guides: referenceGuides(referenceTopics.map((topic) => topic.id)) });
     if (method === 'POST' && path.startsWith('/api/instructor/ai/')) {
       // Initial generation and one repair may each use two 90-second provider attempts.
-      res.setTimeout((path.endsWith('/generate') || path.endsWith('/propose') || path.endsWith('/regenerate')) ? 370000 : 190000);
+      res.setTimeout(
+        path.endsWith('/generate') || path.endsWith('/propose') || path.endsWith('/regenerate')
+          ? 370000
+          : 190000,
+      );
     }
     const runId = /^\/api\/instructor\/runs\/([a-f0-9-]+)/.exec(path)?.[1];
     if (runId) {
@@ -73,6 +96,9 @@ export async function facultyApi({
         memory: process.memoryUsage(),
         coding: store.codingQueue.stats(),
         metrics: metricsSnapshot(),
+        aiUsage: aiUsageSnapshot(),
+        previews: webPreviews?.stats(),
+        settlement: settlement.stats(),
       });
     if (method === 'POST' && path === '/api/instructor/logout') {
       const result = store.logoutInstructor(instructorToken);
@@ -122,7 +148,7 @@ export async function facultyApi({
     if (method === 'POST' && path === '/api/instructor/ai/inspect')
       return send(res, requestId, inspectProposal(await body(req)));
     if (method === 'POST' && path === '/api/instructor/ai/generate') {
-      limit(`ai-generate:${req.socket.remoteAddress}`, 5, 3600_000);
+      limit(`ai-generation:${owner}`, 5, 60_000);
       return send(res, requestId, await generateExam(await selectedInput()));
     }
     if (method === 'POST' && path === '/api/instructor/ai/regenerate') {
@@ -130,7 +156,7 @@ export async function facultyApi({
       return send(res, requestId, await regenerateInvalidQuestions(await selectedInput()));
     }
     if (method === 'POST' && path === '/api/instructor/ai/propose') {
-      limit(`ai-propose:${req.socket.remoteAddress}`, 5, 3600_000);
+      limit(`ai-generation:${owner}`, 5, 60_000);
       return send(res, requestId, await proposeExam(await selectedInput()));
     }
     if (method === 'POST' && path === '/api/instructor/ai/approved-draft') {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { docker } from './docker-process.mts';
+import { startManagedWorkspace, phpSupervisor, workspaceLifetimeSeconds } from './managed-workspaces.mts';
 import { runtimeImages } from './code-runner.mjs';
 import { validateProject } from '../public/web-project.js';
 import type { Project } from '../web/contracts.js';
@@ -15,37 +16,34 @@ export interface WebResponse {
 export class PhpWorkspace {
   readonly name = `gotit-web-${randomUUID()}`;
   private started = false;
+  constructor(private lifetime = workspaceLifetimeSeconds) {}
   async start(project: Project, seedSql = '') {
     const errors = validateProject(project);
     if (errors.length)
       throw Object.assign(new Error(errors.join(' ')), { status: 422, code: 'INVALID_PROJECT' });
     try {
       this.started = true;
-      await docker([
-        'run',
-        '-d',
-        '--rm',
-        '--pull=never',
-        '--name',
+      await startManagedWorkspace(
         this.name,
-        '--label',
-        'gotit.web=true',
-        '--network=none',
-        '--read-only',
-        '--cap-drop=ALL',
-        '--security-opt=no-new-privileges',
-        '--memory=128m',
-        '--memory-swap=128m',
-        '--cpus=0.25',
-        '--pids-limit=32',
-        '--user=65534:65534',
-        '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=32m',
-        '--env=HOME=/tmp',
-        runtimeImages.php,
-        'sh',
-        '-c',
-        'mkdir -p /tmp/public /tmp/data && exec php -d display_errors=1 -d log_errors=0 -d expose_php=0 -d max_execution_time=4 -d upload_max_filesize=0 -d allow_url_fopen=0 -d open_basedir=/tmp -S 127.0.0.1:8080 -t /tmp/public',
-      ]);
+        [
+          '--network=none',
+          '--read-only',
+          '--cap-drop=ALL',
+          '--security-opt=no-new-privileges',
+          '--memory=128m',
+          '--memory-swap=128m',
+          '--cpus=0.25',
+          '--pids-limit=32',
+          '--user=65534:65534',
+          '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=32m',
+          '--env=HOME=/tmp',
+          runtimeImages.php,
+          'php',
+          '-r',
+          "mkdir('/tmp/public',0700,true);mkdir('/tmp/data',0700,true);" + phpSupervisor(this.lifetime),
+        ],
+        this.lifetime,
+      );
       await docker(['exec', '-i', this.name, 'php', '-r', install], JSON.stringify({ ...project, seedSql }));
     } catch (error) {
       await this.close();
@@ -80,14 +78,34 @@ export class PhpWorkspace {
     return { status, headers, body: Buffer.from(raw.body, 'base64') };
   }
   async snapshot(): Promise<string> {
-    return docker([
-      'exec',
-      this.name,
-      'php',
-      '-r',
-      `$f='/tmp/data/database.sqlite';$db=new PDO('sqlite:'.$f);$db->exec('PRAGMA wal_checkpoint(TRUNCATE)');if(filesize($f)>1000000)exit(1);echo base64_encode(file_get_contents($f));`,
-    ]);
+    try {
+      return await docker([
+        'exec',
+        this.name,
+        'php',
+        '-r',
+        `$f='/tmp/data/database.sqlite';$db=new PDO('sqlite:'.$f);$db->exec('PRAGMA wal_checkpoint(TRUNCATE)');if(filesize($f)>1000000)exit(1);echo base64_encode(file_get_contents($f));`,
+      ]);
+    } catch (error) {
+      // Distinguish a workspace lifetime ending from a Docker outage. Only the
+      // former permits reopening automatically from the durable checkpoint.
+      const present = await docker([
+        'ps',
+        '-a',
+        '--filter',
+        `name=^${this.name}$`,
+        '--format',
+        '{{.Names}}',
+      ]).catch(() => undefined);
+      if (present !== undefined && !present.trim())
+        throw Object.assign(new Error('The PHP workspace ended. Reopen the preview to continue.'), {
+          code: 'WEB_WORKSPACE_ENDED',
+          status: 503,
+        });
+      throw error;
+    }
   }
+
   async close() {
     if (this.started) {
       this.started = false;

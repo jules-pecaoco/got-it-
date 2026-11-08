@@ -53,22 +53,25 @@ try {
     await call('/api/me/missions/mission-1', token);
     const answer = { value: 'a,b=map(int,input().split())\nprint(a+b)' };
     await call('/api/me/activities/m1-q1/draft', token, answer);
-    const receipt = await call('/api/me/activities/m1-q1/submit', token, answer, { Prefer: 'respond-async', 'Idempotency-Key': `load-request-${String(i).padStart(8,'0')}` });
-    const until = Date.now() + 15*60*1000;
+    const preview = await call('/api/me/activities/m1-q1/preview', token, answer, { Prefer: 'respond-async' });
     let job;
+    const until = Date.now() + 15 * 60 * 1000;
     do {
-      assert.ok(Date.now() < until, 'Queue did not drain within 15 minutes.');
+      assert.ok(Date.now() < until, 'Preview queue did not drain.');
       await new Promise(resolve => setTimeout(resolve, realDocker ? 2000 : 50));
-      job = await call(`/api/me/coding-jobs/${receipt.jobId}`, token);
+      job = await call(`/api/me/coding-jobs/${preview.jobId}`, token);
       assert.notEqual(job.status, 'failed', JSON.stringify(job.error));
     } while (job.status !== 'done');
-    assert.equal(job.result.saved, true); assert.equal(job.result.score, undefined);
+    assert.equal(job.result.samples[0].succeeded, true);
+    const receipt = await call('/api/me/activities/m1-q1/submit', token, answer, { 'Idempotency-Key': `load-request-${String(i).padStart(8,'0')}` });
+    assert.equal(receipt.saved, true);
     await call('/api/me/finalize', token, {});
-    assert.equal(store.score(joined.session.id), 10);
+    assert.equal(store.hasPendingReview(joined.session.id), true);
+    assert.equal(store.score(joined.session.id), 0);
   }));
   timings.sort((a,b) => a-b);
   console.log(JSON.stringify({ mode: realDocker ? 'REAL Docker execution' : 'SIMULATED runner; not a Docker capacity measurement', tempDirectory, students: count,
     requests: timings.length, durationSeconds: +( (performance.now()-started)/1000).toFixed(2),
     requestP95Ms: +timings[Math.floor(timings.length*0.95)].toFixed(2), peakSimulatedExecutions: realDocker ? undefined : peak,
-    queue: store.codingQueue.stats(), verifiedScores: count }, null, 2));
+    queue: store.codingQueue.stats(), verifiedManualReviewSubmissions: count }, null, 2));
 } finally { server.close(); store.close(); }

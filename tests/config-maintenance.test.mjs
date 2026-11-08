@@ -23,6 +23,7 @@ test('shared configuration loads .env independently of cwd, keeps explicit overr
     assert.equal(selected({}), resolve(root, 'data/recovered.sqlite'));
     assert.equal(selected({ DATA_FILE: 'explicit.sqlite' }), resolve(root, 'explicit.sqlite'));
     assert.equal(selected({ DATA_FILE: ':memory:' }), ':memory:');
+    assert.equal(selected({ NODE_ENV: 'test', DATA_FILE: '' }), resolve(root, 'data/studio.sqlite'));
   } finally {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     rmSync(root, { recursive: true, force: true });

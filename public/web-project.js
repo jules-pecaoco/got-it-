@@ -156,7 +156,10 @@ export function createWebQuestionEditor(activity) {
   element.append(add);
   const html = field('Example page · HTML/CSS, visible to students', activity.expectedHtml || '');
   const sql = field('SQLite setup SQL · PHP web app only', activity.seedSql || '');
-  const rubric = field('Grading instructions · one item per line', (Array.isArray(activity.rubric) ? activity.rubric : []).join('\n'));
+  const rubric = field(
+    'Grading instructions · one item per line',
+    (Array.isArray(activity.rubric) ? activity.rubric : []).join('\n'),
+  );
   return {
     element,
     read: () => ({

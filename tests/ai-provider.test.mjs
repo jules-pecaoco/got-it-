@@ -109,3 +109,42 @@ test('grade suggestions use the same explicit provider and model as other AI fea
   } });
   assert.equal(result.points, 8); assert.equal(result.model, 'openai/gpt-oss-20b');
 });
+
+
+test('payment failures are actionable and never retried or switched', async () => {
+  for (const provider of ['gemini', 'groq']) {
+    let calls = 0;
+    await assert.rejects(() => generateJson('Return JSON', {
+      provider, apiKey: 'synthetic-key', fetcher: async () => {
+        calls++; return { ok: false, status: 402 };
+      },
+    }), error => error.code === 'AI_PAYMENT_REQUIRED' && error.status === 402);
+    assert.equal(calls, 1);
+  }
+});
+
+
+test('Gemini rejection diagnostics retain field paths without provider text', async () => {
+  await assert.rejects(() => generateJson('private teaching material', {provider:'gemini',apiKey:'synthetic',fetcher:async()=>({ok:false,status:400,json:async()=>({error:{status:'INVALID_ARGUMENT',message:'private teaching material',details:[{fieldViolations:[{field:'generation_config.response_json_schema',description:'private teaching material'}]}]}})})}), error => {
+    assert.deepEqual(error.provider.fields, ['generation_config.response_json_schema']);
+    assert.doesNotMatch(JSON.stringify(error.provider), /private teaching/);
+    return error.code === 'AI_REQUEST_REJECTED';
+  });
+});
+
+
+test('explicit Gemini schema rejection retries JSON mode on the same model', async () => {
+  const requests = [];
+  const result = await generateJson('Draft JSON', {provider:'gemini',apiKey:'synthetic',responseSchema:draftSchema,fetcher:async(url, options)=>{
+    requests.push({url, body:JSON.parse(options.body)});
+    if(requests.length===1) return {ok:false,status:400,json:async()=>({error:{status:'INVALID_ARGUMENT',message:'Request contains an invalid argument.'}})};
+    return {ok:true,json:async()=>({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"missions":[]}'}]}}]})};
+  }});
+  assert.deepEqual(result,{missions:[]});
+  assert.equal(requests.length,2);
+  assert.equal(requests[0].url,requests[1].url);
+  assert.ok(requests[0].body.generationConfig.responseJsonSchema);
+  assert.equal(requests[1].body.generationConfig.responseJsonSchema,undefined);
+  assert.equal(requests[1].body.generationConfig.responseMimeType,'application/json');
+  assert.match(requests[1].body.contents[0].parts[0].text,/Required JSON structure/);
+});

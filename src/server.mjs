@@ -14,6 +14,7 @@ import { createPreviewService } from './web-preview.mts';
 import { migrationDatabase } from './migration-database.mjs';
 import { measureRequest, metricsSnapshot } from './metrics.mts';
 import { attemptSettlement } from './attempt-settlement.mjs';
+import { startSettlementTimers } from './settlement-timers.mjs';
 
 const runtimeConfig = loadConfig();
 if (process.env.NODE_ENV !== 'test' && process.env.MIGRATION_ACTIVE !== '1') runtimeConfig.dataFile = migrationDatabase(runtimeConfig.dataFile);
@@ -32,6 +33,7 @@ const webPreviews = previewOrigin ? createPreviewService(
   },
   publicOrigin || '*',
   sessionId => previewSession(sessionId)?.status !== 'in_progress',
+  { checkpoints: store.webCheckpointStore() },
 ) : null;
 const settlement = attemptSettlement(store, webPreviews);
 const runtimeStatus = executionStatus(Boolean(webPreviews));
@@ -146,7 +148,7 @@ async function api(req, res, url, requestId) {
       return send(res, requestId, result);
     }
   }
-  if (path.startsWith('/api/instructor/')) return facultyApi({ req, res, url, requestId, store, publicOrigin, send, csv, gradebook, body, limit, metricsSnapshot, settlement, runtimeStatus });
+  if (path.startsWith('/api/instructor/')) return facultyApi({ req, res, url, requestId, store, publicOrigin, send, csv, gradebook, body, limit, metricsSnapshot, settlement, runtimeStatus, webPreviews });
   if (method === 'POST' && (path === '/api/auth/student/join' || path === '/api/auth/student/preview')) {
     // Socket address is intentional: forwarded headers are not trusted. Allow a full
     // 500-student class behind NAT/proxy; credential failures have separate limits.
@@ -174,6 +176,7 @@ const { app, server, ready } = createHttpServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; frame-src ${previewOrigin || "'none'"}; base-uri 'none'; object-src 'none'`);
   try {
     const url = new URL(req.url, 'http://localhost');
+    if (shuttingDown) throw Object.assign(new Error('The application is restarting. Retry shortly.'), { code: 'SERVER_DRAINING', status: 503 });
     if (url.pathname.startsWith('/api/')) {
       checkRequestOrigin(req, publicOrigin);
       return await api(req, res, url, requestId);
@@ -211,27 +214,41 @@ const { app, server, ready } = createHttpServer(async (req, res) => {
 });
 
 await ready;
-server.on('close', () => { void terminals.close(); });
+let timers;
+let shuttingDown = false;
+let shutdown;
+async function stopApplication() {
+  shutdown ??= (async () => {
+    shuttingDown = true;
+    await timers?.stop();
+    const drained = new Promise(resolve => server.close(resolve));
+    // Existing requests have bounded timeouts. Stop accepting first, then wait
+    // before closing the database used by their handlers.
+    await drained;
+    await settlement.drain();
+    await webPreviews?.close();
+    await terminals.close();
+    store.codingQueue.close();
+    const until = Date.now() + 30000;
+    while (store.codingQueue.active && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
+    if (store.codingQueue.active) throw new Error('Coding jobs did not drain before shutdown.');
+    store.close();
+  })();
+  return shutdown;
+}
+server.on('close', () => { if (!shuttingDown) { void terminals.close(); void webPreviews?.close(); } });
 if (process.env.NODE_ENV !== 'test') {
-  let settling = false, lastCheckpoint = 0;
-  const expiryTimer = setInterval(async () => {
-    if (settling) return; settling = true;
-    try {
-      await settlement.settleExpired();
-      if (Date.now() - lastCheckpoint > 15000) {
-        await settlement.checkpointActive();
-        lastCheckpoint = Date.now();
-      }
-    } catch (error) { console.error(JSON.stringify({ code: 'EXPIRY_FAILED', message: error.message })); }
-    finally { settling = false; }
-  }, 1000);
-  expiryTimer.unref();
-  server.on('close', () => clearInterval(expiryTimer));
-  if (webPreviews) {
-    webPreviews.server.listen(Number(process.env.PREVIEW_PORT || 3102), process.env.PREVIEW_HOST || '127.0.0.1');
-    server.on('close', () => { void webPreviews.close(); });
-  }
+  timers = startSettlementTimers(settlement);
+  if (webPreviews) webPreviews.server.listen(Number(process.env.PREVIEW_PORT || 3102), process.env.PREVIEW_HOST || '127.0.0.1');
   const port = Number(process.env.PORT || 3000);
   server.listen(port, process.env.HOST || '127.0.0.1', () => console.log(`${platformLabel} listening on http://${process.env.HOST || '127.0.0.1'}:${port} (demo=${demoMode})`));
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, shutdownAndExit);
 }
-export { server, store, webPreviews, terminals };
+function shutdownAndExit() {
+  const deadline = setTimeout(() => process.exit(1), 45000);
+  deadline.unref();
+  void stopApplication().then(() => process.exit(0), error => { console.error(error); process.exit(1); });
+}
+process.on('message', message => { if (message?.type === 'gotit:shutdown') shutdownAndExit(); });
+process.channel?.unref();
+export { server, store, webPreviews, terminals, stopApplication };

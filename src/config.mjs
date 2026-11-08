@@ -7,7 +7,7 @@ export const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 export function loadConfig(root = projectRoot) {
   const envFile = join(root, '.env');
-  if (existsSync(envFile)) process.loadEnvFile(envFile);
+  if (process.env.NODE_ENV !== 'test' && existsSync(envFile)) process.loadEnvFile(envFile);
   const tempDirectory = configureRuntimeTemp(root);
   const configuredFile = process.env.DATA_FILE || join(root, 'data', 'studio.sqlite');
   const config = {
