@@ -78,3 +78,10 @@ test('faculty table messages identify rows from one and use readable labels for 
   assert.doesNotMatch(text, /pageIndex|globalSearch|flags|columnSearch/);
   assert.match(tableTargetSummary({ answer: { order: ['asc'] } }), /needs correction/);
 });
+
+
+test('faculty rate-limit feedback retains the server retry interval', () => {
+  const error = apiError({ code: 'RATE_LIMITED', message: 'Too many requests.', retryAfterSeconds: 45 }, 'faculty', 429);
+  assert.match(userErrorMessage(error, 'faculty'), /1 minute/);
+  assert.equal(error.retryAfterSeconds, 45);
+});

@@ -112,8 +112,14 @@ export function userErrorMessage(error, role = 'student') {
     EXAM_NOT_PUBLISHED: 'Publish this activity before assigning it to a class.',
     REVIEW_PENDING: 'Some answers still need your grade. Open Review answers and save those grades before sharing scores.',
     GRADING_PENDING: 'Some answers are still being processed. Wait for them to finish before continuing.',
+    AI_PAYMENT_REQUIRED: 'The selected AI service requires payment or prepaid credits. Ask your administrator to check the project billing balance, or choose another configured service. Retrying will not resolve this billing block.',
     AI_RATE_LIMITED: 'The selected AI service has reached its usage limit. Wait and try again, request fewer questions, or choose another service yourself.',
     AI_NOT_CONFIGURED: 'The selected AI service is not ready to use. Choose another service or ask your technical administrator to set it up.',
+    AI_GATEWAY_ERROR: 'The AI request lost its connection to the application server or proxy. The provider may still be processing it. Check server availability and proxy timeouts before generating again.',
+    INVALID_SERVER_RESPONSE: 'The application server returned an unreadable response. Ask your technical administrator to check the server.',
+    INTERNAL_ERROR: 'The application encountered an internal error. Ask your technical administrator to check the server logs.',
+    AI_REQUEST_REJECTED: 'The AI service rejected the request settings. Ask your administrator to check model and schema compatibility.',
+    AI_MODEL_UNAVAILABLE: 'The selected AI model is unavailable. Choose another supported model.',
     AI_TIMEOUT: 'The AI service took too long to respond. Try again with fewer questions.',
     AI_PROVIDER_ERROR: 'The selected AI service could not complete this request. Try again or choose another service yourself.',
     AI_PROVIDER_BUSY: 'The selected AI service is busy. Wait a moment and try again, or choose another service yourself.',
@@ -128,6 +134,7 @@ export function userErrorMessage(error, role = 'student') {
   };
   if (code === 'CODING_JOB_PENDING') return role === 'student' ? 'Your previous code submission is still being processed. Wait for it to finish before submitting again.' : 'Some submitted answers are still being processed. Wait a moment, then refresh the results.';
   if (code === 'RUN_CLOSED') return role === 'faculty' ? questionIssueText(message || 'This class activity has ended. Check its closing time before continuing.') : `This activity is not open now. Check its opening and closing times with ${contact}.`;
+  if (code === 'RATE_LIMITED' && Number(error?.retryAfterSeconds) > 0) return `This account has reached the request limit. Try again in ${Math.ceil(Number(error.retryAfterSeconds) / 60)} minute(s).`;
   if (messages[code]) return messages[code];
   if (error?.status >= 500 || /Cannot read properties|is not a function|fetch failed|Failed to fetch|NetworkError|Unexpected (?:token|end)|Load failed/i.test(message))
     return `We could not complete this action. Check your connection and try again. If it still fails, tell ${contact}.`;
@@ -136,8 +143,8 @@ export function userErrorMessage(error, role = 'student') {
 }
 
 export function apiError(result, role, status) {
-  const error = { code: result.code, message: result.message, status };
-  return Object.assign(new Error(userErrorMessage(error, role)), { code: result.code, status, technicalMessage: result.message });
+  const error = { code: result.code, message: result.message, status, retryAfterSeconds: result.retryAfterSeconds };
+  return Object.assign(new Error(userErrorMessage(error, role)), { code: result.code, status, technicalMessage: result.message, retryAfterSeconds: result.retryAfterSeconds });
 }
 
 export function codeServiceMessage(status, { role = 'student', languages = [], webProject = false } = {}) {

@@ -160,7 +160,7 @@ defineExpose({ value: () => value.value });
 </script>
 <template>
   <section class="coding-workspace">
-    <details class="sample-runs" :open="!compactScreen" aria-label="Sample runs">
+    <details class="sample-runs" aria-label="Sample runs">
       <summary>Sample inputs and expected outputs</summary>
       <section v-for="(sample, i) in activity.publicConfig.samples" :key="i" class="coding-sample">
         <h4>Sample {{ i + 1 }}</h4>

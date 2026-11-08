@@ -73,15 +73,27 @@ async function preview(reset = false) {
     busy.value = false;
   }
 }
-function download() {
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(
-    new Blob([exportProject(project()) as BlobPart], { type: 'application/zip' }),
-  );
-  link.download = `${props.activity.id}.zip`;
-  link.click();
-  URL.revokeObjectURL(link.href);
+async function download() {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = '';
+  try {
+    const latest = await props.actions.snapshot?.();
+    if (latest?.database !== undefined) database.value = latest.database;
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(
+      new Blob([exportProject(project()) as BlobPart], { type: 'application/zip' }),
+    );
+    link.download = `${props.activity.id}.zip`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (cause) {
+    error.value = userErrorMessage(cause, 'student');
+  } finally {
+    busy.value = false;
+  }
 }
+
 async function upload(event: Event) {
   if (busy.value) return;
   busy.value = true;
@@ -110,8 +122,8 @@ async function upload(event: Event) {
 defineExpose({ value: project });
 </script>
 <template>
-  <section class="coding-workspace">
-    <details v-if="activity.publicConfig.expectedHtml" open>
+  <section class="coding-workspace web-workspace">
+    <details v-if="activity.publicConfig.expectedHtml">
       <summary>Example of the finished page</summary>
       <iframe
         :srcdoc="expectedOutputDocument(activity.publicConfig.expectedHtml)"
@@ -123,7 +135,7 @@ defineExpose({ value: project });
       <p>This example shows how your finished page should look. Use Run web preview to test your own work.</p>
     </details>
     <div class="button-row">
-      <button type="button" @click="download">Download project ZIP</button
+      <button type="button" :disabled="busy" @click="download">Download project ZIP</button
       ><label
         >Import project<input type="file" accept=".zip,.json" :disabled="busy" @change="upload"
       /></label>

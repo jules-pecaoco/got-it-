@@ -113,7 +113,16 @@ async function request(path, { method = 'GET', data, headers: extraHeaders = {},
         .catch(() => { throw new Error('We could not connect to the activity. Check your connection and try again.'); });
       const result = await response.json().catch(() => { throw new Error('We could not load the activity. Try again or tell your instructor.'); });
       if (result.serverNow) state.serverClock = { at: Date.parse(result.serverNow), received: performance.now() };
-      if (!response.ok) throw apiError(result, 'student', response.status);
+      if (!response.ok) {
+        if (response.status === 401 && state.session) {
+          flushLocalAnswers();
+          $('join-panel').classList.remove('hidden');
+          $('exam-panel').classList.add('hidden');
+          document.body.classList.remove('ibt-active');
+          statusNotice('connection-status', 'Sign in again below to recover your saved work.');
+        }
+        throw apiError(result, 'student', response.status);
+      }
       value = result.data;
       if (!value?.jobId || headers.Prefer !== 'respond-async') return value;
       job = { jobId: value.jobId, payload: JSON.stringify(data) };
@@ -230,6 +239,7 @@ $('begin-attempt').addEventListener('click', () => perform(async () => {
       } else state.fullscreenFallback = true;
     }
     const joined = await request('/api/auth/student/join', { method: 'POST', data: admissionCredentials() });
+    if (state.session) { flushLocalAnswers(); clearDraftEditors(); clearIbtState(); }
     state.candidateAccess = randomId();
     state.session = joined.session;
     state.timerWarnings.clear();
@@ -376,7 +386,8 @@ async function checkConnection() {
   if (checkingConnection || document.hidden || session?.status !== 'in_progress') return;
   checkingConnection = true;
   try {
-    await request('/api/me/heartbeat', { method: 'POST', silent: true });
+    const heartbeat = await request('/api/me/heartbeat', { method: 'POST', silent: true });
+    if (state.session?.id === session.id && heartbeat.deadlineAt) { state.session.deadlineAt = heartbeat.deadlineAt; updateTimer(); }
     if (state.session?.id === session.id && state.session.status === 'in_progress') statusNotice('connection-status');
   } catch (error) {
     if (state.session?.id === session.id && state.session.status === 'in_progress')
@@ -519,7 +530,8 @@ function startIbt() {
   state.ibt = {
     key, current: saved?.current, mounted: null, opening: false,
     visited: new Set(Array.isArray(saved?.visited) ? saved.visited : []),
-    split: Number.isFinite(saved?.split) ? saved.split : 40,
+    flagged: new Set(Array.isArray(saved?.flagged) ? saved.flagged : []), filter: saved?.filter || "all", groups: new Map(),
+    split: Number.isFinite(saved?.split) ? saved.split : (s.codingLanguages?.length || s.webProject ? 25 : 40),
     collapsed: saved?.collapsed === true || (saved?.collapsed === undefined && matchMedia("(max-width: 850px)").matches)
   };
   document.body.classList.add('ibt-active');
@@ -531,9 +543,9 @@ function startIbt() {
 }
 
 function persistIbtState() {
-  const { key, current, visited, split, collapsed } = state.ibt;
+  const { key, current, visited, flagged, filter, split, collapsed } = state.ibt;
   try {
-    localStorage.setItem(key, JSON.stringify({ current, visited: [...visited], split, collapsed }));
+    localStorage.setItem(key, JSON.stringify({ current, visited: [...visited], flagged: [...flagged], filter, split, collapsed }));
   } catch { /* Answer saves and navigation still work. */ }
 }
 
@@ -580,22 +592,54 @@ function renderQuestionMatrix() {
   $('ibt-matrix-body').classList.toggle('hidden', ibt.collapsed);
   $('exam-grid').classList.toggle('ibt-collapsed', ibt.collapsed);
   $('ibt-toggle-matrix').setAttribute('aria-expanded', String(!ibt.collapsed));
-  $('ibt-toggle-matrix').textContent = ibt.collapsed ? '☰' : 'Hide questions';
+  $('ibt-toggle-matrix').replaceChildren(icon('panelLeft'));
+  $('ibt-sidebar-title').classList.toggle('hidden', ibt.collapsed);
   $('ibt-toggle-matrix').setAttribute('aria-label', ibt.collapsed ? 'Show questions' : 'Hide questions');
   const list = $('ibt-question-list');
   const focused = list.contains(document.activeElement) ? document.activeElement.dataset.question : null;
   list.replaceChildren(...questions.map(q => {
     const status = q.answered ? 'answered' : ibt.visited.has(q.id) ? 'empty' : 'unvisited';
-    const button = node('button', 'ibt-question', `${q.number}${q.pending ? ' •' : q.answered ? ' ✓' : ''}`);
+    const button = node('button', 'ibt-question', `Question ${q.number}${ibt.flagged.has(q.id) ? ' · Flagged' : ''}${q.pending ? ' · Saving' : q.answered ? ' · Saved' : ''}`);
     button.type = 'button';
     button.dataset.state = status;
     button.dataset.question = q.id;
-    button.setAttribute('aria-label', `Question ${q.number}, ${q.answered ? 'answer saved' : status === 'unvisited' ? 'not opened yet' : 'no saved answer'}${q.pending ? ', latest changes not saved yet' : ''}`);
-    if (q.id === ibt.current) button.setAttribute('aria-current', 'step');
+    button.setAttribute('aria-label', `Question ${q.number}, ${q.answered ? 'answer saved' : status === 'unvisited' ? 'not opened yet' : 'no saved answer'}${q.pending ? ', latest changes not saved yet' : ''}${ibt.flagged.has(q.id) ? ', flagged for review' : ''}`);
+    button.replaceChildren(icon(q.answered ? 'complete' : 'question'), node('span', 'ibt-question-label', `Question ${q.number}`));
+    if (ibt.flagged.has(q.id)) button.append(icon('flag'));
+    if (q.pending) button.append(node('span', 'ibt-question-state', 'Saving…'));
+    if (q.id === ibt.current) {
+      button.setAttribute('aria-current', 'step');
+      button.append(node('span', 'ibt-current-badge', 'Current'));
+    }
     button.addEventListener('click', () => perform(() => openQuestion(q.id)));
     return button;
   }));
-  if (focused) [...list.children].find(button => button.dataset.question === focused)?.focus({ preventScroll: true });
+  const buttons = [...list.children];
+  list.replaceChildren();
+  for (const mission of state.session.order) {
+    const items = questions.filter(q => q.missionId === mission.id);
+    const shown = items.filter(q => ibt.filter === 'flagged' ? ibt.flagged.has(q.id) : ibt.filter === 'unanswered' ? !q.answered : true);
+    if (!shown.length) continue;
+    const group = node('details', 'ibt-section');
+    group.open = ibt.groups.get(mission.id) !== false;
+    const summary = node('summary', 'ibt-section-heading');
+    const copy = node('span', 'ibt-section-copy');
+    copy.append(node('span', 'ibt-section-title', mission.title), node('span', 'ibt-section-meta', `${items.filter(q => q.answered).length} of ${items.length} saved`));
+    summary.append(icon('chevronRight'), copy);
+    const flaggedCount = items.filter(q => ibt.flagged.has(q.id)).length;
+    if (flaggedCount) { const badge = node('span', 'ibt-section-flags', flaggedCount); badge.append(icon('flag')); badge.setAttribute('aria-label', `${flaggedCount} flagged`); summary.append(badge); }
+    group.append(summary);
+    for (const q of shown) group.append(buttons[questions.indexOf(q)]);
+    group.addEventListener('toggle', () => { if (group.isConnected) ibt.groups.set(mission.id, group.open); });
+    list.append(group);
+  }
+  if (!list.children.length) list.append(node('p', 'small', 'No questions match this filter.'));
+  const progress = $('ibt-section-progress'); progress.replaceChildren();
+  for (const [label, count, symbol] of [['Saved', answered, 'complete'], ['Remaining', questions.length - answered, 'question'], ['Flagged', questions.filter(q => ibt.flagged.has(q.id)).length, 'flag']]) {
+    const item = node('div', 'ibt-progress-item'); item.append(icon(symbol), node('strong', '', count), node('span', '', label)); progress.append(item);
+  }
+  $('ibt-filter').value = ibt.filter;
+  if (focused) list.querySelector(`[data-question="${focused}"]`)?.focus({ preventScroll: true });
   $('ibt-previous').disabled = current <= 0;
   $('ibt-next').disabled = current >= questions.length - 1;
 }
@@ -636,7 +680,11 @@ async function openQuestion(id) {
     heading.tabIndex = -1;
     const context = $('ibt-context');
     const reference = $('collapsible-reference');
-    context.replaceChildren(heading);
+    const flagLabel = node('label', 'ibt-flag');
+    const flag = node('input'); flag.type = 'checkbox'; flag.checked = ibt.flagged.has(id);
+    flag.addEventListener('change', () => { if (flag.checked) ibt.flagged.add(id); else ibt.flagged.delete(id); persistIbtState(); renderQuestionMatrix(); });
+    flagLabel.append(flag, document.createTextNode('Flag for review'));
+    context.replaceChildren(heading, flagLabel);
     if (mission.story) context.append(node('p', '', mission.story));
     context.append(renderPrompt(activity.prompt, 'activity-prompt'), reference);
     renderActivityReference(activity);
@@ -651,6 +699,7 @@ async function openQuestion(id) {
   }
 }
 
+$('ibt-filter').addEventListener('change', () => { state.ibt.filter = $('ibt-filter').value; persistIbtState(); renderQuestionMatrix(); });
 $('ibt-toggle-matrix').addEventListener('click', () => {
   state.ibt.collapsed = !state.ibt.collapsed;
   persistIbtState();
@@ -668,7 +717,7 @@ function setIbtSplit(value) {
   ibtDivider.setAttribute('aria-valuetext', `Question pane ${split}%`);
 }
 function updateIbtDividerOrientation() {
-  ibtDivider.setAttribute('aria-orientation', ibtStacked.matches ? 'horizontal' : 'vertical');
+  ibtDivider.setAttribute('aria-orientation', 'horizontal');
 }
 ibtStacked.addEventListener('change', updateIbtDividerOrientation);
 updateIbtDividerOrientation();
@@ -683,7 +732,7 @@ ibtDivider.addEventListener('pointermove', event => {
   const context = $('ibt-context').getBoundingClientRect();
   const workspace = $('exam-workspace').getBoundingClientRect();
   const divider = ibtDivider.getBoundingClientRect();
-  const vertical = ibtStacked.matches;
+  const vertical = true;
   const start = vertical ? context.top : context.left;
   const end = vertical ? workspace.bottom : workspace.right;
   const thickness = vertical ? divider.height : divider.width;
@@ -696,8 +745,8 @@ ibtDivider.addEventListener('lostpointercapture', () => {
 });
 ibtDivider.addEventListener('keydown', event => {
   if (!state.ibt) return;
-  const decrease = ibtStacked.matches ? 'ArrowUp' : 'ArrowLeft';
-  const increase = ibtStacked.matches ? 'ArrowDown' : 'ArrowRight';
+  const decrease = 'ArrowUp';
+  const increase = 'ArrowDown';
   const step = event.shiftKey ? 10 : 2;
   const sizes = { [decrease]: state.ibt.split - step, [increase]: state.ibt.split + step, Home: 20, End: 75 };
   if (!Object.hasOwn(sizes, event.key)) return;
@@ -718,8 +767,8 @@ $('ibt-review').addEventListener('click', () => {
   const unsaved = questions.filter(q => !q.answered).length;
   const pending = questions.filter(q => q.pending).length;
   $('ibt-review-summary').textContent = finishReviewMessage({ unanswered: unsaved, pending, hasPreviousSubmissions: state.session.submittedCount > 0 });
-  $('ibt-review-questions').replaceChildren(...questions.filter(q => !q.answered || q.pending).map(q => {
-    const button = node('button', '', `Question ${q.number}${q.pending ? ' · Not saved yet' : ''}`);
+  $('ibt-review-questions').replaceChildren(...questions.filter(q => !q.answered || q.pending || state.ibt.flagged.has(q.id)).map(q => {
+    const button = node('button', '', `Question ${q.number}${state.ibt.flagged.has(q.id) ? ' · Flagged' : ''}${q.pending ? ' · Not saved yet' : ''}`);
     button.type = 'button';
     button.addEventListener('click', () => {
       $('ibt-review-dialog').close();
@@ -1162,6 +1211,7 @@ function renderActivity(a, preview = false, separatePrompt = false) {
     const target = node('div'); form.append(target);
     const workspace = mountWeb(target, a, {
       changed: () => form.dispatchEvent(new Event('input', { bubbles: true })),
+      snapshot: () => request(`/api/me/activities/${encodeURIComponent(a.id)}/web-preview`, { silent: true }),
       discardPreview: () => request(`/api/me/activities/${encodeURIComponent(a.id)}/web-preview`, { method: 'DELETE' }),
       preview: (value, reset) => request(`/api/me/activities/${encodeURIComponent(a.id)}/web-preview`, { method: 'POST', data: { value, reset } })
     });

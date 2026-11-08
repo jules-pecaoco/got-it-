@@ -101,10 +101,12 @@
           <label class="mobile-mission-nav">Current section<select id="mobile-mission-select"></select></label>
           <div id="mission-list"></div>
           <div id="ibt-matrix" class="hidden">
-            <button id="ibt-toggle-matrix" type="button" aria-expanded="true" aria-controls="ibt-matrix-body">Questions</button>
+            <div class="ibt-sidebar-heading"><strong id="ibt-sidebar-title">Questions</strong><button id="ibt-toggle-matrix" type="button" aria-expanded="true" aria-controls="ibt-matrix-body">Questions</button></div>
             <nav id="ibt-matrix-body" aria-label="Question navigation">
+              <label class="ibt-filter-label">Filter<select id="ibt-filter"><option value="all">All questions</option><option value="unanswered">Unanswered</option><option value="flagged">Flagged for review</option></select></label>
               <div id="ibt-question-list"></div>
-              <p class="small">Not opened: gray · No saved answer: red · Answer saved: green</p>
+              <section class="ibt-tracking" aria-label="Section progress"><h3>Progress</h3><div id="ibt-section-progress"></div></section>
+
             </nav>
           </div>
         </aside>
