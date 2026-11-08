@@ -1,0 +1,34 @@
+async (page) => {
+  const check = (condition, message) => { if (!condition) throw new Error(message); };
+  await page.goto('http://127.0.0.1:3397/app/faculty');
+  await page.locator('#instructor-password').fill('product-audit-only');
+  await page.locator('#instructor-login button[type=submit]').click();
+  await page.locator('#instructor-workspace').waitFor({ state: 'visible' });
+  await page.locator('[data-step-link=results]').click();
+  const run = await page.locator('#results-run option').filter({ hasText: 'Programming fundamentals' }).getAttribute('value');
+  await page.locator('#results-run').selectOption(run);
+  await page.locator('#results-status').selectOption('submitted');
+  await page.getByRole('button', { name: 'Review answers for Jamie Cruz', exact: true }).click();
+  check(await page.getByRole('button', { name: 'Previous student', exact: true }).isDisabled(), 'Filtered queue includes an in-progress student');
+  const points = page.locator('.score-adjust-form input[type=number]');
+  const reason = page.locator('.score-adjust-form textarea');
+  await points.fill('7'); await reason.fill('Retained faculty feedback');
+  await page.getByRole('button', { name: 'Next student', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#student-review-title').textContent.includes('Maria'));
+  check(await page.getByRole('button', { name: 'Next student', exact: true }).isDisabled(), 'Queue should end at the second submitted student');
+  await page.getByRole('button', { name: 'Previous student', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#student-review-title').textContent.includes('Jamie'));
+  check(await points.inputValue() === '7' && await reason.inputValue() === 'Retained faculty feedback', 'Navigation discarded unsaved work');
+  await page.locator('#close-student-review').click();
+  await page.getByRole('button', { name: 'Review answers for Jamie Cruz', exact: true }).click();
+  check(await points.inputValue() === '7', 'Closing discarded the grade');
+  await page.route('**/api/instructor/runs/*/students/*/scores/*', route => route.abort());
+  await page.getByRole('button', { name: 'Save score', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#notice').textContent.length > 0);
+  check(await points.inputValue() === '7', 'Failed save discarded the grade');
+  await page.unroute('**/api/instructor/runs/*/students/*/scores/*');
+  await page.getByRole('button', { name: 'Save score', exact: true }).click();
+  await page.getByText('Grade saved by faculty: 7 pts · Retained faculty feedback', { exact: true }).waitFor();
+  check(await page.getByText('Unsaved grade · kept while you review other students. Select Save score to record it.', { exact: true }).count() === 0, 'Saved grade remains dirty');
+  return { filteredQueue: 'passed', navigationRetention: 'passed', closeRetention: 'passed', failedSaveRetention: 'passed', explicitSave: 'passed' };
+}

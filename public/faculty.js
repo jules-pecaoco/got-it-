@@ -263,7 +263,12 @@ async function request(path, { method = 'GET', data, raw = false, silent = false
       body: data === undefined ? undefined : JSON.stringify(data),
     });
     if (raw && response.ok) return await response.blob();
-    const result = await response.json();
+    let result;
+    try { result = await response.json(); }
+    catch {
+      throw apiError({ code: path.startsWith('/api/instructor/ai/') ? 'AI_GATEWAY_ERROR' : 'INVALID_SERVER_RESPONSE',
+        message: `Server returned HTTP ${response.status} without a readable JSON response.` }, 'faculty', response.status);
+    }
     if (response.status === 401 && state.instructorAuthenticated) {
       state.reauthenticating = true;
       $('instructor-login-panel').classList.remove('hidden');
@@ -909,10 +914,14 @@ aiChoiceControls.className = 'creation-group';
 for (const id of ['ai-provider', 'ai-model']) aiChoiceControls.append($(id).closest('label'));
 $('ai-settings-controls').append(aiChoiceControls, $('ai-model-help'));
 for (const group of createGrid.querySelectorAll('.creation-group')) if (group.querySelector('legend')?.textContent === 'Question generator') group.remove();
-const aiChoiceSummary = node('p', 'small');
-const changeAiChoice = node('button', 'text-button', 'Change AI settings');
+const aiChoiceSummary = node('p', 'ai-selection-summary');
+const changeAiChoice = node('button', 'secondary ai-settings-action', 'AI settings');
 changeAiChoice.type = 'button';
-$('ai-create').prepend(aiChoiceSummary, changeAiChoice);
+const aiSelectionBar = node('div', 'ai-selection-bar');
+aiSelectionBar.append(aiChoiceSummary, changeAiChoice);
+$('ai-create').prepend(aiSelectionBar);
+$('ai-status').setAttribute('role', 'status');
+$('ai-status').setAttribute('aria-live', 'polite');
 async function openAiSettings() {
   const settings = await request('/api/instructor/ai/settings');
   savedAiChoice = settings;
@@ -953,7 +962,8 @@ function updateAiModelState(preferredModel) {
     $('ai-model').append(unavailable);
     $('ai-model').value = preferredModel;
   }
-  aiChoiceSummary.textContent = `AI: ${provider?.label || 'Not selected'} · ${$('ai-model').value}`;
+  const selectedModel = provider?.models.find(model => model.id === $('ai-model').value);
+  aiChoiceSummary.textContent = `${provider?.label || 'Not selected'} · ${selectedModel?.label || $('ai-model').value}`;
   $('faculty-ai-selection').textContent = aiChoiceSummary.textContent;
   state.aiReady = Boolean(provider?.available && provider.models.some(model => model.id === $('ai-model').value));
   $('ai-model-help').textContent = provider?.available && !state.aiReady
@@ -1720,6 +1730,7 @@ $('ai-generate').addEventListener('click', () =>
     $('ai-save').disabled = true;
     state.aiBusy = true;
     renderWorkflowState();
+    $('ai-status').classList.remove('ai-status-error');
     $('ai-status').textContent = 'Extracting material…';
     try {
       const source = await extractFile(file);
@@ -1754,7 +1765,8 @@ $('ai-generate').addEventListener('click', () =>
       queueAiWorkSave();
       $('ai-status').textContent = 'Questions are ready to review. Check the answers, then approve the questions you want to keep.';
     } catch (error) {
-      $('ai-status').textContent = `(GENERATION ERROR: ${userErrorMessage(error, 'faculty')})`;
+      $('ai-status').classList.add('ai-status-error');
+      $('ai-status').textContent = userErrorMessage(error, 'faculty');
     } finally {
       state.aiBusy = false;
       if (state.aiProposal) updateAiApprovals();
@@ -3303,19 +3315,24 @@ function responseText(question, submission) {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
+const gradeDrafts = new Map();
 function renderStudentReview(review) {
   if ($('results-run').value !== review.runId) return;
   $('student-review').classList.remove('hidden');
   $('results-table').before($('student-review'));
   $('student-review').querySelector('.review-navigation')?.remove();
   const reviewNavigation = node('div', 'button-row review-navigation');
-  const reviewable = (state.results?.rows || []).filter((row) => row.sessionId);
+  const reviewable = filterResultRows(state.results?.rows || [], {
+    search: $('results-search').value,
+    status: $('results-status').value,
+    visibility: $('results-visibility').value,
+  }).filter((row) => row.sessionId);
   const reviewIndex = reviewable.findIndex((row) => row.candidateId === review.candidateId);
   for (const [offset, label] of [
     [-1, 'Previous student'],
     [1, 'Next student'],
   ]) {
-    const next = reviewable[reviewIndex + offset];
+    const next = reviewIndex < 0 ? null : reviewable[reviewIndex + offset];
     const button = node('button', '', label);
     button.type = 'button';
     button.disabled = !next;
@@ -3433,6 +3450,21 @@ function renderStudentReview(review) {
       reason.rows = 2;
       reason.maxLength = 300;
       reason.value = question.override?.reason ?? '';
+      const draftKey = JSON.stringify([review.runId, review.candidateId, question.id]);
+      const baseline = { points: points.value, reason: reason.value };
+      const retained = gradeDrafts.get(draftKey);
+      if (retained) { points.value = retained.points; reason.value = retained.reason; }
+      const draftStatus = node('p', 'small');
+      draftStatus.setAttribute('role', 'status');
+      const retainGrade = () => {
+        const value = { points: points.value, reason: reason.value };
+        if (JSON.stringify(value) === JSON.stringify(baseline)) gradeDrafts.delete(draftKey);
+        else gradeDrafts.set(draftKey, value);
+        draftStatus.textContent = gradeDrafts.has(draftKey) ? 'Unsaved grade · kept while you review other students. Select Save score to record it.' : '';
+      };
+      points.addEventListener('input', retainGrade);
+      reason.addEventListener('input', retainGrade);
+      retainGrade();
       reasonLabel.append(reason);
       const actions = node('div', 'button-row');
       const save = node('button', 'primary', 'Save score');
@@ -3474,17 +3506,18 @@ function renderStudentReview(review) {
           const suggestion = await request(`/api/instructor/runs/${review.runId}/students/${encodeURIComponent(review.candidateId)}/scores/${encodeURIComponent(question.id)}/ai-check`, {method:'POST'});
           const explanation = node('p', '', `Suggested score: ${suggestion.points} / ${question.maxPoints}. ${suggestion.feedback}`);
           const apply = node('button', '', 'Use suggestion in grading form'); apply.type = 'button';
-          apply.addEventListener('click', () => { points.value = String(suggestion.points); reason.value = ('AI-assisted: ' + suggestion.feedback).slice(0,300); points.focus(); });
+          apply.addEventListener('click', () => { points.value = String(suggestion.points); reason.value = ('AI-assisted: ' + suggestion.feedback).slice(0,300); retainGrade(); points.focus(); });
           aiFeedback.append(explanation, apply, node('p','small','This has not changed the saved score. Edit the points or reason, then select Save score.'));
         } catch (error) { aiFeedback.textContent = userErrorMessage(error, 'faculty'); }
         finally { aiCheck.disabled = false; aiCheck.textContent = 'Check answer with AI'; }
       }));
       form.append(aiNote, aiCheck, aiFeedback);
-      form.append(pointsLabel, reasonLabel, actions);
+      form.append(pointsLabel, reasonLabel, draftStatus, actions);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         perform(async () => {
           save.disabled = true;
+          const savingDraft = JSON.stringify({ points: points.value, reason: reason.value });
           try {
             const updated = await request(
               `/api/instructor/runs/${review.runId}/students/${encodeURIComponent(review.candidateId)}/scores/${encodeURIComponent(question.id)}`,
@@ -3493,6 +3526,7 @@ function renderStudentReview(review) {
                 data: { points: Number(points.value), reason: reason.value.trim() },
               },
             );
+            if (JSON.stringify(gradeDrafts.get(draftKey)) === savingDraft) gradeDrafts.delete(draftKey);
             renderStudentReview(updated);
             await loadResults();
             message('Score saved.');
@@ -3825,7 +3859,7 @@ try {
 showInstructor();
 
 window.addEventListener('beforeunload', (event) => {
-  if (state.questionDirty || state.rulesDirty || titleChanged()) {
+  if (gradeDrafts.size || state.questionDirty || state.rulesDirty || titleChanged()) {
     event.preventDefault();
     event.returnValue = '';
   }
