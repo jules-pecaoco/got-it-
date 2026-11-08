@@ -1,5 +1,7 @@
 # Migration and rollback
 
+> Historical record from 4 November 2026. Commands, test counts and workflow descriptions below belong to that migration. For current instructions, use [backup and recovery](../operations/BACKUP_AND_RECOVERY.md), [deployment](../operations/DEPLOYMENT.md) and the [documentation contents](../README.md). This record is not a current release-readiness report.
+
 Baseline: local Git tag `codex/pre-migration-2026-11-04`, commit `3a3aeb7`.
 Migration branch: `codex/assessment-migration`.
 Verified original database backup: `data/backups/studio-2026-11-04T03-17-08-580Z-fda05cf7.sqlite`.

@@ -1,4 +1,23 @@
-# Changes and current status
+# Changelog
+
+This file records changes. For current setup and behavior, use the [documentation contents](docs/README.md). Older dated entries describe the revision at that time, including workflows later replaced; their test counts are historical.
+
+## Unreleased — reviewed 7 November 2026
+
+These features are present in the current working tree, including uncommitted changes. This is not a published release or a new application-test report.
+
+- Split the documentation into learning guides, hosting/recovery instructions, technical references and an archive. Added a table of contents, shortened the README and removed the overlapping all-in-one system guide.
+- Corrected current documentation for manual console grading, explicit result publication, optional grading reasons, removed creation screens and migration-database selection. Marked the legacy automatic-grading load script as needing an update before current capacity measurement.
+- Use Fastify for HTTP transport and Vue/CodeMirror for the editing workspaces. SQLite records remain local; optional authenticated execution workers can host Docker separately.
+- Preserve the original database and start against a separate migration target. Added preparation, preflight, supervised startup, verified backups and restore tooling; runtime temp files and npm cache stay on the project drive.
+- Support console Python, JavaScript, PHP and SQLite SQL, plus frontend and PHP/SQLite web projects. Student code runs with execution limits; console submissions require faculty grading. Web rubrics can also require manual review.
+- Add live line-input terminals, collapsible samples, contextual sample dialogues, per-file editor histories and authenticated faculty-selected reference guides.
+- Create activities through reviewed AI proposals and question-editing forms. Published edits create a new draft version. The former fixed starter picker and raw JSON controls are absent from the Faculty screen; developer package APIs remain available.
+- Add optional AI answer checks that return suggested points and feedback. Applying a suggestion fills the grading form; saving and publishing remain explicit faculty actions.
+- Allow blank grading reasons, while retaining required reasons for time extensions and reopening. Add run name/closing-time edits and confirmed run/activity deletion guarded by ownership, active attempts and pending grading.
+- Refine navigation history, unsaved-edit protection, reauthentication, pending-grade labels, focused grading and responsive editor layouts. Share the application theme across all roles, with local Poppins headings and system-font controls/data.
+
+Current check commands and outstanding deployment work are in the [test plan](docs/reference/TEST_PLAN.md). Earlier migration, runtime, load and UI verification reports are [archived](docs/README.md#historical-records).
 
 ## 2026-11-01
 
@@ -58,11 +77,3 @@
 - The faculty run form now creates runs from visible fields. Advanced exam and coverage JSON remain collapsed.
 - Verified package structure, page 2 grading, code parsing, retry costs, answer formatting, full candidate progression and route separation. All 24 tests pass.
 - Checked the live Faculty page: version 4, the answer key and mission/question rules render after sign-in. The student API rejects unauthenticated answer requests.
-
-## Current status
-
-- Version 7 is the Week 13 activity package in this repository. The local database has later published versions, including version 12, plus one active CTF Test draft. Existing runs retain their original versions.
-- Faculty AI drafting is enabled from the local `.env` key and uses the working `gemini-3.5-flash` default. Faculty approves generated questions; the saved draft validates automatically before publishing. Source-match percentages and coverage notes are advisory.
-- Proctor monitoring is available at `/app/proctor` after Faculty issues a code for a run. It is read-only and run-scoped; the app does not yet identify individual proctors.
-- The local database currently has one saved class. Review its roster in Faculty Studio, then select the class when creating a run. A PIN and reachable student link are still needed for class use; `127.0.0.1` works only on this computer.
-- A verified SQLite baseline backup is stored at `data/backups/studio-baseline-2026-11-01.sqlite`; integrity and restore-to-temporary-copy checks passed. A code baseline commit was also created before reliability changes. Neither local student data nor `.env` was included in the commit.

@@ -1,59 +1,49 @@
 # Got It!
 
-A proctored assessment system with Faculty, Student and Proctor workspaces, server-side grading, coding exercises, and isolated PHP/SQLite projects.
+An assessment platform where faculty prepare activities, students answer questions or write code, and proctors monitor a scheduled class run.
 
-## Run locally
+Objective questions can be marked automatically. Console code and manual web rubrics need faculty grading. Graded results become visible only when faculty publishes them.
 
-Requires Node.js 22.13+ and Docker Desktop with Linux containers for coding and PHP previews. Install dependencies once with `npm ci`.
+## Start here
+
+| I want to…                                 | Read this                                             |
+| ------------------------------------------ | ----------------------------------------------------- |
+| Understand how the parts work together     | [System overview](docs/guides/SYSTEM_OVERVIEW.md)     |
+| Run it on my Windows PC                    | [Local setup](docs/guides/RUN_LOCALLY.md)             |
+| Create an activity, take it, or monitor it | [User guide](docs/guides/USER_GUIDE.md)               |
+| Give students a public address             | [Host from your PC](docs/operations/LOCAL_HOSTING.md) |
+| Move it to a server                        | [Deployment](docs/operations/DEPLOYMENT.md)           |
+| Find another topic                         | [Documentation table of contents](docs/README.md)     |
+
+## Quick local start
+
+You need Node.js 22.13+ and Docker Desktop running Linux containers. In PowerShell:
 
 ```powershell
 cd D:\code\ctfv1
-$env:NODE_ENV = "development"
-$env:PUBLIC_ORIGIN = "http://127.0.0.1:3000"
-$env:PREVIEW_ORIGIN = "http://127.0.0.1:3102"
-$env:PREVIEW_PORT = "3102"
+npm ci
+$env:NODE_ENV = 'development'
+npm run prepare:local
+$env:PUBLIC_ORIGIN = 'http://127.0.0.1:3000'
+$env:PREVIEW_ORIGIN = 'http://127.0.0.1:3102'
+$env:PREVIEW_PORT = '3102'
 npm start
 ```
 
-- Faculty: <http://127.0.0.1:3000/app/faculty>
-- Student: <http://127.0.0.1:3000/app/student>
-- Proctor: <http://127.0.0.1:3000/app/proctor>
+On a new machine, run `npm run setup:coding` before starting coding exercises. It installs the required Docker images. See [local setup](docs/guides/RUN_LOCALLY.md) for verification and first sign-in.
 
-Faculty username is `faculty` for existing records; use the configured `INSTRUCTOR_PASSWORD` from `.env`. Students join a faculty-created run with their school ID and PIN. Proctors use a separate run access code.
+- [Faculty](http://127.0.0.1:3000/app/faculty): existing default username `faculty`; use the configured password in `.env` unless the account was separately provisioned.
+- [Student](http://127.0.0.1:3000/app/student): join a faculty-created run using a school ID and PIN.
+- [Proctor](http://127.0.0.1:3000/app/proctor): use the run's separate proctor code.
 
-`npm start` builds the editors and opens a separate migration database, preserving the original. Temporary files and npm cache stay under `data/` on the project drive. No sample assessments are loaded in normal operation.
+`npm start` builds the editors and opens a separate migration database. It preserves the original database. No sample assessments are loaded during normal startup. Keep the terminal open; Ctrl+C stops the app.
 
-## Assessment workflow
+## Development and release status
 
-Create an assessment, review its questions and private grading rules, publish its version, and create a run for a class roster. Published versions remain fixed. Faculty manage only their own classes, assessments and results.
+Run `npm run check` for type, syntax, formatting, build and regression checks. Docker execution and browser workflows have [separate checks](docs/reference/TEST_PLAN.md).
 
-The logic editor supports PHP, Python, JavaScript and SQLite SQL, with sample execution and private grading tests. **Create PHP web assessment** starts a plain PHP/SQLite project with file editing, ZIP import/export, isolated preview and JavaScript console. Faculty can edit its files and rubric through Advanced package editing.
+AI assistance is optional. Faculty can explicitly choose Gemini (`GEMINI_API_KEY`) or Groq (`GROQ_API_KEY`) and a model for question generation; providers never switch automatically. Faculty reviews generated questions and any suggested grades before saving or publishing. See the [user guide](docs/guides/USER_GUIDE.md) for the data sent to the provider.
 
-Answers and revisions save as drafts. On finish or expiry, saved drafts are graded subject to remaining retries. Earned criteria accumulate across attempts. Graded scores require explicit faculty publication; manual web rubric criteria must be reviewed first.
+Treat public deployment as a pilot until the [remaining release gates](docs/reference/TEST_PLAN.md#before-a-graded-deployment) are completed. Use one application process per active database, and follow [backup and recovery](docs/operations/BACKUP_AND_RECOVERY.md) before moving records.
 
-AI drafting is optional. Set `GEMINI_API_KEY` to enable it; teaching text and draft questions are sent to that provider. Faculty review remains required.
-
-## Checks and maintenance
-
-```powershell
-npm run check
-npm run verify:coding
-npm run verify:web
-```
-
-Cleanup requires an explicit database path and creates a verified backup first:
-
-```powershell
-node --import ./src/runtime-temp.mjs --import tsx --experimental-sqlite scripts/cleanup-assessments.mjs PATH-TO-DATABASE
-```
-
-This removes unused unpublished assessments and unfinished AI previews. Additional assessment IDs explicitly select samples to remove with their runs and attempts. Published assessments are otherwise preserved. Required test data lives in `tests/fixtures/`.
-
-## Guides
-
-- [Migration, faculty accounts, execution hosts and rollback](docs/MIGRATION.md)
-- [Classroom hosting](docs/LOCAL_HOSTING.md)
-- [API](docs/API.md)
-- [Question authoring](docs/QUESTION_AUTHORING.md)
-- [Security](docs/SECURITY.md)
-- [Verification and remaining release gates](docs/TEST_PLAN.md)
+See [CHANGE.md](CHANGE.md) for changes. Current documentation was reviewed against the working tree on **7 November 2026**; dated audit and test reports are kept in the [archive](docs/README.md#historical-records).
