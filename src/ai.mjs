@@ -303,7 +303,21 @@ function previewDesign(input, design) {
 }
 
 export function inspectProposal(input) {
-  return previewDesign({ ...input, questionMode: 'auto', programmingLanguage: 'auto' }, input?.design);
+  const preview = previewDesign({ ...input, questionMode: 'auto', programmingLanguage: 'auto' }, input?.design);
+  if (input.questionMode !== 'mixed') return preview;
+  const remaining = { ...positiveTypeCounts(input.questionTypeCounts) };
+  for (const [missionIndex, mission] of preview.missions.entries()) {
+    for (const [questionIndex, question] of mission.questions.entries()) {
+      const item = preview.design.missions[missionIndex]?.activities?.[questionIndex];
+      if (!item || (remaining[item.type] ?? 0) <= 0) {
+        question.ready = false;
+        question.issue = 'This question exceeds the requested count for its type. Regenerate it as a missing type.';
+      } else remaining[item.type]--;
+    }
+  }
+  preview.warnings = Object.entries(remaining).filter(([, count]) => count > 0)
+    .map(([type, count]) => `The draft needs ${count} more ${type.replaceAll('_', ' ')} question${count === 1 ? '' : 's'}.`);
+  return preview;
 }
 
 // Regenerate only invalid targets; successful questions outside this set stay untouched.
@@ -335,22 +349,30 @@ async function regenerateWithinBudget(input, options) {
       continue;
     }
     let issue = inspected.missions[missionIndex].questions[questionIndex].issue;
+    const actualCounts = design.missions.flatMap(mission => mission.activities).reduce((counts, question) => {
+      counts[question.type] = (counts[question.type] ?? 0) + 1;
+      return counts;
+    }, {});
+    const missingType = issue?.includes('exceeds the requested count')
+      ? Object.keys(input.questionTypeCounts ?? {}).find(type => (actualCounts[type] ?? 0) < input.questionTypeCounts[type])
+      : null;
+    const targetType = missingType ?? original.type;
     let replaced = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const language = original.type === 'code_writing' && codingLanguages.some(([name]) => name === original.language)
+        const language = targetType === 'code_writing' && codingLanguages.some(([name]) => name === original.language)
           ? original.language : original.type === 'web_project' && ['frontend', 'php-web'].includes(original.projectKind)
             ? original.projectKind : 'auto';
         const preview = await proposeExam({
           aiProvider: input.aiProvider, aiModel: input.aiModel,
           title: input.title, subject: input.subject, kind: 'activity', difficulty: input.difficulty,
           durationMinutes: input.durationMinutes, source, questionCount: 1, missionCount: 1,
-          questionMode: 'mixed', questionTypeCounts: { [original.type]: 1 }, programmingLanguage: language,
-          customPrompt: `Regenerate this invalid question while preserving its topic, intent, type and language. Original question: ${String(original.prompt || '').slice(0, 900)}. Validation error to fix: ${String(issue).slice(0, 500)}. ${String(input.customPrompt || '').slice(0, 300)}`,
+          questionMode: 'mixed', questionTypeCounts: { [targetType]: 1 }, programmingLanguage: language,
+          customPrompt: `Regenerate this invalid question as ${targetType} while preserving its topic and intent. Original question: ${String(original.prompt || '').slice(0, 900)}. Validation error to fix: ${String(issue).slice(0, 500)}. ${String(input.customPrompt || '').slice(0, 300)}`,
         }, { ...options, skipRepair: true });
         const replacement = preview.design?.missions?.[0]?.activities?.[0];
-        if (preview.design?.missions?.length !== 1 || preview.design.missions[0].activities.length !== 1 || replacement?.type !== original.type)
-          throw new Error('The replacement must contain exactly one question of the original type.');
+        if (preview.design?.missions?.length !== 1 || preview.design.missions[0].activities.length !== 1 || replacement?.type !== targetType)
+          throw new Error('The replacement must contain exactly one question of the required type.');
         const checked = preview.missions[0].questions[0];
         if (!checked.ready) throw new Error(checked.issue);
         if ((original.type === 'code_writing' && language !== 'auto' && replacement.language !== language) ||
@@ -479,7 +501,10 @@ async function generateWithinBudget(input, options) {
           preview = previewDesign(request, repaired);
           try { buildGeneratedPackage(request, repaired); } catch (repairError) { preview.warnings = [repairError.message]; }
         } catch (repairError) {
-          if (options?.surfaceRepairFailures) throw repairError;
+          if (options?.surfaceRepairFailures) {
+            repairError.previewDesign = preview.design;
+            throw repairError;
+          }
         }
       }
     }

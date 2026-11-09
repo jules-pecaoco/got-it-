@@ -139,7 +139,8 @@ test('generation preserves provider errors when validation repair fails', async 
   const paused = jobs.view('faculty-a', started.jobId);
   assert.equal(paused.status, 'paused');
   assert.equal(paused.error.code, 'AI_RATE_LIMITED');
-  assert.equal(paused.completedQuestions, 0);
+  assert.equal(paused.completedQuestions, 1);
+  assert.equal(paused.proposal.design.missions[0].activities[0].answer, 'Missing option');
 });
 
 test('200 questions finish in ten bounded batches and retain every completed question', async (t) => {
@@ -429,6 +430,7 @@ test('resuming a paused job waits for its old active batch to stop', async (t) =
 test('a ready batch with the wrong custom mix is retried before committing its questions', async (t) => {
   let calls = 0;
   const { jobs } = setup(t, {
+    regenerator: async (input) => inspectProposal(input),
     proposer: async (input, { budget }) => {
       charge(budget);
       calls++;
@@ -448,13 +450,45 @@ test('a ready batch with the wrong custom mix is retried before committing its q
   const paused = jobs.view('faculty-a', started.jobId);
   assert.equal(paused.status, 'paused');
   assert.equal(paused.error.code, 'AI_INVALID_DRAFT');
-  assert.equal(paused.completedQuestions, 20);
+  assert.equal(paused.completedQuestions, 40);
   assert.equal(paused.completedBatches, 1);
-  const saved = structuredClone(paused.proposal.design.missions);
+  assert.ok(
+    paused.proposal.missions.some((mission) => mission.questions.some((question) => !question.ready)),
+  );
+  const saved = structuredClone(paused.proposal.design.missions.slice(0, 5));
   jobs.resume('faculty-a', started.jobId);
   await jobs.drain();
   const done = jobs.view('faculty-a', started.jobId);
   assert.equal(done.status, 'done');
   assert.equal(done.completedQuestions, 40);
   assert.deepEqual(done.proposal.design.missions.slice(0, saved.length), saved);
+});
+
+test('a mixed batch repairs only excess types during the same generation job', async (t) => {
+  let repairedTargets;
+  const { jobs } = setup(t, {
+    proposer: async (input) => preview({ ...input, questionTypeCounts: { true_false: input.questionCount } }),
+    regenerator: async (input) => {
+      repairedTargets = input.targets;
+      const design = structuredClone(input.design);
+      for (const target of input.targets)
+        design.missions[target.missionIndex].activities[target.questionIndex] = question(
+          target.questionIndex + 100,
+          'single_choice',
+        );
+      return inspectProposal({ ...input, design });
+    },
+  });
+  const started = jobs.start('faculty-a', {
+    ...base,
+    questionCount: 4,
+    questionMode: 'mixed',
+    questionTypeCounts: { single_choice: 2, true_false: 2 },
+  });
+  await jobs.drain();
+  const done = jobs.view('faculty-a', started.jobId);
+  assert.equal(done.status, 'done', done.error?.message);
+  assert.equal(done.completedQuestions, 4);
+  assert.equal(repairedTargets.length, 2);
+  assert.equal(done.proposal.design.missions[0].activities[0].type, 'true_false');
 });

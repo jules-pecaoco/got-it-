@@ -1147,7 +1147,7 @@ async function followAiJob(initial) {
   try {
   while (state.aiJobId === id && state.aiJobWatch === watch) {
     state.aiBusy = job.status === 'running';
-    state.aiJobReadOnly = ['running', 'paused'].includes(job.status);
+    state.aiJobReadOnly = job.status === 'running' || (job.status === 'paused' && job.error?.code !== 'AI_INVALID_DRAFT');
     state.aiProposalJobId = id;
     state.aiJobImportedComplete = ['done', 'cancelled'].includes(job.status);
     aiJobControls(job.status);
@@ -1158,12 +1158,12 @@ async function followAiJob(initial) {
       renderAiPreview(job.proposal);
     }
     renderWorkflowState();
-    if (['running', 'paused'].includes(job.status))
+    if (job.status === 'running' || (job.status === 'paused' && job.error?.code !== 'AI_INVALID_DRAFT'))
       for (const control of $('ai-preview').querySelectorAll('button,input,select,textarea')) control.disabled = true;
     if (job.status !== 'running') {
       state.aiProposal = job.proposal;
       renderAiPreview(job.proposal);
-      if (job.status === 'paused')
+      if (job.status === 'paused' && job.error?.code !== 'AI_INVALID_DRAFT')
         for (const control of $('ai-preview').querySelectorAll('button,input,select,textarea')) control.disabled = true;
       if (job.completedQuestions) {
         queueAiWorkSave();
@@ -1190,7 +1190,7 @@ async function followAiJob(initial) {
     if (state.aiJobWatch === watch) {
       state.aiBusy = false;
       renderWorkflowState();
-      if (state.aiJobReadOnly)
+      if (state.aiJobReadOnly && job.error?.code !== 'AI_INVALID_DRAFT')
         for (const control of $('ai-preview').querySelectorAll('button,input,select,textarea')) control.disabled = true;
     }
   }
@@ -1507,6 +1507,12 @@ async function mutateAiDesign(change, openMissionIndex) {
 async function regenerateQuestions(targets) {
   if (state.aiBusy || !targets.length) return;
   if (!state.aiReady) throw new Error('Choose an available AI service and model before regenerating this question.');
+  if (state.aiJobId) {
+    await request(`/api/instructor/ai/jobs/${state.aiJobId}/cancel`, { method: 'POST' });
+    state.aiJobId = null;
+    state.aiJobReadOnly = false;
+    state.aiJobImportedComplete = true;
+  }
   state.aiInput = { ...state.aiInput, aiProvider: $('ai-provider').value, aiModel: $('ai-model').value };
   const selected = new Set(selectedAiQuestions());
   state.aiBusy = true;

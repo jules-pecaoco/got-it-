@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { assessmentLimits } from '../public/assessment-limits.js';
 import { positiveTypeCounts, validateQuestionMix } from '../public/question-types.js';
-import { buildGeneratedPackage, generationLanguagePlan, inspectProposal, proposeExam } from './ai.mjs';
+import {
+  buildGeneratedPackage,
+  generationLanguagePlan,
+  inspectProposal,
+  proposeExam,
+  regenerateInvalidQuestions,
+} from './ai.mjs';
 import { createAiActionBudget, resolveAiSelection, withAiActionBudget } from './ai-provider.mjs';
 
 const fail = (code, message, status = 400) => {
@@ -112,9 +118,18 @@ export function planGeneration(input) {
 }
 
 export class AiGenerationJobs {
-  constructor(db, { proposer = proposeExam, budgetOptions = {}, concurrency = 2 } = {}) {
+  constructor(
+    db,
+    {
+      proposer = proposeExam,
+      regenerator = regenerateInvalidQuestions,
+      budgetOptions = {},
+      concurrency = 2,
+    } = {},
+  ) {
     this.db = db;
     this.proposer = proposer;
+    this.regenerator = regenerator;
     this.budgetOptions = budgetOptions;
     this.concurrency = concurrency;
     this.running = new Map();
@@ -267,27 +282,63 @@ export class AiGenerationJobs {
     const input = JSON.parse(initial.input_json),
       plan = JSON.parse(initial.plan_json);
     const design = JSON.parse(initial.design_json);
+    const committedGroups = plan.slice(0, initial.cursor).reduce((sum, batch) => sum + batch.missionCount, 0);
+    design.missions.length = committedGroups;
     const seen = new Set(design.missions.flatMap((group) => group.activities).map(signature));
     for (let cursor = initial.cursor; cursor < plan.length; cursor++) {
       if (signal.aborted || this.closed) return;
       const batch = plan[cursor];
       const prior = [...seen].slice(-40).map((value) => value.slice(0, 140));
-      const batchInstruction = `Batch ${cursor + 1} of ${plan.length}. Avoid duplicating these earlier question prompts: ${JSON.stringify(prior).slice(0, 1050)}.`;
-      const preview = await this.proposer(
-        { ...input, ...batch },
-        { budget, signal, batchInstruction, surfaceRepairFailures: true },
+      const requiredTypes = Object.entries(batch.questionTypeCounts ?? {}).flatMap(([type, count]) =>
+        Array(count).fill(type),
       );
+      const typeGroups = batch.groupSizes?.map((size) => requiredTypes.splice(0, size));
+      const batchInstruction = `Batch ${cursor + 1} of ${plan.length}. ${typeGroups?.length ? `Use these question types in order for each group: ${JSON.stringify(typeGroups)}. ` : ''}Avoid duplicating these earlier question prompts: ${JSON.stringify(prior).slice(0, 1050)}.`;
+      let preview;
+      try {
+        preview = await this.proposer(
+          { ...input, ...batch },
+          { budget, signal, batchInstruction, surfaceRepairFailures: true },
+        );
+      } catch (error) {
+        if (error.previewDesign && !signal.aborted) {
+          design.missions.push(...(error.previewDesign.missions ?? []));
+          this.db
+            .prepare('UPDATE ai_generation_jobs SET design_json=?,updated_at=? WHERE id=? AND status=?')
+            .run(JSON.stringify(design), new Date().toISOString(), id, 'running');
+        }
+        throw error;
+      }
       if (signal.aborted || this.closed) return;
+      let reviewed = inspectProposal({ ...input, ...batch, design: preview.design });
+      const invalidTargets = reviewed.missions.flatMap((mission, missionIndex) =>
+        mission.questions.flatMap((question, questionIndex) =>
+          !question.ready ? [{ missionIndex, questionIndex }] : [],
+        ),
+      );
+      if (invalidTargets.length && budget.snapshot().remainingCalls) {
+        const repaired = await this.regenerator(
+          { ...input, ...batch, design: preview.design, targets: invalidTargets },
+          { budget, signal },
+        );
+        preview = repaired;
+        reviewed = inspectProposal({ ...input, ...batch, design: repaired.design });
+      }
       const questions = preview.design?.missions?.flatMap((group) => group.activities) ?? [];
       if (
         questions.length !== batch.questionCount ||
-        preview.missions.some((group) => group.questions.some((question) => !question.ready))
-      )
+        reviewed.missions.some((group) => group.questions.some((question) => !question.ready))
+      ) {
+        design.missions.push(...(preview.design?.missions ?? []));
+        this.db
+          .prepare('UPDATE ai_generation_jobs SET design_json=?,updated_at=? WHERE id=? AND status=?')
+          .run(JSON.stringify(design), new Date().toISOString(), id, 'running');
         fail(
           'AI_INVALID_DRAFT',
-          'A batch needs correction. Earlier questions are saved; resume to retry this batch.',
+          'The draft needs correction. Review the marked questions or resume to retry this batch.',
           422,
         );
+      }
       buildGeneratedPackage({ ...input, ...batch }, preview.design);
       const batchSeen = new Set();
       for (const question of questions) {
