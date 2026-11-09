@@ -77,7 +77,15 @@ export async function facultyApi({
       }
     };
     if (path === '/api/instructor/ai/jobs') {
-      if (method === 'GET') return send(res, requestId, { jobs: store.aiJobs.list(owner) });
+      if (method === 'GET') {
+        const saved = store.db
+          .prepare('SELECT updated_at FROM faculty_ai_proposals WHERE owner_id=?')
+          .get(owner);
+        return send(res, requestId, {
+          jobs: store.aiJobs.list(owner),
+          reviewUpdatedAt: saved?.updated_at ?? null,
+        });
+      }
       if (method === 'POST') {
         limit(`ai-generation:${owner}`, 5, 60_000);
         return send(res, requestId, store.aiJobs.start(owner, await selectedInput()), 202);
@@ -189,7 +197,14 @@ export async function facultyApi({
           requestId,
           store.saveAiProposal(instructorToken, await body(req, assessmentLimits.proposalBytes)),
         );
-      if (method === 'DELETE') return send(res, requestId, store.deleteAiProposal(instructorToken));
+      if (method === 'DELETE')
+        return send(
+          res,
+          requestId,
+          store.tx(() =>
+            store.deleteAiProposal(instructorToken, url.searchParams?.get('jobId') ?? undefined),
+          ),
+        );
     }
     if (method === 'POST' && path === '/api/instructor/ai/inspect')
       return send(res, requestId, inspectProposal(await body(req, assessmentLimits.proposalBytes)));
@@ -220,6 +235,8 @@ export async function facultyApi({
       const input = await body(req, assessmentLimits.proposalBytes);
       const packageResult = buildApprovedPackage(input);
       const created = store.tx(() => {
+        if (input.reviewJobId !== undefined)
+          store.deleteAiProposal(instructorToken, input.reviewJobId, { approving: true });
         const draft = store.importDraft(
           packageResult.public,
           { ...packageResult.private, evidence: packageResult.evidence },
@@ -382,7 +399,7 @@ export async function facultyApi({
     if (method === 'POST' && aiGradePath) {
       limit(`ai-grading:${owner}`, 10);
       const [, gradeRun, candidate, questionId] = aiGradePath;
-      const review = store.reviewStudent(gradeRun, candidate);
+      const review = store.reviewStudent(gradeRun, candidate, { includeNumericGradingReference: true });
       if (!review.canOverride)
         throw Object.assign(new Error('Wait until the attempt is finished and ready for faculty grading.'), {
           code: 'ATTEMPT_IN_PROGRESS',

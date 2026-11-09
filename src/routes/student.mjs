@@ -154,11 +154,8 @@ export async function studentApi({
       } catch (error) {
         if (!['WEB_RUNTIME_UNAVAILABLE', 'WEB_WORKSPACE_ENDED', 'WEB_CAPACITY'].includes(error.code))
           throw error;
-        const previous = store.db
-          .prepare('SELECT response_json FROM answer_drafts WHERE session_id=? AND activity_id=?')
-          .get(sessionId, draftPath[1]);
-        if (previous)
-          input.value.database = JSON.parse(previous.response_json).value?.database ?? input.value.database;
+        input.value.database =
+          store.webCheckpointStore().load(sessionId, draftPath[1]) ?? input.value.database;
         warning =
           'Your project files are saved, but the latest database changes could not be saved. Keep this page open and tell your instructor before leaving.';
       }

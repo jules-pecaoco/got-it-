@@ -146,6 +146,87 @@ test('a slow expired student does not block another student settlement', async (
   } finally { blocked.resolve(); await sweep; store.close(); }
 });
 
+test('opening an untouched PHP preview does not create a submission at finish', async () => {
+  const store = new Store(':memory:', { automaticSettlement: false });
+  store.codingQueue.concurrency = 0;
+  const { ids: [sessionId], files } = fixtures(store);
+  const { factory } = fakeFactory();
+  const previews = createPreviewService('http://localhost:3999', () => true, '*', () => false,
+    { checkpoints: store.webCheckpointStore(), workspaceFactory: factory });
+  try {
+    await previews.open(sessionId, 'php-app', { files });
+    assert.ok(store.webCheckpointStore().load(sessionId, 'php-app'));
+    await attemptSettlement(store, previews).settle(sessionId, true);
+    assert.equal(store.context(sessionId).session.status, 'submitted');
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM coding_jobs WHERE kind='submit'").get().n, 0);
+  } finally { await previews.close(); store.close(); }
+});
+
+test('expiry includes a database-only POST admitted before the deadline', async () => {
+  const store = new Store(':memory:', { automaticSettlement: false });
+  store.codingQueue.concurrency = 0;
+  const { ids: [sessionId], files } = fixtures(store);
+  const began = deferred(), release = deferred();
+  const updated = Buffer.from('student database').toString('base64');
+  let database = Buffer.from('seed database').toString('base64');
+  const previews = createPreviewService('http://localhost:3999', id =>
+    Date.now() < Date.parse(store.context(id).session.deadline_at), '*', () => false, {
+    checkpoints: store.webCheckpointStore(),
+    workspaceFactory: () => ({
+      start: async () => {}, close: async () => {}, snapshot: async () => database,
+      request: async () => {
+        began.resolve();
+        await release.promise;
+        database = updated;
+        return { status: 200, headers: {}, body: Buffer.from('ok') };
+      },
+    }),
+  });
+  try {
+    const preview = await previews.open(sessionId, 'php-app', { files });
+    const response = new Promise(resolve => {
+      const req = { method: 'POST', url: new URL(preview.url).pathname, headers: {}, async *[Symbol.asyncIterator]() {} };
+      let status;
+      previews.server.emit('request', req, { setHeader() {}, writeHead(code) { status = code; }, end() { resolve(status); } });
+    });
+    await began.promise;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const deadlineAt = new Date().toISOString();
+    store.db.prepare('UPDATE sessions SET deadline_at=? WHERE id=?').run(deadlineAt, sessionId);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    release.resolve();
+    assert.equal(await response, 200);
+    const checkpoint = store.db.prepare('SELECT saved_at FROM web_checkpoints WHERE session_id=?').get(sessionId);
+    assert.ok(checkpoint.saved_at > deadlineAt);
+    await attemptSettlement(store, previews).settle(sessionId);
+    const job = store.db.prepare("SELECT payload_json,accepted_at FROM coding_jobs WHERE kind='submit'").get();
+    assert.equal(store.context(sessionId).session.status, 'expired');
+    assert.equal(JSON.parse(job.payload_json).value.database, updated);
+    assert.ok(job.accepted_at < deadlineAt);
+  } finally { release.resolve(); await previews.close(); store.close(); }
+});
+
+test('settlement uses the durable database with newer draft files when the live preview is unavailable', async () => {
+  const store = new Store(':memory:', { automaticSettlement: false });
+  store.codingQueue.concurrency = 0;
+  const { ids: [sessionId], files } = fixtures(store);
+  const draftFiles = { ...files, 'style.css': 'body { color: black; }' };
+  const old = Buffer.from('old database').toString('base64');
+  const latest = Buffer.from('latest database').toString('base64');
+  try {
+    const checkpointAt = new Date(Date.now() - 1000).toISOString();
+    store.webCheckpointStore().save(sessionId, 'php-app', latest, checkpointAt);
+    store.db.prepare('UPDATE web_checkpoints SET saved_at=? WHERE session_id=?').run(checkpointAt, sessionId);
+    store.saveDraft(sessionId, 'php-app', { value: { files: draftFiles, database: old } });
+    const previews = { snapshot: async () => { throw Object.assign(new Error('Preview unavailable'), { code: 'WEB_RUNTIME_UNAVAILABLE' }); } };
+    const settlement = attemptSettlement(store, previews);
+    await settlement.settle(sessionId, true);
+    const job = store.db.prepare("SELECT payload_json FROM coding_jobs WHERE kind='submit'").get();
+    assert.deepEqual(JSON.parse(job.payload_json).value, { files: draftFiles, database: latest });
+    assert.equal(settlement.stats().checkpointFailures, 1);
+  } finally { store.close(); }
+});
+
 test('reconciliation only removes expired owned containers and counts crash survivors toward capacity', async () => {
   const now = Date.now(), expired = `gotit-web-${'a'.repeat(36)}`, live = `gotit-web-${'b'.repeat(36)}`, calls = [];
   const run = async args => {

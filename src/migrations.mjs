@@ -28,6 +28,25 @@ const migrations = [
   `,
   },
   { version: 3, sql: 'ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;' },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE faculty_ai_proposals (owner_id TEXT PRIMARY KEY, data_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+      INSERT INTO faculty_ai_proposals (owner_id, data_json, updated_at)
+        SELECT faculty_id, data_json, updated_at FROM (
+          SELECT t.faculty_id, p.data_json, p.updated_at,
+            ROW_NUMBER() OVER (PARTITION BY t.faculty_id ORDER BY p.updated_at DESC, p.rowid DESC) AS position
+          FROM ai_proposals p JOIN instructor_tokens t ON t.token_hash=p.token_hash
+        ) WHERE position=1;
+    `,
+  },
+  {
+    version: 5,
+    sql: `
+      ALTER TABLE web_checkpoints ADD COLUMN changed_at TEXT;
+      UPDATE web_checkpoints SET changed_at=saved_at WHERE database_snapshot IS NOT NULL;
+    `,
+  },
 ];
 
 export function migrate(db) {

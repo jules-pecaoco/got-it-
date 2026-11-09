@@ -125,6 +125,25 @@ export class AiGenerationJobs {
       design_json TEXT NOT NULL, status TEXT NOT NULL, error_json TEXT, budget_json TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS ai_jobs_owner ON ai_generation_jobs(owner_id,status);`);
+    const reviewsTable = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_job_reviews'",
+    );
+    if (!reviewsTable.get()) {
+      // Old terminal jobs have no record of whether the review was used or discarded.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!reviewsTable.get())
+          db.exec(`CREATE TABLE ai_job_reviews (
+            job_id TEXT PRIMARY KEY REFERENCES ai_generation_jobs(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN ('imported','dismissed')));
+          INSERT INTO ai_job_reviews (job_id,state)
+            SELECT id,'imported' FROM ai_generation_jobs WHERE status IN ('done','cancelled');`);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    }
     db.prepare("UPDATE ai_generation_jobs SET status='paused',error_json=? WHERE status='running'").run(
       JSON.stringify({
         code: 'AI_INTERRUPTED',
@@ -162,7 +181,11 @@ export class AiGenerationJobs {
   list(owner) {
     return this.db
       .prepare(
-        "SELECT id,status,updated_at FROM ai_generation_jobs WHERE owner_id=? AND status IN ('running','paused') ORDER BY updated_at DESC LIMIT 10",
+        `SELECT j.id,j.status,j.updated_at FROM ai_generation_jobs j
+         LEFT JOIN ai_job_reviews r ON r.job_id=j.id
+         WHERE j.owner_id=? AND r.job_id IS NULL
+           AND (j.status IN ('running','paused','done') OR (j.status='cancelled' AND j.cursor>0))
+         ORDER BY j.updated_at DESC,j.rowid DESC LIMIT 10`,
       )
       .all(owner);
   }
@@ -249,12 +272,11 @@ export class AiGenerationJobs {
       if (signal.aborted || this.closed) return;
       const batch = plan[cursor];
       const prior = [...seen].slice(-40).map((value) => value.slice(0, 140));
-      const customPrompt =
-        `${String(input.customPrompt ?? '').slice(0, 800)}\nBatch ${cursor + 1} of ${plan.length}. Avoid duplicating these earlier question prompts: ${JSON.stringify(prior).slice(0, 1050)}.`.slice(
-          0,
-          2000,
-        );
-      const preview = await this.proposer({ ...input, ...batch, customPrompt }, { budget, signal });
+      const batchInstruction = `Batch ${cursor + 1} of ${plan.length}. Avoid duplicating these earlier question prompts: ${JSON.stringify(prior).slice(0, 1050)}.`;
+      const preview = await this.proposer(
+        { ...input, ...batch },
+        { budget, signal, batchInstruction, surfaceRepairFailures: true },
+      );
       if (signal.aborted || this.closed) return;
       const questions = preview.design?.missions?.flatMap((group) => group.activities) ?? [];
       if (

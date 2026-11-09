@@ -38,6 +38,20 @@ test('source review shares a budget and resumes only unchecked questions', async
   await assert.rejects(checkSourceSupport(exam, [source], { activityIds: ['different-assessment'] }), { code: 'INVALID_AI_REQUEST' });
 });
 
+test('source review leaves non-numeric estimates unchecked', async () => {
+  const draft = buildGeneratedPackage(request, design);
+  const original = draft.public.missions[0].activities[0];
+  const scores = [true, [], ' ', '90', 0, 83.6];
+  const activities = scores.map((_, index) => ({ ...original, id: 'question-' + (index + 1) }));
+  const exam = { public: { missions: [{ activities }] }, private: draft.private };
+  const checks = await checkSourceSupport(exam, [source], { apiKey: 'test-key', fetcher: provider({
+    checks: activities.map(({ id }, index) => ({ activityId: id, matchPercent: scores[index] }))
+  }) });
+  assert.deepEqual(checks.map(({ matchPercent, checked }) => [matchPercent, checked]), [
+    [null, false], [null, false], [null, false], [null, false], [0, true], [84, true]
+  ]);
+});
+
 test('AI availability reads the configured Gemini key', () => {
   const previous = process.env.GEMINI_API_KEY;
   try {
@@ -89,7 +103,7 @@ test('AI proposals retry truncated output with a larger budget and a fresh timeo
   assert.equal(attempts.length, 2);
   assert.ok(JSON.parse(attempts[1].body).generationConfig.maxOutputTokens > JSON.parse(attempts[0].body).generationConfig.maxOutputTokens);
   assert.notEqual(attempts[0].signal, attempts[1].signal);
-  assert.ok(JSON.parse(attempts[0].body).generationConfig.responseJsonSchema);
+  assert.equal(JSON.parse(attempts[0].body).generationConfig.responseMimeType, 'application/json');
 });
 
 test('AI malformed output gets one retry, then returns safe provider diagnostics', async () => {

@@ -89,6 +89,27 @@ test('HTTP job boundaries authenticate every action and isolate faculty progress
   assert.equal(done.status, 'done');
   assert.equal(done.completedQuestions, 20);
   assert.equal(calls, 2);
+  const freshLogin = await login('jobs-owner');
+  assert.equal((await call('/api/instructor/ai/jobs', { token: freshLogin })).payload.data.jobs[0].id, id);
+  const proposalPath = '/api/instructor/ai/proposal';
+  const review = { input: done.input, proposal: done.proposal, selected: ['0:0'], job: { id, complete: true } };
+  const newerReview = { ...review, job: null, selected: ['0:1'] };
+  assert.equal((await call(proposalPath, { method: 'PUT', token: freshLogin, data: newerReview })).status, 200);
+  assert.equal((await call(proposalPath, { method: 'PUT', token: freshLogin, data: review })).status, 409);
+  assert.deepEqual((await call(proposalPath, { token: freshLogin })).payload.data, newerReview);
+  assert.equal((await call(proposalPath, { method: 'DELETE', token: freshLogin })).status, 200);
+  assert.equal((await call(proposalPath, { method: 'PUT', token: freshLogin, data: review })).status, 200);
+  assert.deepEqual((await call('/api/instructor/ai/jobs', { token: freshLogin })).payload.data.jobs, []);
+  const anotherLogin = await login('jobs-owner');
+  assert.deepEqual((await call(proposalPath, { token: anotherLogin })).payload.data, review);
+  assert.equal((await call(proposalPath, { token: other })).payload.data, null);
+  assert.equal((await call(`${proposalPath}?jobId=${id}`, { method: 'DELETE', token: other })).status, 404);
+  assert.equal((await call(`${proposalPath}?jobId=${id}`, { method: 'DELETE', token: anotherLogin })).status, 200);
+  const staleSave = await call(proposalPath, { method: 'PUT', token: anotherLogin, data: review });
+  assert.equal(staleSave.status, 409);
+  assert.equal(staleSave.payload.code, 'STALE_REVIEW');
+  assert.equal((await call(proposalPath, { token: anotherLogin })).payload.data, null);
+  assert.deepEqual((await call('/api/instructor/ai/jobs', { token: anotherLogin })).payload.data.jobs, []);
 });
 
 test('HTTP cancellation is terminal and late provider responses cannot commit a cancelled batch', async t => {
@@ -145,14 +166,17 @@ test('large HTTP proposals pin saved AI selection and 200 questions survive revi
   assert.equal(job.completedBatches, 10);
   assert.equal(requests.length, 10);
   assert.ok(requests.every(request => request.aiProvider === selection.aiProvider && request.aiModel === selection.aiModel));
-  const savedReview = { input: job.input, proposal: job.proposal, selected: [] };
+  const savedReview = { input: job.input, proposal: job.proposal, selected: [], job: { id: job.jobId, complete: true } };
   assert.ok(Buffer.byteLength(JSON.stringify(savedReview)) > 1_000_000);
   assert.equal((await call('/api/instructor/ai/proposal', { method: 'PUT', token: owner, data: savedReview })).status, 200);
   assert.equal((await call('/api/instructor/ai/proposal', { token: owner })).payload.data.proposal.design.missions.length, 50);
-  const approval = { ...job.input, missions: job.proposal.design.missions };
+  const approval = { ...job.input, missions: job.proposal.design.missions, reviewJobId: job.jobId };
   assert.ok(Buffer.byteLength(JSON.stringify(approval)) > 1_000_000);
   const draft = await call('/api/instructor/ai/approved-draft', { method: 'POST', token: owner, data: approval });
   assert.equal(draft.status, 201, JSON.stringify(draft.payload));
+  assert.equal((await call('/api/instructor/ai/proposal', { token: owner })).payload.data, null);
+  assert.deepEqual((await call('/api/instructor/ai/jobs', { token: owner })).payload.data.jobs, []);
+  assert.equal((await call('/api/instructor/ai/approved-draft', { method: 'POST', token: owner, data: approval })).status, 409);
   const { examId, version } = draft.payload.data;
   const assessment = `/api/instructor/assessments/${examId}/${version}`;
   assert.deepEqual((await call(assessment + '/validate', { method: 'POST', token: owner })).payload.data.errors, []);

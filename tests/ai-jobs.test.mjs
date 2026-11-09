@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { AiGenerationJobs, planGeneration } from '../src/ai-jobs.mjs';
-import { generationLanguagePlan, inspectProposal } from '../src/ai.mjs';
+import { generationLanguagePlan, inspectProposal, proposeExam } from '../src/ai.mjs';
 
 const source = {
   filename: 'lesson.md',
@@ -72,13 +72,83 @@ function deferred() {
   return { promise, resolve };
 }
 
+test('a Gemini draft starts in JSON mode and can finish after a malformed response', async (t) => {
+  const requests = [];
+  const { jobs } = setup(t, {
+    proposer: (input, options) =>
+      proposeExam(input, {
+        ...options,
+        apiKey: 'synthetic',
+        fetcher: async (url, request) => {
+          requests.push({ url, body: JSON.parse(request.body) });
+          const value = requests.length === 1 ? '{"missions":[}' : JSON.stringify(preview(input).design);
+          return Response.json({
+            candidates: [{ finishReason: 'STOP', content: { parts: [{ text: value }] } }],
+          });
+        },
+      }),
+  });
+  const started = jobs.start('faculty-a', {
+    ...base,
+    questionCount: 12,
+    customPrompt: 'x'.repeat(1980) + 'Keep this final note',
+    questionMode: 'mixed',
+    questionTypeCounts: { single_choice: 4, true_false: 4, numeric_entry: 4 },
+    aiProvider: 'gemini',
+    aiModel: 'gemini-3.5-flash',
+  });
+  await jobs.drain();
+  const done = jobs.view('faculty-a', started.jobId);
+  assert.equal(done.status, 'done', done.error?.message);
+  assert.equal(done.completedQuestions, 12);
+  assert.equal(done.budget.calls, 2);
+  const [first, retry] = requests;
+  assert.equal(first.body.generationConfig.responseJsonSchema, undefined);
+  assert.equal(first.body.generationConfig.responseMimeType, 'application/json');
+  assert.match(first.body.contents[0].parts[0].text, /Keep this final note/);
+  assert.equal(retry.body.generationConfig.responseJsonSchema, undefined);
+  assert.equal(retry.body.generationConfig.responseMimeType, 'application/json');
+  assert.match(retry.body.contents[0].parts[0].text, /previous response was incomplete or invalid JSON/);
+  assert.ok(requests.every(({ url }) => url === first.url));
+});
+
+test('generation preserves provider errors when validation repair fails', async (t) => {
+  let calls = 0;
+  const { jobs } = setup(t, {
+    proposer: (input, options) =>
+      proposeExam(input, {
+        ...options,
+        apiKey: 'synthetic',
+        fetcher: async () => {
+          if (++calls === 2) return Response.json({}, { status: 429 });
+          const design = preview(input).design;
+          design.missions[0].activities[0].answer = 'Missing option';
+          return Response.json({
+            candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(design) }] } }],
+          });
+        },
+      }),
+  });
+  const started = jobs.start('faculty-a', {
+    ...base,
+    questionCount: 1,
+    aiProvider: 'gemini',
+    aiModel: 'gemini-3.5-flash',
+  });
+  await jobs.drain();
+  const paused = jobs.view('faculty-a', started.jobId);
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.error.code, 'AI_RATE_LIMITED');
+  assert.equal(paused.completedQuestions, 0);
+});
+
 test('200 questions finish in ten bounded batches and retain every completed question', async (t) => {
   const requests = [];
   let offset = 0;
   const { jobs } = setup(t, {
-    proposer: async (input, { budget }) => {
+    proposer: async (input, { budget, batchInstruction }) => {
       charge(budget);
-      requests.push(input);
+      requests.push({ ...input, batchInstruction });
       const result = preview(input, offset);
       offset += input.questionCount;
       return result;
@@ -99,7 +169,7 @@ test('200 questions finish in ten bounded batches and retain every completed que
   assert.equal(questions.length, 200);
   assert.equal(done.result.public.missions.length, 50);
   assert.equal(new Set(questions.map((item) => item.prompt)).size, 200);
-  assert.match(requests[1].customPrompt, /Question 1:/i);
+  assert.match(requests[1].batchInstruction, /Question 1:/i);
   assert.equal(done.budget.calls, 10);
 });
 

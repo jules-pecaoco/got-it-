@@ -76,8 +76,8 @@ function sourceHasAtLocation(content, quote, location) {
 }
 const allowedTypes = questionTypeIds;
 const facultyOverride = 'Faculty approved this question after reviewing its estimated source match.';
-const percent = value => Number.isFinite(Number(value)) && value !== null && value !== '' && Number(value) >= 0 && Number(value) <= 100
-  ? Math.round(Number(value)) : null;
+const percent = value => Number.isFinite(value) && value >= 0 && value <= 100
+  ? Math.round(value) : null;
 
 export const aiAvailable = () => Boolean(process.env.GEMINI_API_KEY);
 
@@ -460,8 +460,11 @@ async function generateWithinBudget(input, options) {
   if (!requestedTypes.includes('web_project')) webInstruction = '';
   const prompt = `Create a ${input.durationMinutes}-minute ${format} titled ${JSON.stringify(input.title)} about ${JSON.stringify(input.subject)}. Difficulty: ${difficulty}; aim for ${depth}. Return JSON only: {"missions":[{"title":"...","story":"...","activities":[{"type":"single_choice|multiple_choice|true_false|text_entry|numeric_entry|matching|sequencing|data_inspection|datatable_code|code_writing|web_project","prompt":"...","options":["label",...],"answer":"exact option label, array of labels, boolean, accepted text array, {value,tolerance,unit}, or ordered label array","evidenceQuote":"exact consecutive quote from source when available","location":"slide/page/section label","sourceMatchPercent":0,"sourceMatchReason":"brief reason"}]}]}. The JSON key missions is an internal storage field; present each group as a ${groupName(input)}. Exactly ${groupCount} ${groupName(input)}s, 1–4 questions each. ${countInstruction}${kind === 'ctf' ? 'Make clues and short flags students must derive; progress from easier to harder missions. ' : 'Use clear section titles; questions need not be framed as missions or flags. '}Questions must require thinking at the requested difficulty; avoid copying example code or asking students to repeat source wording. Do not reveal answers in prompts. Use only the provided source. If a question shows code, put the code on separate lines inside a fenced block labeled python, php, sql, or javascript; preserve indentation, dollar signs, and line breaks in the prompt JSON string. Never flatten code into a prose paragraph. The code must be supported by the source material. ${mixInstruction}Required language allocation: ${JSON.stringify(languagePlan)}. Each entry requires a distinct coding question; satisfy these minimums within the requested type counts, then distribute remaining coding questions among selected languages. Languages selected without a corresponding coding question type are topic guidance only. ${otherTypesInstruction}${codingInstruction} ${webInstruction} For every question, estimate sourceMatchPercent from 0 to 100 for how well BOTH its prompt and correct answer follow from the source; use 100 only for direct support, a middle percentage for partial or inferred support, and 0 for no support. The percentage is advisory and does not decide faculty approval. Include a short sourceMatchReason. Provide a source quote and its real slide/page location when possible; do not invent quotes. ${customInstruction}Source filename: ${source.filename}\nSOURCE TEXT BEGINS\n${source.content}\nSOURCE TEXT ENDS`;
   const request = { ...input, kind, difficulty, missionCount: groupCount, source };
-  const generationOptions = { ...options, ...selection, responseSchema: draftSchema, outputTokenLimit: options?.outputTokenLimit ?? (requestedTypes.some(type => ['code_writing', 'web_project'].includes(type)) ? 16384 : 8192) };
-  const qualityPrompt = `${prompt}\nQUESTION QUALITY: Correct options must not stand out by length, detail, grammar or certainty. Use plausible distractors with comparable specificity, never padding to equal character counts. Each option must stand alone without references to its letter or other option positions. Sequence choices use neutral labels without step numbers; their listed order must not reveal the correct sequence. Scaffolds contain only necessary setup and neutral TODO guidance, never the assessed solution logic.`;
+  // Gemini's schema constraints can reject mixed drafts or omit question-specific fields.
+  // JSON mode keeps the full question payload available for application validation.
+  const responseSchema = selection.provider === 'gemini' ? undefined : draftSchema;
+  const generationOptions = { ...options, ...selection, responseSchema, outputTokenLimit: options?.outputTokenLimit ?? (requestedTypes.some(type => ['code_writing', 'web_project'].includes(type)) ? 16384 : 8192) };
+  const qualityPrompt = `${prompt}${options?.batchInstruction ? "\n" + options.batchInstruction : ""}\nQUESTION QUALITY: Correct options must not stand out by length, detail, grammar or certainty. Use plausible distractors with comparable specificity, never padding to equal character counts. Each option must stand alone without references to its letter or other option positions. Sequence choices use neutral labels without step numbers; their listed order must not reveal the correct sequence. Scaffolds contain only necessary setup and neutral TODO guidance, never the assessed solution logic.`;
   const first = simpleGeneratedStarters(await generateJson(qualityPrompt, generationOptions));
   if (options?.previewOnly) {
     let preview = previewDesign(request, first);
@@ -471,11 +474,13 @@ async function generateWithinBudget(input, options) {
       if (!options?.skipRepair && ['AI_INVALID_DRAFT', 'AI_UNSUPPORTED_TYPE'].includes(error.code)) {
         try {
           const invalidDetails = preview.missions.flatMap((mission, mi) => mission.questions.flatMap((question, qi) => question.ready ? [] : [`Section ${mi + 1}, question ${qi + 1}: ${question.issue}`]));
-          const repaired = simpleGeneratedStarters(await generateJson(`${prompt}\nPREVIOUS DRAFT\n${JSON.stringify(first)}\nRepair these validation errors: ${JSON.stringify([error.message, ...invalidDetails])}. Preserve valid questions unless changing them is required for the requested type counts or language allocation. Return the complete corrected draft.`, generationOptions));
+          const repaired = simpleGeneratedStarters(await generateJson(`${qualityPrompt}\nPREVIOUS DRAFT\n${JSON.stringify(first)}\nRepair these validation errors: ${JSON.stringify([error.message, ...invalidDetails])}. Preserve valid questions unless changing them is required for the requested type counts or language allocation. Return the complete corrected draft.`, generationOptions));
           repairedForValidation = true;
           preview = previewDesign(request, repaired);
           try { buildGeneratedPackage(request, repaired); } catch (repairError) { preview.warnings = [repairError.message]; }
-        } catch { /* Keep the editable preview and its visible validation warning. */ }
+        } catch (repairError) {
+          if (options?.surfaceRepairFailures) throw repairError;
+        }
       }
     }
     const qualityWarnings = preview.missions.flatMap((mission, mi) => mission.questions.flatMap((question, qi) =>

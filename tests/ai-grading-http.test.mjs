@@ -19,6 +19,7 @@ test('AI grading routes enforce ownership and completion, and provider failure n
   const run = asFaculty(owner, () => {
     const pub = JSON.parse(readFileSync(new URL('./fixtures/garden/public-exam.json', import.meta.url)));
     const priv = JSON.parse(readFileSync(new URL('./fixtures/garden/private-grading.json', import.meta.url)));
+    priv.rules['r-area'].criteria[0].answer.tolerance = 0.5;
     store.importDraft(pub, priv); store.publish(pub.examId, 1);
     return store.createRun({ examId: pub.examId, version: 1, pin: '4242', feedbackMode: 'graded',
       opensAt: new Date(Date.now() - 10000).toISOString(), closesAt: new Date(Date.now() + 3600000).toISOString(),
@@ -28,9 +29,10 @@ test('AI grading routes enforce ownership and completion, and provider failure n
   const path = `${base}/api/instructor/runs/${run.id}/students/A/scores/garden-area/ai-check`;
   const check = token => fetch(path, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
   assert.equal((await check(login.token)).status, 409);
-  store.saveDraft(joined.session.id, 'garden-area', { value: 12, unit: 'm2' });
+  store.saveDraft(joined.session.id, 'garden-area', { value: 12.4, unit: 'm2' });
   store.finalize(joined.session.id);
   const before = asFaculty(owner, () => store.reviewStudent(run.id, 'A'));
+  assert.equal(Object.hasOwn(before.questions.find(question => question.id === 'garden-area'), 'numericGradingReference'), false);
   const response = await check(login.token);
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, 'AI_NOT_CONFIGURED');
@@ -38,14 +40,20 @@ test('AI grading routes enforce ownership and completion, and provider failure n
   assert.equal(after.score, before.score);
   assert.deepEqual(after.questions.map(q => q.override), before.questions.map(q => q.override));
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, options) => String(url).startsWith('https://generativelanguage.googleapis.com/')
-    ? { ok: true, json: async () => ({ candidates: [{ finishReason:'STOP', content: { parts: [{text:JSON.stringify({points:7,feedback:'Synthetic advisory grade.'})}] } }] }) }
-    : originalFetch(url, options);
+  let gradingEvidence;
+  globalThis.fetch = async (url, options) => {
+    if (!String(url).startsWith('https://generativelanguage.googleapis.com/')) return originalFetch(url, options);
+    const prompt = JSON.parse(options.body).contents[0].parts[0].text;
+    gradingEvidence = JSON.parse(prompt.split('Evidence:\n').at(-1));
+    return { ok: true, json: async () => ({ candidates: [{ finishReason:'STOP', content: { parts: [{text:JSON.stringify({points:7,feedback:'Synthetic advisory grade.'})}] } }] }) };
+  };
   process.env.GEMINI_API_KEY = 'synthetic-provider-key';
   try {
     const suggestion = await check(login.token);
     assert.equal(suggestion.status, 200);
     assert.equal((await suggestion.json()).data.points, 7);
+    assert.deepEqual(gradingEvidence.submittedAnswer, { value: 12.4, unit: 'm2' });
+    assert.deepEqual(gradingEvidence.gradingReference, [{ points: 50, answer: { value: 12, tolerance: 0.5, unit: 'm2' } }]);
     assert.equal(asFaculty(owner, () => store.reviewStudent(run.id,'A')).score, before.score);
     const override = await fetch(path.replace('/ai-check',''), {method:'PUT',headers:{Authorization:`Bearer ${login.token}`,'Content-Type':'application/json'},body:JSON.stringify({points:9,reason:'Faculty final decision'})});
     assert.equal(override.status,200);

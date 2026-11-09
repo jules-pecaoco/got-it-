@@ -8,7 +8,7 @@ import type { Project } from '../web/contracts.js';
 type Workspace = Pick<PhpWorkspace, 'start' | 'request' | 'snapshot' | 'close'>;
 interface Checkpoints {
   load(sessionId: string, activityId: string): string | undefined;
-  save(sessionId: string, activityId: string, database: string): void;
+  save(sessionId: string, activityId: string, database: string, changedAt?: string): void;
   clear(sessionId: string, activityId: string): void;
 }
 interface Preview {
@@ -17,6 +17,7 @@ interface Preview {
   activityId: string;
   expires: number;
   queue: WorkspaceQueue;
+  lastRequestAt?: string;
 }
 interface Options {
   checkpoints?: Checkpoints;
@@ -65,7 +66,7 @@ export function createPreviewService(
   async function snapshot(preview: Preview) {
     return preview.queue.run(async () => {
       const database = await preview.workspace.snapshot();
-      checkpoints.save(preview.sessionId, preview.activityId, database);
+      checkpoints.save(preview.sessionId, preview.activityId, database, preview.lastRequestAt);
       return database;
     }, true);
   }
@@ -99,6 +100,7 @@ export function createPreviewService(
         // A request may have waited behind another PHP operation until the
         // deadline. Recheck immediately before starting student code.
         if (closed || !allowed(preview.sessionId) || preview.expires < now()) throw busy();
+        preview.lastRequestAt = new Date(now()).toISOString();
         const result = await preview.workspace.request(
           req.method || 'GET',
           path,
@@ -107,7 +109,7 @@ export function createPreviewService(
         );
         if (req.method === 'POST') {
           const database = await preview.workspace.snapshot();
-          checkpoints.save(preview.sessionId, preview.activityId, database);
+          checkpoints.save(preview.sessionId, preview.activityId, database, preview.lastRequestAt);
         }
         return result;
       });
@@ -177,6 +179,7 @@ export function createPreviewService(
     }),
     async open(sessionId: string, activityId: string, project: Project, seedSql = '', reset = false) {
       const key = `${sessionId}:${activityId}`;
+      const resetAt = reset ? new Date(now()).toISOString() : undefined;
       return lock(key, async () => {
         const existing = [...previews.entries()].find(
           ([, item]) => item.sessionId === sessionId && item.activityId === activityId,
@@ -209,7 +212,7 @@ export function createPreviewService(
         try {
           await workspace.start(project, seedSql);
           const database = await workspace.snapshot();
-          checkpoints.save(sessionId, activityId, database);
+          checkpoints.save(sessionId, activityId, database, resetAt);
           const token = randomBytes(24).toString('hex');
           previews.set(token, {
             workspace,

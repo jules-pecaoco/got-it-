@@ -862,6 +862,7 @@ $('new-activity').addEventListener('click', () => {
 $('manage-activities').addEventListener('click', () => setActivityMode('library'));
 $('ai-discard').addEventListener('click', () =>
   perform(async () => {
+    const jobId = state.aiJobId ?? state.aiProposalJobId;
     if (state.aiJobId) await request(`/api/instructor/ai/jobs/${state.aiJobId}/cancel`, { method: 'POST' });
     state.aiJobId = null;
     state.aiJobReadOnly = false;
@@ -869,7 +870,8 @@ $('ai-discard').addEventListener('click', () =>
     state.aiBusy = false;
     try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
     await state.aiSaveQueue.catch(() => {});
-    await request('/api/instructor/ai/proposal', { method: 'DELETE' });
+    await request(`/api/instructor/ai/proposal${jobId ? `?jobId=${encodeURIComponent(jobId)}` : ''}`, { method: 'DELETE' });
+    state.aiProposalJobId = null;
     state.aiProposal = null;
     state.aiInput = null;
     state.aiEditors = [];
@@ -1043,21 +1045,27 @@ function queueAiWorkSave() {
 async function loadAiWork() {
   const saved = await request('/api/instructor/ai/proposal');
   const jobs = await request('/api/instructor/ai/jobs', { silent: true });
-  let recoverId;
-  try { recoverId = sessionStorage.getItem('gotit-ai-job'); } catch { /* Server list remains available. */ }
-  recoverId ||= jobs.jobs?.[0]?.id;
-  if (recoverId) {
+  const listedIds = jobs.jobs.filter(job => !saved || job.id === saved.job?.id ||
+    ['running', 'paused'].includes(job.status) || job.updated_at > jobs.reviewUpdatedAt).map(job => job.id);
+  const pendingReviewId = saved?.job?.complete === false ? saved.job.id : null;
+  let hint;
+  try { hint = sessionStorage.getItem('gotit-ai-job'); } catch { /* Server list remains available. */ }
+  const recoverIds = new Set(listedIds);
+  if (pendingReviewId) recoverIds.add(pendingReviewId);
+  const first = recoverIds.delete(hint) ? [hint] : [];
+  for (const recoverId of [...first, ...recoverIds]) {
     try {
       const job = await request(`/api/instructor/ai/jobs/${recoverId}`, { silent: true });
       if (['running', 'paused'].includes(job.status) ||
-        (job.status === 'done' && !(saved?.job?.id === recoverId && saved.job.complete))) {
+        (['done', 'cancelled'].includes(job.status) && job.completedQuestions &&
+          !(saved?.job?.id === recoverId && saved.job.complete))) {
         void followAiJob(job).catch(error => { $('ai-status').textContent = userErrorMessage(error, 'faculty'); });
         setActivityMode('create');
         return;
       }
     } catch (error) { if (error.status !== 404) throw error; }
-    try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
   }
+  try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
   if (!saved) return;
   state.aiJobId = null;
   state.aiJobReadOnly = false;
@@ -1166,8 +1174,12 @@ async function followAiJob(initial) {
         }
       }
       $('ai-recovery-status').textContent = 'Completed batches are saved.';
+      const retryMessage = job.error && userErrorMessage(job.error, 'faculty');
+      const pinnedSelection = job.error && ['AI_INVALID_JSON', 'AI_OUTPUT_TRUNCATED', 'AI_MODEL_UNAVAILABLE', 'AI_RATE_LIMITED'].includes(job.error.code)
+        ? ' Resume uses this job’s original model and question count. Start a new generation to change them.'
+        : '';
       $('ai-status').textContent = job.status === 'done' ? `${job.completedQuestions} questions ready. Review answers before approving.`
-        : job.status === 'paused' ? `${job.completedQuestions} / ${job.totalQuestions} saved. ${job.error ? userErrorMessage(job.error, 'faculty') : 'Resume when ready.'}`
+        : job.status === 'paused' ? `${job.completedQuestions} / ${job.totalQuestions} saved. ${retryMessage || 'Resume when ready.'}${pinnedSelection}`
         : 'Generation cancelled. Completed batches are saved.';
       return;
     }
@@ -1939,16 +1951,18 @@ $('ai-save').addEventListener('click', () =>
         return [{ ...state.aiProposal.design.missions[missionIndex], activities }];
       });
       if (!missions.length) throw new Error(`Approve at least one ${groupWord(state.aiInput)} and question.`);
+      const reviewJobId = state.aiProposalJobId ?? undefined;
+      await state.aiSaveQueue.catch(() => {});
       const created = await request('/api/instructor/ai/approved-draft', {
         method: 'POST',
-        data: { ...state.aiInput, missions },
+        data: { ...state.aiInput, missions, reviewJobId },
       });
-      await state.aiSaveQueue.catch(() => {});
-      await request('/api/instructor/ai/proposal', { method: 'DELETE' }).catch(() => {});
+      if (!reviewJobId) await request('/api/instructor/ai/proposal', { method: 'DELETE' }).catch(() => {});
       state.selectedExam = created;
       state.sources = [];
       state.aiProposal = null;
       state.aiJobId = null;
+      state.aiProposalJobId = null;
       try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
       state.aiInput = null;
       state.aiEditors = [];

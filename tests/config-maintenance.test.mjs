@@ -5,8 +5,35 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Store } from '../src/store.mjs';
+import { migrate } from '../src/migrations.mjs';
 import { removeDemoAssessments, removeUnusedDrafts } from '../src/maintenance.mjs';
 import { initializeStoreSchema } from '../src/store-schema.mjs';
+
+test('migration preserves the newest legacy AI review for each faculty owner', () => {
+  const store = new Store(':memory:');
+  try {
+    store.db.exec('DROP TABLE faculty_ai_proposals; DELETE FROM schema_migrations WHERE version=4;');
+    const token = store.db.prepare('INSERT INTO instructor_tokens (token_hash,expires_at,faculty_id) VALUES (?,?,?)');
+    const review = store.db.prepare('INSERT INTO ai_proposals (token_hash,data_json,updated_at) VALUES (?,?,?)');
+    for (const [hash, owner, text, date] of [
+      ['session-one', 'teacher-a', 'older review', '2026-10-01'],
+      ['session-two', 'teacher-a', 'current review', '2026-10-02'],
+      ['session-three', 'teacher-b', 'other teacher review', '2026-10-01'],
+    ]) {
+      token.run(hash, '2027-01-01', owner);
+      review.run(hash, JSON.stringify({ text }), date);
+    }
+    migrate(store.db);
+    migrate(store.db);
+    const saved = store.db.prepare('SELECT owner_id,data_json FROM faculty_ai_proposals ORDER BY owner_id').all();
+    assert.deepEqual(saved.map(row => [row.owner_id, JSON.parse(row.data_json).text]), [
+      ['teacher-a', 'current review'], ['teacher-b', 'other teacher review'],
+    ]);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM ai_proposals').get().count, 3);
+  } finally {
+    store.close();
+  }
+});
 
 test('shared configuration loads .env independently of cwd, keeps explicit overrides and the in-memory sentinel', () => {
   const root = mkdtempSync(join(tmpdir(), 'gotit-config-'));

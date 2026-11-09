@@ -660,22 +660,55 @@ export class Store {
     return { loggedOut: true };
   }
   getAiProposal(token) {
-    this.requireInstructor(token);
-    const row = this.db.prepare('SELECT data_json FROM ai_proposals WHERE token_hash=?').get(hash(token));
+    const owner = this.requireInstructor(token);
+    const row = this.db.prepare('SELECT data_json FROM faculty_ai_proposals WHERE owner_id=?').get(owner);
     return row ? parse(row.data_json) : null;
   }
   saveAiProposal(token, data) {
-    this.requireInstructor(token);
+    const owner = this.requireInstructor(token);
     invariant(data?.input?.source?.content && Array.isArray(data?.proposal?.design?.missions) &&
       Array.isArray(data?.selected), 'INVALID_PROPOSAL', 'Generated proposal is incomplete.');
-    this.db.prepare(`INSERT INTO ai_proposals (token_hash,data_json,updated_at) VALUES (?,?,?)
-      ON CONFLICT(token_hash) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at`)
-      .run(hash(token), JSON.stringify(data), stamp());
+    this.tx(() => {
+      if (data.job) {
+        invariant(typeof data.job.id === 'string', 'INVALID_PROPOSAL', 'Generation job ID is required.');
+        const job = this.aiJobs.row(owner, data.job.id);
+        const saved = this.db.prepare('SELECT data_json,updated_at FROM faculty_ai_proposals WHERE owner_id=?').get(owner);
+        const sameReview = saved && parse(saved.data_json).job?.id === job.id;
+        const receipt = this.db.prepare('SELECT state FROM ai_job_reviews WHERE job_id=?').get(job.id);
+        invariant(!receipt || (receipt.state === 'imported' && sameReview && data.job.complete === true),
+          'STALE_REVIEW', 'This generation review has already been closed.', 409);
+        if (['done', 'cancelled'].includes(job.status)) {
+          invariant(!saved || sameReview || job.updated_at > saved.updated_at,
+            'STALE_REVIEW', 'A newer question review is already saved.', 409);
+          if (data.job.complete === true)
+            this.db.prepare("INSERT OR IGNORE INTO ai_job_reviews (job_id,state) VALUES (?,'imported')").run(job.id);
+        }
+      }
+      this.db.prepare(`INSERT INTO faculty_ai_proposals (owner_id,data_json,updated_at) VALUES (?,?,?)
+        ON CONFLICT(owner_id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at`)
+        .run(owner, JSON.stringify(data), stamp());
+    });
     return { saved: true };
   }
-  deleteAiProposal(token) {
-    this.requireInstructor(token);
-    this.db.prepare('DELETE FROM ai_proposals WHERE token_hash=?').run(hash(token));
+  deleteAiProposal(token, jobId, { approving = false } = {}) {
+    const owner = this.requireInstructor(token);
+    const saved = this.getAiProposal(token);
+    if (jobId !== undefined) {
+      const job = this.aiJobs.row(owner, jobId);
+      if (approving) {
+        const receipt = this.db.prepare('SELECT state FROM ai_job_reviews WHERE job_id=?').get(job.id);
+        invariant(['done', 'cancelled'].includes(job.status) &&
+          (!receipt || (receipt.state === 'imported' && saved?.job?.id === job.id)),
+        'STALE_REVIEW', 'This generation review is no longer available to approve.', 409);
+      }
+    }
+    const dismissed = jobId ?? saved?.job?.id;
+    if (typeof dismissed === 'string')
+      this.db.prepare(`INSERT INTO ai_job_reviews (job_id,state)
+        SELECT id,'dismissed' FROM ai_generation_jobs WHERE owner_id=? AND id=?
+        ON CONFLICT(job_id) DO UPDATE SET state=excluded.state`).run(owner, dismissed);
+    if (jobId === undefined || saved?.job?.id === jobId)
+      this.db.prepare('DELETE FROM faculty_ai_proposals WHERE owner_id=?').run(owner);
     return { deleted: true };
   }
   admission({ runId, candidateId, pin }) {
@@ -1179,18 +1212,24 @@ export class Store {
         const submitted = draft || this.db.prepare('SELECT response_json FROM submissions WHERE session_id=? AND activity_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId, activityId);
         return submitted ? parse(submitted.response_json).value?.database : undefined;
       },
-      save: (sessionId, activityId, database) => {
+      save: (sessionId, activityId, database, changedAt = null) => {
         invariant(typeof database === 'string' && database.length <= 1400000 && /^[A-Za-z0-9+/]*={0,2}$/.test(database), 'INVALID_DATABASE', 'Invalid database checkpoint.');
-        this.db.prepare(`INSERT INTO web_checkpoints VALUES (?,?,?,?) ON CONFLICT(session_id,activity_id)
-          DO UPDATE SET database_snapshot=excluded.database_snapshot,saved_at=excluded.saved_at`).run(sessionId, activityId, database, stamp());
+        this.db.prepare(`INSERT INTO web_checkpoints(session_id,activity_id,database_snapshot,saved_at,changed_at)
+          VALUES (?,?,?,?,?) ON CONFLICT(session_id,activity_id) DO UPDATE SET
+          database_snapshot=excluded.database_snapshot,
+          saved_at=excluded.saved_at,
+          changed_at=COALESCE(excluded.changed_at, web_checkpoints.changed_at)
+          WHERE web_checkpoints.database_snapshot IS NOT excluded.database_snapshot`)
+          .run(sessionId, activityId, database, stamp(), changedAt);
       },
       clear: (sessionId, activityId) => {
-        this.db.prepare(`INSERT INTO web_checkpoints VALUES (?,?,NULL,?) ON CONFLICT(session_id,activity_id)
-          DO UPDATE SET database_snapshot=NULL,saved_at=excluded.saved_at`).run(sessionId, activityId, stamp());
+        this.db.prepare(`INSERT INTO web_checkpoints(session_id,activity_id,database_snapshot,saved_at)
+          VALUES (?,?,NULL,?) ON CONFLICT(session_id,activity_id) DO UPDATE SET
+          database_snapshot=NULL,saved_at=excluded.saved_at,changed_at=NULL`).run(sessionId, activityId, stamp());
       }
     };
   }
-  reviewStudent(runId, candidateId) {
+  reviewStudent(runId, candidateId, { includeNumericGradingReference = false } = {}) {
     const run = this.db.prepare('SELECT * FROM runs WHERE id=?').get(runId);
     invariant(run, 'RUN_NOT_FOUND', 'Run not found.', 404);
     const roster = this.db.prepare('SELECT * FROM roster WHERE run_id=? AND candidate_id=?').get(runId, candidateId);
@@ -1224,15 +1263,18 @@ export class Store {
         const lost = this.db.prepare('SELECT COALESCE(SUM(points),0) AS points FROM penalty_events WHERE session_id=? AND activity_id=?')
           .get(session.id, activity.id).points;
         const override = overrides.get(activity.id);
+        const rule = exam.private.rules[activity.gradingRuleId];
         let expectedAnswer;
-        try { expectedAnswer = answerText(activity, exam.private.rules[activity.gradingRuleId]); }
+        try { expectedAnswer = answerText(activity, rule); }
         catch { expectedAnswer = 'See published answer key.'; }
         questions.push({ id: activity.id, missionId, missionTitle: mission.title,
           prompt: activity.prompt, type: activity.type, publicConfig: activity.publicConfig,
           maxPoints: activity.maxPoints, automaticPoints: earned - lost,
           effectivePoints: override ? override.points : earned - lost,
           override: override ? { points: override.points, reason: override.reason, updatedAt: override.updated_at } : null,
-          expectedAnswer, attempts: byActivity.get(activity.id) ?? [] });
+          expectedAnswer, attempts: byActivity.get(activity.id) ?? [],
+          ...(includeNumericGradingReference && activity.type === 'numeric_entry'
+            ? { numericGradingReference: rule?.criteria?.map(({ points, answer }) => ({ points, answer })) } : {}) });
       }
     }
     const status = session.status === 'in_progress' && Date.now() >= Date.parse(session.deadline_at)
