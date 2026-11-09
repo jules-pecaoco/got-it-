@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
+import { spawnSync } from 'node:child_process';
 import { outputMatches, validateCodeConfig, defaultStarterCode } from '../public/code-task.js';
 import { buildGeneratedPackage, buildApprovedPackage, proposeExam } from '../src/ai.mjs';
 import { validatePackage, evaluate } from '../src/engine.mjs';
-import { codingStatus, dockerArguments, executeCode, evaluateCode, previewCode, cleanupJobContainers } from '../src/code-runner.mjs';
+import { codingStatus, dockerArguments, executeCode, evaluateCode, previewCode, cleanupJobContainers, reconcileCodeContainers, startCodeReconciliation, runtimeImages, runtimeCommands } from '../src/code-runner.mjs';
 import { Store } from '../src/store.mjs';
 import { answerText } from '../public/answer-key.js';
 
@@ -23,6 +25,7 @@ test('coding status distinguishes a missing CLI, stopped Docker, wrong mode and 
   const missing = await codingStatus(async () => { throw Object.assign(new Error('not found'), { code: 'ENOENT' }); });
   assert.equal(missing.docker, 'missing');
   assert.equal((await codingStatus(async () => ({ exitCode: 1, stdout: '' }))).docker, 'unreachable');
+  assert.equal((await codingStatus(async () => ({ exitCode: 0, stdout: '\n', stderr: 'error during connect: engine pipe is missing' }))).docker, 'unreachable');
   assert.equal((await codingStatus(async () => ({ exitCode: 0, stdout: 'windows' }))).docker, 'wrong_mode');
   const partial = await codingStatus(async args => args[0] === 'info'
     ? { exitCode: 0, stdout: 'linux' }
@@ -87,6 +90,167 @@ test('restart cleanup targets only containers labelled with the recovered job', 
   await cleanupJobContainers(job, async args => { calls.push(args); return { exitCode: 0, stdout: args[0] === 'ps' ? 'abcdef123456\n' : '' }; });
   assert.deepEqual(calls, [['ps', '-aq', '--filter', `label=gotit.job=${job}`], ['rm', '--force', 'abcdef123456']]);
   await assert.rejects(() => cleanupJobContainers(job, async () => ({ exitCode: 1, stdout: '' })), e => e.code === 'CODE_RUNNER_UNAVAILABLE');
+});
+
+test('every console runtime owns a PID 1 deadline before reading input or running student code', () => {
+  for (const language of Object.keys(solution)) {
+    const args = dockerArguments(language, 'test-container');
+    const command = args.slice(args.indexOf(runtimeImages[language]) + 1);
+    assert.deepEqual(command.slice(-runtimeCommands[language].length), runtimeCommands[language]);
+    assert.ok(command.length > runtimeCommands[language].length);
+    assert.ok(args.includes('gotit.code=true'));
+    assert.ok(args.some(arg => /^gotit.owner=[a-f0-9]{24}$/.test(arg)));
+    const expires = Number(args.find(arg => arg.startsWith('gotit.expires=')).split('=')[1]);
+    assert.ok(expires > Date.now() && expires <= Date.now() + 5000);
+    if (language === 'php') {
+      assert.match(command[2], /hrtime\(true\).*proc_open.*STDIN,STDOUT,STDERR/);
+      assert.match(command[2], /proc_terminate\(\$p,9\);proc_close\(\$p\);exit\(137\)/);
+    } else if (language !== 'javascript') {
+      assert.match(command[2], /p\.wait\(timeout=5\)/);
+      assert.match(command[2], /os\._exit/);
+    }
+  }
+  const args = dockerArguments('javascript', 'test-container');
+  const supervisor = args[args.indexOf(runtimeImages.javascript) + 3];
+  const exits = [], listeners = {};
+  let deadline;
+  runInNewContext(supervisor, {
+    require: () => ({ spawn: (command, childArgs, options) => {
+      assert.equal(command, 'node'); assert.deepEqual(Array.from(childArgs), runtimeCommands.javascript.slice(1));
+      assert.equal(options.stdio, 'inherit');
+      return { once: (event, listener) => { listeners[event] = listener; } };
+    } }),
+    process: { argv: ['node', ...runtimeCommands.javascript], exit: code => exits.push(code) },
+    setTimeout: (callback, ms) => { assert.equal(ms, 5000); deadline = callback; }, clearTimeout: () => {}
+  });
+  // No child exit and no application/CLI callback is needed to expire PID 1.
+  deadline();
+  assert.deepEqual(exits, [137]);
+  listeners.exit(0); assert.equal(exits.at(-1), 0);
+});
+
+test('console reconciliation removes only expired containers owned by this execution installation', async () => {
+  const now = 1800000000000, calls = [];
+  const expired = 'got-it-code-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const live = 'got-it-code-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  await reconcileCodeContainers(async args => {
+    calls.push(args);
+    return { exitCode: 0, stdout: args[0] === 'ps' ? `${expired}|${now - 1}\n${live}|${now + 5000}\n` : '' };
+  }, now);
+  assert.deepEqual(calls[0].slice(0, 5), ['ps', '-a', '--filter', 'label=gotit.code=true', '--filter']);
+  assert.match(calls[0][5], /^label=gotit.owner=[a-f0-9]{24}$/);
+  assert.deepEqual(calls.slice(1), [['rm', '--force', expired]]);
+  for (const stdout of [`unrelated|${now - 1}`, `${expired}|invalid`]) {
+    const unsafeCalls = [];
+    await assert.rejects(() => reconcileCodeContainers(async args => {
+      unsafeCalls.push(args); return { exitCode: 0, stdout };
+    }, now), { code: 'CODE_RUNNER_UNAVAILABLE' });
+    assert.equal(unsafeCalls.length, 1);
+  }
+  await assert.rejects(() => reconcileCodeContainers(async () => ({ exitCode: 1, stdout: '' }), now), { code: 'CODE_RUNNER_UNAVAILABLE' });
+  await assert.rejects(() => reconcileCodeContainers(async args => ({ exitCode: args[0] === 'ps' ? 0 : 1, stdout: `${expired}|${now - 1}` }), now), { code: 'CODE_RUNNER_UNAVAILABLE' });
+});
+
+test('console reconciliation starts immediately, repeats without overlap and drains on stop', async () => {
+  const releases = [], calls = [];
+  let activeSweeps = 0, maxActive = 0;
+  const reconciler = startCodeReconciliation({ intervalMs: 5, processRunner: async (args, input, timeout) => {
+    calls.push(args); assert.equal(input, ''); assert.equal(timeout, 3000);
+    activeSweeps++; maxActive = Math.max(maxActive, activeSweeps);
+    await new Promise(resolve => releases.push(resolve));
+    activeSweeps--;
+    return { exitCode: 0, stdout: '' };
+  } });
+  try {
+    assert.equal(calls.length, 1);
+    assert.equal(reconciler.stats().running, true);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(calls.length, 1);
+    releases.shift()();
+    const until = Date.now() + 1000;
+    while (calls.length < 2 && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(calls.length, 2);
+    assert.equal(maxActive, 1);
+    let drained = false;
+    const stopping = reconciler.stop().then(() => { drained = true; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(drained, false);
+    assert.equal(calls.length, 2);
+    releases.shift()();
+    await stopping;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(calls.length, 2);
+    assert.deepEqual(reconciler.stats(), { stopped: true, running: false, attempts: 2, failures: 0, lastError: null });
+  } finally {
+    for (const release of releases) release();
+    await reconciler.stop();
+  }
+});
+
+test('background console reconciliation tolerates offline Docker and retries without blocking the app', async () => {
+  let calls = 0;
+  const reconciler = startCodeReconciliation({ intervalMs: 5, processRunner: async () => {
+    if (++calls === 1) throw Object.assign(new Error('Docker missing'), { code: 'ENOENT' });
+    return { exitCode: 0, stdout: '' };
+  } });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reconciler.stats().failures, 1);
+    assert.equal(reconciler.stats().lastError, 'ENOENT');
+    const until = Date.now() + 1000;
+    while (calls < 2 && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(calls >= 2);
+    await reconciler.stop();
+    assert.equal(reconciler.stats().lastError, null);
+  } finally { await reconciler.stop(); }
+  for (const intervalMs of [0, -1, NaN, 0.5, 2147483648])
+    assert.throws(() => startCodeReconciliation({ intervalMs }), /configuration/);
+});
+
+test('startup reconciliation tolerates an expired container disappearing before removal', async () => {
+  const expired = 'got-it-code-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', calls = [];
+  const reconciler = startCodeReconciliation({ processRunner: async args => {
+    calls.push(args);
+    if (args[0] === 'ps') return { exitCode: 0, stdout: `${expired}|${Date.now() - 1000}` };
+    return { exitCode: 1, stdout: '', stderr: `Error response from daemon: No such container: ${expired}` };
+  } });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls[0][0], 'ps');
+    assert.ok(calls[0].includes('label=gotit.code=true'));
+    assert.ok(calls[0].some(arg => /^label=gotit.owner=[a-f0-9]{24}$/.test(arg)));
+    assert.deepEqual(calls.slice(1), [['rm', '--force', expired]]);
+  } finally { await reconciler.stop(); }
+});
+
+test('idle console reconciliation timer does not keep the process alive', () => {
+  const moduleUrl = new URL('../src/code-runner.mjs', import.meta.url).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `import { startCodeReconciliation } from ${JSON.stringify(moduleUrl)}; startCodeReconciliation({ processRunner: async () => ({exitCode:0,stdout:''}) });`], { timeout: 2000, windowsHide: true, encoding: 'utf8' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('console recovery failure prevents execution and retains the two-run concurrency bound', async () => {
+  const failedCalls = [];
+  await assert.rejects(() => executeCode('python', 'print(5)', '', { processRunner: async args => {
+    failedCalls.push(args[0]); return { exitCode: 1, stdout: '' };
+  } }), { code: 'CODE_RUNNER_UNAVAILABLE' });
+  assert.deepEqual(failedCalls, ['ps', 'rm']);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; }), calls = [];
+  const processRunner = async args => {
+    calls.push(args[0]);
+    if (args[0] === 'run') await gate;
+    return { exitCode: 0, stdout: args[0] === 'run' ? '5' : '', stderr: '', stopped: false };
+  };
+  const first = executeCode('python', 'print(5)', '', { processRunner });
+  const second = executeCode('python', 'print(5)', '', { processRunner });
+  try {
+    await assert.rejects(() => executeCode('python', 'print(5)', '', { processRunner }), { code: 'CODE_RUNNER_BUSY' });
+  } finally { release(); }
+  assert.deepEqual((await Promise.all([first, second])).map(result => result.output), ['5', '5']);
+  assert.equal(calls.filter(command => command === 'run').length, 2);
+  assert.equal(calls.filter(command => command === 'rm').length, 2);
 });
 
 test('coding output comparisons preserve text and order, support whitespace and bounded numeric tolerance', () => {
@@ -170,18 +334,22 @@ test('sandbox uses no network, host mounts or privileged access, and cleans up t
     assert.equal(args.some(arg => ['--privileged', '-v', '--volume', '--mount'].includes(arg)), false);
   }
   const calls = [];
-  const processRunner = async (args, input) => { calls.push({ args, input }); return { stdout: '5', stderr: '', exitCode: 0, stopped: false }; };
+  const processRunner = async (args, input) => { calls.push({ args, input }); return { stdout: args[0] === 'run' ? '5' : '', stderr: '', exitCode: 0, stopped: false }; };
   assert.equal((await executeCode('python', 'print(5)', '', { processRunner })).output, '5');
-  assert.deepEqual(JSON.parse(calls[0].input), { code: 'print(5)', input: '' });
-  assert.deepEqual(calls[1].args.slice(0, 2), ['rm', '--force']);
+  assert.equal(calls[0].args[0], 'ps');
+  assert.deepEqual(JSON.parse(calls[1].input), { code: 'print(5)', input: '' });
+  assert.deepEqual(calls[2].args.slice(0, 2), ['rm', '--force']);
   let removed = false;
   await assert.rejects(() => executeCode('python', 'print(5)', '', { processRunner: async args => {
     if (args[0] === 'rm') { removed = true; return {}; }
+    if (args[0] === 'ps') return { stdout: '', exitCode: 0 };
     return { stdout: '', stderr: 'daemon offline', exitCode: 1, stopped: false };
   } }), error => error.code === 'CODE_RUNNER_UNAVAILABLE');
   assert.equal(removed, true);
-  const timeout = await executeCode('python', 'while True: pass', '', { processRunner: async args => args[0] === 'rm' ? {} : { stdout: '', stderr: '', exitCode: null, stopped: true } });
+  const timeout = await executeCode('python', 'while True: pass', '', { processRunner: async args => args[0] === 'rm' ? {} : { stdout: '', stderr: '', exitCode: args[0] === 'ps' ? 0 : null, stopped: args[0] === 'run' } });
   assert.equal(timeout.succeeded, false); assert.match(timeout.error, /limit/);
+  const expired = await executeCode('php', '<?php while(true) {}', '', { processRunner: async args => ({ stdout: '', stderr: '', exitCode: args[0] === 'run' ? 137 : 0, stopped: false }) });
+  assert.equal(expired.succeeded, false); assert.match(expired.error, /limit/);
 });
 
 function setupStore(feedbackMode = 'practice', runner = sumRunner) {

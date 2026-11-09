@@ -1,4 +1,12 @@
-import { aiProviderCatalog, resolveAiSelection, aiUsageSnapshot } from '../ai-provider.mjs';
+import {
+  aiProviderCatalog,
+  resolveAiSelection,
+  aiUsageSnapshot,
+  aiAttemptSnapshot,
+  createAiActionBudget,
+  withAiActionBudget,
+} from '../ai-provider.mjs';
+import { assessmentLimits } from '../../public/assessment-limits.js';
 import { suggestGrade } from '../ai-grading.mjs';
 import {
   aiAvailable,
@@ -53,6 +61,39 @@ export async function facultyApi({
       aiProvider: selection.provider,
       aiModel: selection.model,
     });
+    const runAi = async (work) => {
+      const controller = new AbortController();
+      const abort = () => {
+        if (!res.writableEnded) controller.abort();
+      };
+      req.once?.('aborted', abort);
+      res.once?.('close', abort);
+      const budget = createAiActionBudget({ signal: controller.signal });
+      try {
+        return await withAiActionBudget(budget, () => work({ budget, signal: controller.signal }));
+      } finally {
+        req.off?.('aborted', abort);
+        res.off?.('close', abort);
+      }
+    };
+    if (path === '/api/instructor/ai/jobs') {
+      if (method === 'GET') return send(res, requestId, { jobs: store.aiJobs.list(owner) });
+      if (method === 'POST') {
+        limit(`ai-generation:${owner}`, 5, 60_000);
+        return send(res, requestId, store.aiJobs.start(owner, await selectedInput()), 202);
+      }
+    }
+    const aiJobPath = /^\/api\/instructor\/ai\/jobs\/([a-f0-9-]{36})(?:\/(resume|pause|cancel))?$/.exec(path);
+    if (aiJobPath) {
+      const [, id, action] = aiJobPath;
+      if (method === 'GET' && !action) return send(res, requestId, store.aiJobs.view(owner, id));
+      if (method === 'POST' && action === 'resume') {
+        limit(`ai-resume:${owner}`, 10, 60_000);
+        return send(res, requestId, store.aiJobs.resume(owner, id), 202);
+      }
+      if (method === 'POST' && ['pause', 'cancel'].includes(action))
+        return send(res, requestId, store.aiJobs.pause(owner, id, action === 'cancel'));
+    }
     if (path === '/api/instructor/ai/settings') {
       if (method === 'GET')
         return send(res, requestId, {
@@ -97,6 +138,7 @@ export async function facultyApi({
         coding: store.codingQueue.stats(),
         metrics: metricsSnapshot(),
         aiUsage: aiUsageSnapshot(),
+        aiAttempts: aiAttemptSnapshot(),
         previews: webPreviews?.stats(),
         settlement: settlement.stats(),
       });
@@ -142,25 +184,40 @@ export async function facultyApi({
     if (path === '/api/instructor/ai/proposal') {
       if (method === 'GET') return send(res, requestId, store.getAiProposal(instructorToken));
       if (method === 'PUT')
-        return send(res, requestId, store.saveAiProposal(instructorToken, await body(req)));
+        return send(
+          res,
+          requestId,
+          store.saveAiProposal(instructorToken, await body(req, assessmentLimits.proposalBytes)),
+        );
       if (method === 'DELETE') return send(res, requestId, store.deleteAiProposal(instructorToken));
     }
     if (method === 'POST' && path === '/api/instructor/ai/inspect')
-      return send(res, requestId, inspectProposal(await body(req)));
+      return send(res, requestId, inspectProposal(await body(req, assessmentLimits.proposalBytes)));
     if (method === 'POST' && path === '/api/instructor/ai/generate') {
       limit(`ai-generation:${owner}`, 5, 60_000);
-      return send(res, requestId, await generateExam(await selectedInput()));
+      const input = await selectedInput();
+      if (input.questionCount > assessmentLimits.generationBatchQuestions || input.missionCount > 5)
+        return send(res, requestId, store.aiJobs.start(owner, input, 'generate'), 202);
+      return send(res, requestId, await runAi((options) => generateExam(input, options)));
     }
     if (method === 'POST' && path === '/api/instructor/ai/regenerate') {
       limit(`ai-regenerate:${req.socket.remoteAddress}`, 40, 3600_000);
-      return send(res, requestId, await regenerateInvalidQuestions(await selectedInput()));
+      const input = {
+        ...(await body(req, assessmentLimits.proposalBytes)),
+        aiProvider: selection.provider,
+        aiModel: selection.model,
+      };
+      return send(res, requestId, await runAi((options) => regenerateInvalidQuestions(input, options)));
     }
     if (method === 'POST' && path === '/api/instructor/ai/propose') {
       limit(`ai-generation:${owner}`, 5, 60_000);
-      return send(res, requestId, await proposeExam(await selectedInput()));
+      const input = await selectedInput();
+      if (input.questionCount > assessmentLimits.generationBatchQuestions || input.missionCount > 5)
+        return send(res, requestId, store.aiJobs.start(owner, input), 202);
+      return send(res, requestId, await runAi((options) => proposeExam(input, options)));
     }
     if (method === 'POST' && path === '/api/instructor/ai/approved-draft') {
-      const input = await body(req);
+      const input = await body(req, assessmentLimits.proposalBytes);
       const packageResult = buildApprovedPackage(input);
       const created = store.tx(() => {
         const draft = store.importDraft(
@@ -188,7 +245,14 @@ export async function facultyApi({
       limit(`ai-check:${req.socket.remoteAddress}`, 10, 3600_000);
       const exam = store.getExam(aiCheckPath[1], Number(aiCheckPath[2]));
       const sources = store.listSources(aiCheckPath[1], Number(aiCheckPath[2]));
-      return send(res, requestId, await checkSourceSupport(exam, sources, selection));
+      const input = await body(req);
+      return send(
+        res,
+        requestId,
+        await runAi((options) =>
+          checkSourceSupport(exam, sources, { ...selection, ...options, activityIds: input?.activityIds }),
+        ),
+      );
     }
     if (method === 'GET' && /^\/api\/instructor\/(assessments|exams)$/.test(path))
       return send(res, requestId, store.listExams());
@@ -329,7 +393,7 @@ export async function facultyApi({
         throw Object.assign(new Error('Question not found.'), { code: 'NOT_FOUND', status: 404 });
       const signature = JSON.stringify(question.attempts);
       res.setTimeout(190000);
-      const suggestion = await suggestGrade(question, { selection });
+      const suggestion = await runAi(() => suggestGrade(question, { selection }));
       const current = store.reviewStudent(gradeRun, candidate);
       if (
         !current.canOverride ||

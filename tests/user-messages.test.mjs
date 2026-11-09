@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apiError, userErrorMessage, finishReviewMessage, completionMessage, questionIssueText, tableTargetSummary, codeServiceMessage } from '../public/user-messages.js';
+import { apiError, userErrorMessage, savedAnswerRule, finishReviewMessage, completionMessage, questionIssueText, tableTargetSummary, codeServiceMessage } from '../public/user-messages.js';
 import { retryPolicyText } from '../public/ui-model.js';
 
 test('finish review distinguishes all-saved, unanswered and unsaved changes without zero warnings', () => {
@@ -8,7 +8,8 @@ test('finish review distinguishes all-saved, unanswered and unsaved changes with
   assert.match(ready, /All your answers are saved/);
   assert.doesNotMatch(ready, /0 |pending|server|retries/);
   const pending = finishReviewMessage({ unanswered: 0, pending: 2 });
-  assert.match(pending, /2 questions have changes that are not saved yet/);
+  assert.match(pending, /2 questions have unsaved changes/);
+  assert.match(pending, /wait for “Saved” before finishing/);
   assert.doesNotMatch(pending, /All your answers are saved/);
   const missing = finishReviewMessage({ unanswered: 1, pending: 0 });
   assert.match(missing, /1 question has no saved answer/);
@@ -17,6 +18,10 @@ test('finish review distinguishes all-saved, unanswered and unsaved changes with
   const previous = finishReviewMessage({ hasPreviousSubmissions: true });
   assert.match(previous, /last submitted answer is kept/);
   assert.match(previous, /point or time deduction applies/);
+  assert.match(previous, /changed answer uses another try/);
+  assert.match(previous, /cannot change answers after finishing/);
+  assert.match(savedAnswerRule, /submit automatically when you finish or time runs out/);
+  assert.match(savedAnswerRule, /last submitted answer is kept/);
 });
 
 test('completion reports actual submissions and separates processing, grading and shared scores', () => {
@@ -64,6 +69,60 @@ test('code status describes the user action without exposing hosting details', (
   assert.equal(codeServiceMessage({ docker: 'ready', languages: ['python'], webPreviewConfigured: false }, { languages: ['python'] }), '');
 });
 
+test('save and submission errors keep conflict recovery and final-answer meaning', () => {
+  const conflict = userErrorMessage({ code: 'DRAFT_CONFLICT' });
+  assert.match(conflict, /another tab/);
+  assert.match(conflict, /Copy.*reload.*latest saved answer/);
+  assert.match(userErrorMessage({ code: 'DRAFT_CHANGED' }), /Copy.*refresh before saving/);
+  assert.match(userErrorMessage({ code: 'IDEMPOTENCY_CONFLICT' }), /different answer.*Copy.*reload.*latest submission before retrying/);
+  assert.match(userErrorMessage({ code: 'INVALID_IDEMPOTENCY_KEY' }), /not be confirmed.*Copy.*reload and try again/);
+  assert.match(userErrorMessage({ code: 'INVALID_DRAFT' }), /not saved.*try saving/);
+  assert.match(userErrorMessage({ code: 'ATTEMPT_LIMIT' }), /All tries are used.*last submitted answer is kept/);
+  assert.match(userErrorMessage({ code: 'LOCKED' }), /previous section first/);
+  assert.match(userErrorMessage({ code: 'SESSION_CLOSED' }), /time has ended.*results page/);
+});
+
+test('faculty AI messages distinguish billing, usage limits and uncertain request progress', () => {
+  const payment = userErrorMessage({ code: 'AI_PAYMENT_REQUIRED' }, 'faculty');
+  assert.match(payment, /payment or credits/);
+  assert.match(payment, /administrator.*another configured service/);
+  assert.match(payment, /Retrying will not help/);
+  const limit = userErrorMessage({ code: 'AI_RATE_LIMITED' }, 'faculty');
+  assert.match(limit, /usage limit.*Wait and retry.*fewer questions.*another service/);
+  const gateway = userErrorMessage({ code: 'AI_GATEWAY_ERROR' }, 'faculty');
+  assert.match(gateway, /may still be running/);
+  assert.match(gateway, /Check progress before retrying/);
+  assert.match(userErrorMessage({ code: 'AI_REQUEST_REJECTED' }, 'faculty'), /model and format compatibility/);
+});
+
+test('AI job messages explain saved progress, resume actions and busy states', () => {
+  for (const code of ['AI_BUDGET_EXHAUSTED', 'AI_ABORTED', 'AI_DUPLICATE_QUESTION']) {
+    const error = apiError({ code, message: 'technical detail' }, 'faculty', 429);
+    assert.match(error.message, /[Ss]aved/);
+    assert.match(error.message, /Resume generation/);
+    assert.equal(userErrorMessage(error, 'faculty'), error.message);
+  }
+  assert.match(userErrorMessage({ code: 'AI_BUDGET_EXHAUSTED' }, 'faculty'), /paused at its limit/);
+  assert.match(userErrorMessage({ code: 'AI_DUPLICATE_QUESTION' }, 'faculty'), /repeated a question.*retry this batch/);
+  assert.match(userErrorMessage({ code: 'AI_BATCH_REQUIRED' }, 'faculty'), /Generate preview.*batches with saved progress/);
+  assert.match(userErrorMessage({ code: 'AI_BUSY' }, 'faculty'), /Wait a moment.*retry/);
+  const stopping = apiError({ code: 'AI_BUSY', message: 'The current batch is stopping. Retry Resume shortly.' }, 'faculty', 409);
+  assert.match(stopping.message, /batch is stopping.*Resume generation/);
+  assert.equal(userErrorMessage(stopping, 'faculty'), stopping.message);
+  assert.match(userErrorMessage({ code: 'AI_BUSY', message: 'Finish or pause your current generation first.' }, 'faculty'), /already running.*Finish or pause.*before starting another/);
+});
+
+test('student and proctor errors give role contacts without provider or server internals', () => {
+  for (const [role, contact] of [['student', /your instructor/], ['proctor', /the faculty member in charge/]]) {
+    for (const code of ['AI_PAYMENT_REQUIRED', 'AI_GATEWAY_ERROR', 'AI_REQUEST_REJECTED', 'AI_BUDGET_EXHAUSTED', 'INTERNAL_ERROR', 'INVALID_SERVER_RESPONSE']) {
+      const text = userErrorMessage({ code, message: 'provider schema rejected; proxy server logs' }, role);
+      assert.match(text, contact);
+      assert.doesNotMatch(text, /billing|provider|schema|proxy|server|administrator|Resume generation/);
+    }
+  }
+  assert.match(userErrorMessage({ code: 'INTERNAL_ERROR' }, 'faculty'), /technical administrator.*server logs/);
+});
+
 test('faculty table messages identify rows from one and use readable labels for target settings', () => {
   assert.match(questionIssueText('table.rows[0].id: provide a nonempty unique string ID.'), /Row 1 ID: provide a different ID written as text/);
   assert.match(questionIssueText('answer.order[0]: choose a column.'), /Sort rule 1/);
@@ -84,4 +143,5 @@ test('faculty rate-limit feedback retains the server retry interval', () => {
   const error = apiError({ code: 'RATE_LIMITED', message: 'Too many requests.', retryAfterSeconds: 45 }, 'faculty', 429);
   assert.match(userErrorMessage(error, 'faculty'), /1 minute/);
   assert.equal(error.retryAfterSeconds, 45);
+  assert.match(userErrorMessage({ code: 'RATE_LIMITED', retryAfterSeconds: 61 }, 'faculty'), /2 minutes/);
 });

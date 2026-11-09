@@ -19,3 +19,7 @@ Open that browser session at the fixture origin first. These checks cover naviga
 Checks cover edit protection, Back navigation, pending grades, reauthentication, mobile geometry and runtime banners. No real assessment data, live AI or Docker execution is used. Stop the server after verification. Screenshots are written to output/playwright/.
 
 After `workflows.js` has opened the student attempt, run `tests/browser/student-exam-layout.js` in the same browser session to check persisted review flags, flagged-question review, stacked task panes, keyboard resizing, and mobile fit.
+
+## Engine audit workflow
+
+Start `tests/browser/engine-fixture-server.mjs` with the same Node flags as the standard fixture. It uses an in-memory database and a mocked generator that pauses after each batch. In one Playwright session, run `engine-workflows.js` followed by `table-agreement.js`. The first checks 200-question generation and recovery. The second joins a fictional student run and compares the actual table preview with grading.

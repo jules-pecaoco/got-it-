@@ -15,6 +15,7 @@ import { migrationDatabase } from './migration-database.mjs';
 import { measureRequest, metricsSnapshot } from './metrics.mts';
 import { attemptSettlement } from './attempt-settlement.mjs';
 import { startSettlementTimers } from './settlement-timers.mjs';
+import { startCodeReconciliation } from './code-runner.mjs';
 
 const runtimeConfig = loadConfig();
 if (process.env.NODE_ENV !== 'test' && process.env.MIGRATION_ACTIVE !== '1') runtimeConfig.dataFile = migrationDatabase(runtimeConfig.dataFile);
@@ -24,6 +25,7 @@ const previewOrigin = process.env.PREVIEW_ORIGIN ? new URL(process.env.PREVIEW_O
 if (previewOrigin && previewOrigin === publicOrigin) throw new Error('PREVIEW_ORIGIN must differ from PUBLIC_ORIGIN.');
 const store = new Store(dataFile, { codeRunner: executionRunner(), automaticSettlement: !previewOrigin });
 const terminals = terminalService();
+const codeCleanup = process.env.EXECUTION_ORIGIN ? null : startCodeReconciliation();
 const assetCache = new Map();
 const webPreviews = previewOrigin ? createPreviewService(
   previewOrigin,
@@ -220,11 +222,14 @@ let shutdown;
 async function stopApplication() {
   shutdown ??= (async () => {
     shuttingDown = true;
+    store.aiJobs.close();
     await timers?.stop();
     const drained = new Promise(resolve => server.close(resolve));
     // Existing requests have bounded timeouts. Stop accepting first, then wait
     // before closing the database used by their handlers.
     await drained;
+    await store.aiJobs.drain();
+    await codeCleanup?.stop();
     await settlement.drain();
     await webPreviews?.close();
     await terminals.close();
@@ -236,7 +241,7 @@ async function stopApplication() {
   })();
   return shutdown;
 }
-server.on('close', () => { if (!shuttingDown) { void terminals.close(); void webPreviews?.close(); } });
+server.on('close', () => { if (!shuttingDown) { void codeCleanup?.stop(); void terminals.close(); void webPreviews?.close(); } });
 if (process.env.NODE_ENV !== 'test') {
   timers = startSettlementTimers(settlement);
   if (webPreviews) webPreviews.server.listen(Number(process.env.PREVIEW_PORT || 3102), process.env.PREVIEW_HOST || '127.0.0.1');

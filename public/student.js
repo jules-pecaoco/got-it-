@@ -1,5 +1,6 @@
 import { apiError, userErrorMessage, savedAnswerRule, finishReviewMessage, completionMessage, codeServiceMessage } from './user-messages.js';
 import { parseTableCode } from './table-code.js';
+import { inspectRows, filterTableRows, datatableColumnTypes, compareTableCells } from './table-state.js';
 import { normalizeSyntax, syntaxLanguages, tokenizeCode } from './code-highlight.js';
 import { renderPrompt } from './prompt-code.js';
 import { renderCodingQuestion } from './code-task-ui.js';
@@ -924,23 +925,11 @@ function renderInspection(form, activity) {
 
   const render = () => {
     const current = value();
-    let rows = [...config.rows];
-    const normalizeCell = value => String(value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en');
-    const term = normalizeCell(current.globalSearch);
-    if (term) rows = rows.filter(row => config.columns.some(col => normalizeCell(row[col.id]).includes(term)));
-    for (const [col, text] of Object.entries(current.columnSearch)) {
-      rows = rows.filter(row => normalizeCell(row[col]).includes(normalizeCell(text)));
-    }
-    rows.sort((left, right) => {
-      for (const item of current.order) {
-        const cmp = String(left[item.column]).localeCompare(String(right[item.column]), 'en', { numeric: true });
-        if (cmp) return cmp * (item.direction === 'desc' ? -1 : 1);
-      }
-      return 0;
-    });
-    const pages = Math.max(1, Math.ceil(rows.length / current.pageLength));
+    const filteredCount = inspectRows(config, current).filteredCount;
+    const pages = Math.max(1, Math.ceil(filteredCount / current.pageLength));
     pageIndex = Math.min(pageIndex, pages - 1);
-    summary.textContent = `Showing ${rows.length ? pageIndex * current.pageLength + 1 : 0} to ${Math.min((pageIndex + 1) * current.pageLength, rows.length)} of ${rows.length} matching records · page ${pageIndex + 1} of ${pages}`;
+    const rows = inspectRows(config, { ...current, pageIndex }).visible;
+    summary.textContent = `${filteredCount} matching records · page ${pageIndex + 1} of ${pages}`;
     clear(table);
     const head = node('thead');
     const headRow = node('tr');
@@ -948,7 +937,7 @@ function renderInspection(form, activity) {
     head.append(headRow);
     table.append(head);
     const body = node('tbody');
-    for (const record of rows.slice(pageIndex * current.pageLength, (pageIndex + 1) * current.pageLength)) {
+    for (const record of rows) {
       const tr = node('tr');
       for (const col of config.columns) tr.append(node('td', '', record[col.id]));
       body.append(tr);
@@ -1047,6 +1036,11 @@ function renderCode(form, activity) {
     table.id = 'studentTable';
     wrap.append(table);
     const columnIndex = id => config.columns.findIndex(column => column.id === id);
+    const columnTypes = datatableColumnTypes(config);
+    for (const type of ['numeric', 'string']) {
+      window.DataTable.ext.type.order[`gotit-${type}-asc`] = (a, b) => compareTableCells(a, b, type);
+      window.DataTable.ext.type.order[`gotit-${type}-desc`] = (a, b) => -compareTableCells(a, b, type);
+    }
     previewTable = new window.DataTable(table, {
       paging: state.flags.paging,
       searching: state.flags.searching,
@@ -1055,12 +1049,11 @@ function renderCode(form, activity) {
       lengthMenu: state.lengthMenu,
       order: state.order.map(item => [columnIndex(item.column), item.direction]),
       data: config.rows.map(row => config.columns.map(column => String(row[column.id] ?? ''))),
-      columns: config.columns.map(column => ({ title: column.label }))
+      columns: config.columns.map(column => ({ title: node('span', '', column.label).innerHTML,
+        type: `gotit-${columnTypes.get(column.id)}`, render: window.DataTable.render.text() }))
     });
-    previewTable.search(state.globalSearch);
-    for (const [column, term] of Object.entries(state.columnSearch)) {
-      previewTable.column(columnIndex(column)).search(term);
-    }
+    const visible = new Set(filterTableRows(config, state, { mode: 'datatable' }).map(row => row.id));
+    previewTable.search((_search, _row, index) => visible.has(config.rows[index].id));
     previewTable.draw();
   };
 

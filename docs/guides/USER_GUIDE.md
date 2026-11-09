@@ -8,7 +8,7 @@ Use this page for the day-to-day workflow. Faculty prepare and grade; students c
 
 1. Open **Classes** and create or import a roster. Check the school IDs before using it in a run.
 2. Open **Activities → Create activity**. Choose the assessment type, difficulty, duration, question count and teaching material.
-3. Generate questions, then read each question and its answer. Edit, arrange and approve the questions you want to keep. AI source-match percentages are advice, not proof that a question is correct.
+3. Generate up to 200 questions. Generation saves completed batches as it goes. Select **Resume generation** after a pause. Read each question and answer, review any quality flags, then edit and approve the questions you want to keep. Treat source-match percentages as advisory estimates.
 4. Save the draft. Use **Rules and guides** to set the timer, retry costs and allowed reference guides.
 5. Open **Review and publish**, resolve validation errors, and publish when ready.
 

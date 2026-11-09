@@ -14,6 +14,7 @@ import { facultyId, asFaculty, assertOwner, passwordHash, passwordMatches } from
 import { evaluateWeb } from './web-grading.mts';
 import { validateProject } from '../public/web-project.js';
 import { buildFacultyQuestion } from './ai.mjs';
+import { AiGenerationJobs } from './ai-jobs.mjs';
 
 const parse = value => JSON.parse(value);
 const shuffled = values => {
@@ -67,8 +68,9 @@ export class Store {
       return statements.get(sql);
     };
     this.codingQueue = new CodingQueue(this.db, job => asFaculty(null, () => this.completeCodingJob(job)));
+    this.aiJobs = new AiGenerationJobs(this.db);
   }
-  close() { this.codingQueue.close(); this.db.close(); }
+  close() { this.aiJobs.close(); this.codingQueue.close(); this.db.close(); }
   queueCode(sessionId, activityId, kind, submission, key = randomUUID(), expectedRevision) {
     invariant(typeof key === 'string' && /^[A-Za-z0-9-]{16,80}$/.test(key), 'INVALID_IDEMPOTENCY_KEY', 'Submission retry key is invalid.');
     const existing = this.db.prepare('SELECT status,payload_json FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind=? AND request_key=?').get(sessionId, activityId, kind, key);
@@ -725,11 +727,23 @@ export class Store {
         : mission.activities.map(activity => activity.id)]));
     const deadline = Math.min(now + exam.public.settings.durationMinutes * 60_000, Date.parse(run.closes_at));
     const id = randomUUID();
+    this.tx(() => {
     this.db.prepare(`INSERT INTO sessions
         (id,run_id,candidate_id,token_hash,token_expires_at,order_json,question_order_json,started_at,deadline_at,status)
         VALUES (?,?,?,?,?,?,?,?,?,?)`)
       .run(id, runId, candidateId, hash(token), expiresAt, JSON.stringify(order), JSON.stringify(questionOrder),
         new Date(now).toISOString(), new Date(deadline).toISOString(), 'in_progress');
+    const saveChoices = this.db.prepare('INSERT INTO session_choice_orders VALUES (?,?,?)');
+    for (const activity of exam.public.missions.flatMap(mission => mission.activities)) {
+      const choices = ['single_choice', 'multiple_choice'].includes(activity.type) ? activity.publicConfig.options
+        : activity.type === 'sequencing' ? activity.publicConfig.items : null;
+      if (!choices?.length) continue;
+      const ids = choices.map(choice => choice.id), assigned = shuffled(ids);
+      const avoid = activity.type === 'sequencing' ? exam.private.rules[activity.gradingRuleId].criteria[0].answer : ids;
+      if (assigned.length > 1 && assigned.every((value, index) => value === avoid[index])) assigned.push(assigned.shift());
+      saveChoices.run(id, activity.id, JSON.stringify(assigned));
+    }
+    });
     this.audit(candidateId, 'start_session', id, { runId });
     return { token, expiresAt, resumed: false, session: this.sessionView(id) };
   }
@@ -837,6 +851,13 @@ export class Store {
     const activityOrder = parse(session.question_order_json)?.[missionId] ?? mission.activities.map(a => a.id);
     const ordered = activityOrder.map(id => mission.activities.find(a => a.id === id)).filter(Boolean);
     return { ...mission, activities: ordered.map(({ gradingRuleId, ...publicActivity }) => {
+      const choiceOrder = this.db.prepare('SELECT order_json FROM session_choice_orders WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id);
+      if (choiceOrder) {
+        const key = publicActivity.type === 'sequencing' ? 'items' : 'options';
+        const choices = publicActivity.publicConfig[key];
+        publicActivity = { ...publicActivity, publicConfig: { ...publicActivity.publicConfig,
+          [key]: parse(choiceOrder.order_json).map(id => choices.find(choice => choice.id === id)).filter(Boolean) } };
+      }
       const last = this.db.prepare('SELECT response_json FROM submissions WHERE session_id=? AND activity_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId, publicActivity.id);
       const draft = this.db.prepare('SELECT response_json,updated_at FROM answer_drafts WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id);
       const attemptsUsed = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, publicActivity.id).count;

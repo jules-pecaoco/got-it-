@@ -63,7 +63,7 @@ export function buildTableQuestion(item) {
       { api: "table.column(index).search('text').draw()", use: 'Filter one column, using its zero-based index.' },
       { api: "table.order([[index, 'asc']]).draw()", use: 'Set the primary order; add another pair for a tie-breaker.' }
     ] } : {}) };
-  const visible = inspectRows(config, { ...target, pageIndex: target.pageIndex ?? 0, columnSearch: target.columnSearch ?? {} }).visible.map(row => row.id);
+  const visible = inspectRows(config, { ...target, pageIndex: target.pageIndex ?? 0, columnSearch: target.columnSearch ?? {} }, { mode: code ? 'datatable' : 'inspection' }).visible.map(row => row.id);
   if (!visible.length) invalid('The requested table view must contain at least one visible row.');
   const values = [
     ...(code ? [['flags', Object.fromEntries(['paging', 'searching', 'ordering'].map(key => [key, target.flags[key]]))]] : []),

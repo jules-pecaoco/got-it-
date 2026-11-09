@@ -210,10 +210,12 @@
                   }
                 }
               ]
-            }
+            },
+            "maxItems": 200
           }
         }
-      }
+      },
+      "maxItems": 200
     }
   },
   "$defs": {
@@ -281,6 +283,10 @@
                 "maxLength": 16000
               },
               "output": {
+                "type": "string",
+                "maxLength": 16000
+              },
+              "transcript": {
                 "type": "string",
                 "maxLength": 16000
               }

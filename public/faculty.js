@@ -18,10 +18,13 @@ import { appendPaperInput, distributePaperPoints } from './paper-copy.js';
 import { installPasswordToggles } from './password-toggle.js';
 import { retryPolicyText, attemptLabels, participationCounts, filterResultRows, localDateTime } from './ui-model.js';
 import { browserSessionHeaders, createRunAccessStore, clearLegacyCredentials } from './browser-session.js';
+import { assessmentLimits } from './assessment-limits.js';
 
 installPasswordToggles();
 
 const $ = (id) => document.getElementById(id);
+$('ai-questions').max = String(assessmentLimits.questions);
+$('ai-missions').max = String(assessmentLimits.groups);
 // Keep library browsing separate from editing the selected assessment.
 const reviewSection = document.querySelector('[data-step="review"]');
 reviewSection.querySelector('.step-actions').after($('exam-title-editor'));
@@ -174,7 +177,7 @@ for (const type of questionTypes) {
     input = node('input');
   input.type = 'number';
   input.min = '0';
-  input.max = '20';
+  input.max = String(assessmentLimits.questions);
   input.step = '1';
   input.value = ['single_choice', 'true_false', 'matching', 'code_writing'].includes(type.id) ? '2' : '0';
   label.append(input);
@@ -198,7 +201,7 @@ function syncQuestionMix() {
   if (mixed) {
     const total = typeCountTotal(readQuestionMix());
     $('ai-questions').value = String(total);
-    $('ai-mix-total').textContent = `${total} questions selected · Total limit: 20.`;
+    $('ai-mix-total').textContent = `${total} / ${assessmentLimits.questions} questions`;
   }
 }
 const runAccess = createRunAccessStore();
@@ -252,7 +255,7 @@ const message = (text, { persistent = false } = {}) => {
     }, 7000);
 };
 
-async function request(path, { method = 'GET', data, raw = false, silent = false } = {}) {
+async function request(path, { method = 'GET', data, raw = false, silent = false, signal } = {}) {
   const finishStatus = silent ? () => {} : beginRequestStatus(facultyRequestLabel(path, method));
   const headers = browserSessionHeaders('instructor');
   if (data !== undefined) headers['Content-Type'] = 'application/json';
@@ -261,6 +264,7 @@ async function request(path, { method = 'GET', data, raw = false, silent = false
       method,
       headers,
       body: data === undefined ? undefined : JSON.stringify(data),
+      signal,
     });
     if (raw && response.ok) return await response.blob();
     let result;
@@ -347,6 +351,8 @@ function invalidateValidation() {
   state.validationErrors = [];
   $('validation-output').textContent = '';
   clear($('ai-check-results'));
+  state.aiSourceChecks = [];
+  $('ai-check').textContent = 'Compare with teaching material';
 }
 
 function setActivityMode(mode) {
@@ -411,6 +417,10 @@ function showStep(step) {
 
 function renderWorkflowState() {
   const exam = state.selectedExam;
+  const objectiveCreation = state.step === 'exams' && state.activityMode === 'create' &&
+    ($('ai-question-mode').value === 'objective' || ($('ai-question-mode').value === 'mixed' &&
+      !(readQuestionMix().code_writing || readQuestionMix().web_project)));
+  $('faculty-services').classList.toggle('hidden', !state.instructorAuthenticated || state.step === 'classes' || objectiveCreation);
   const draft = exam?.status === 'draft';
   const published = exam?.status === 'published';
   if (state.libraryReady && !stepAllowed(state.step)) showStep('exams');
@@ -577,7 +587,7 @@ function renderWorkflowState() {
   );
   $('review-edit-rules').classList.toggle('hidden', !draft);
   $('review-edit-rules').disabled = !draft;
-  $('ai-check').disabled = !exam || !state.sources.length || !state.aiReady;
+  $('ai-check').disabled = state.aiSourceChecking || !exam || !state.sources.length || !state.aiReady;
   $('source-check-details').classList.toggle('hidden', !state.sources.length);
   $('create-run').disabled = !!runIssue || state.runBusy;
   $('run-setup-status').textContent = runIssue || 'Ready to assign this activity to a class.';
@@ -613,36 +623,36 @@ function renderWorkflowState() {
   const isCtf = $('ai-kind').value === 'ctf';
   $('ai-missions-wrap').classList.toggle('hidden', !isCtf);
   $('ai-count-help').textContent = isCtf
-    ? Number.isInteger(aiMissions) && aiMissions >= 1 && aiMissions <= 5
+    ? Number.isInteger(aiMissions) && aiMissions >= 1 && aiMissions <= assessmentLimits.groups
       ? `${aiMissions} missions need ${aiMissions}–${aiMissions * 4} questions total.`
-      : 'Choose 1–5 missions.'
-    : Number.isInteger(aiQuestions) && aiQuestions >= 1 && aiQuestions <= 20
+      : `Choose 1–${assessmentLimits.groups} missions.`
+    : Number.isInteger(aiQuestions) && aiQuestions >= 1 && aiQuestions <= assessmentLimits.questions
       ? `${Math.ceil(aiQuestions / 4)} section${aiQuestions > 4 ? 's' : ''} for ${aiQuestions} questions.`
-      : 'Choose 1–20 questions.';
+      : `Choose 1–${assessmentLimits.questions} questions.`;
   $('ai-rules-summary').textContent =
-    `${aiDuration || 40} minutes. By default, students can submit each answer up to 3 times. Each submission after the first deducts 1 point and 10 seconds. You can change these rules before publishing.`;
+    `${aiDuration || 40} minutes · 3 tries per question · retries cost 1 point and 10 seconds. Editable before publication.`;
   $('ai-provider').disabled = state.aiBusy;
   $('ai-model').disabled = state.aiBusy;
   let generateHelp = '';
   if (state.aiBusy) generateHelp = 'Generating your preview…';
   else if (!state.aiReady)
     generateHelp =
-      'We cannot generate questions with the selected AI service yet. Choose another service, or ask your technical administrator for help.';
+      'Choose an available AI service and model.';
   else if (!$('ai-title').value.trim()) generateHelp = 'Enter an activity name.';
   else if (!$('ai-subject').value.trim()) generateHelp = 'Enter a subject.';
   else if (!materialFileReady($('ai-source').files[0]))
     generateHelp = 'Choose a supported teaching source (PDF, PPTX, TXT, or MD, up to 10 MB).';
   else if (!Number.isInteger(aiDuration) || aiDuration < 5 || aiDuration > 180)
     generateHelp = 'Set a duration from 5 to 180 minutes.';
-  else if (!Number.isInteger(aiQuestions) || aiQuestions < 1 || aiQuestions > 20)
-    generateHelp = 'Set 1–20 questions.';
+  else if (!Number.isInteger(aiQuestions) || aiQuestions < 1 || aiQuestions > assessmentLimits.questions)
+    generateHelp = `Set 1–${assessmentLimits.questions} questions.`;
   else if (
     $('ai-question-mode').value === 'mixed' &&
     validateQuestionMix(readQuestionMix(), aiQuestions).length
   )
     generateHelp = validateQuestionMix(readQuestionMix(), aiQuestions)[0];
-  else if (!Number.isInteger(aiMissions) || aiMissions < 1 || aiMissions > 5)
-    generateHelp = 'Set 1–5 missions.';
+  else if (!Number.isInteger(aiMissions) || aiMissions < 1 || aiMissions > assessmentLimits.groups)
+    generateHelp = `Set 1–${assessmentLimits.groups} missions.`;
   else if (isCtf && aiQuestions < aiMissions)
     generateHelp = `You set ${aiMissions} missions, so choose at least ${aiMissions} questions (one per mission).`;
   else if (isCtf && aiQuestions > aiMissions * 4)
@@ -852,6 +862,12 @@ $('new-activity').addEventListener('click', () => {
 $('manage-activities').addEventListener('click', () => setActivityMode('library'));
 $('ai-discard').addEventListener('click', () =>
   perform(async () => {
+    if (state.aiJobId) await request(`/api/instructor/ai/jobs/${state.aiJobId}/cancel`, { method: 'POST' });
+    state.aiJobId = null;
+    state.aiJobReadOnly = false;
+    state.aiJobWatch = null;
+    state.aiBusy = false;
+    try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
     await state.aiSaveQueue.catch(() => {});
     await request('/api/instructor/ai/proposal', { method: 'DELETE' });
     state.aiProposal = null;
@@ -860,7 +876,8 @@ $('ai-discard').addEventListener('click', () =>
     clear($('ai-preview'));
     $('ai-selection').textContent = '';
     $('ai-recovery-status').textContent = '';
-    $('ai-status').textContent = 'The question preview was removed. Change your choices or generate new questions.';
+    $('ai-status').textContent = 'Preview removed.';
+    aiJobControls('cancelled');
     renderWorkflowState();
   }),
 );
@@ -892,7 +909,11 @@ async function refreshRuntimeStatus() {
   button.disabled = true;
   try {
     const status = await request('/api/instructor/code/status', { silent: true });
-    const text = codeServiceMessage(status, { role: 'faculty', webProject: true });
+    const creating = state.step === 'exams' && state.activityMode === 'create';
+    const selected = readGenerationLanguages().split(',');
+    const webProject = !creating || selected.includes('auto') || selected.some(value => ['frontend', 'php-web'].includes(value));
+    const text = codeServiceMessage(status, { role: 'faculty', webProject,
+      languages: creating ? selected.filter(value => ['python', 'javascript', 'php', 'sql'].includes(value)) : [] });
     $('faculty-runtime-status').textContent = text;
     $('coding-runtime-status').textContent = text;
   } catch {
@@ -1009,7 +1030,8 @@ const selectedAiQuestions = () =>
 
 function queueAiWorkSave() {
   if (!state.aiProposal || !state.aiInput) return;
-  const snapshot = { input: state.aiInput, proposal: state.aiProposal, selected: selectedAiQuestions() };
+  const snapshot = { input: state.aiInput, proposal: state.aiProposal, selected: selectedAiQuestions(),
+    job: state.aiProposalJobId ? { id: state.aiProposalJobId, complete: state.aiJobImportedComplete === true } : null };
   state.aiSaveQueue = state.aiSaveQueue
     .catch(() => {})
     .then(() => request('/api/instructor/ai/proposal', { method: 'PUT', data: snapshot }));
@@ -1020,7 +1042,27 @@ function queueAiWorkSave() {
 
 async function loadAiWork() {
   const saved = await request('/api/instructor/ai/proposal');
+  const jobs = await request('/api/instructor/ai/jobs', { silent: true });
+  let recoverId;
+  try { recoverId = sessionStorage.getItem('gotit-ai-job'); } catch { /* Server list remains available. */ }
+  recoverId ||= jobs.jobs?.[0]?.id;
+  if (recoverId) {
+    try {
+      const job = await request(`/api/instructor/ai/jobs/${recoverId}`, { silent: true });
+      if (['running', 'paused'].includes(job.status) ||
+        (job.status === 'done' && !(saved?.job?.id === recoverId && saved.job.complete))) {
+        void followAiJob(job).catch(error => { $('ai-status').textContent = userErrorMessage(error, 'faculty'); });
+        setActivityMode('create');
+        return;
+      }
+    } catch (error) { if (error.status !== 404) throw error; }
+    try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
+  }
   if (!saved) return;
+  state.aiJobId = null;
+  state.aiJobReadOnly = false;
+  state.aiProposalJobId = saved.job?.id ?? null;
+  state.aiJobImportedComplete = saved.job?.complete === true;
   state.aiInput = saved.input;
   state.aiProposal = saved.proposal;
 
@@ -1051,7 +1093,111 @@ async function loadAiWork() {
   setActivityMode('create');
 }
 
+function aiJobControls(status) {
+  let controls = $('ai-job-controls');
+  if (!controls) {
+    controls = node('div', 'button-row');
+    controls.id = 'ai-job-controls';
+    for (const [action, label] of [['resume', 'Resume generation'], ['pause', 'Pause'], ['cancel', 'Cancel generation']]) {
+      const button = node('button', '', label);
+      button.id = `ai-job-${action}`;
+      button.type = 'button';
+      button.addEventListener('click', () => perform(async () => {
+        if (!state.aiJobId) return;
+        const job = await request(`/api/instructor/ai/jobs/${state.aiJobId}/${action}`, { method: 'POST' });
+        await followAiJob(job);
+      }));
+      controls.append(button);
+    }
+    $('ai-status').after(controls);
+  }
+  controls.hidden = !['running', 'paused'].includes(status);
+  $('ai-job-resume').hidden = status !== 'paused';
+  $('ai-job-pause').hidden = status !== 'running';
+}
+
+async function followAiJob(initial) {
+  const id = initial.jobId;
+  const watch = {};
+  state.aiJobWatch = watch;
+  state.aiJobRenderedCount = -1;
+  state.aiJobId = id;
+  state.aiInput = initial.input;
+  for (const [key, value] of Object.entries({ title: initial.input.title, subject: initial.input.subject, kind: initial.input.kind,
+    difficulty: initial.input.difficulty ?? 'medium', duration: initial.input.durationMinutes, questions: initial.input.questionCount,
+    missions: initial.input.missionCount, 'custom-prompt': initial.input.customPrompt ?? '', 'question-mode': initial.input.questionMode ?? 'auto' }))
+    $(`ai-${key}`).value = String(value ?? '');
+  for (const option of languageSelect.options) {
+    option.selected = String(initial.input.programmingLanguage ?? 'auto').split(',').includes(option.value);
+    languageChecks.get(option.value).checked = option.selected;
+  }
+  if (initial.input.questionMode === 'mixed')
+    for (const [type, input] of mixInputs) input.value = String(initial.input.questionTypeCounts?.[type] ?? 0);
+  syncQuestionMix();
+  try { sessionStorage.setItem('gotit-ai-job', id); } catch { /* Server progress remains durable. */ }
+  let job = initial;
+  try {
+  while (state.aiJobId === id && state.aiJobWatch === watch) {
+    state.aiBusy = job.status === 'running';
+    state.aiJobReadOnly = ['running', 'paused'].includes(job.status);
+    state.aiProposalJobId = id;
+    state.aiJobImportedComplete = ['done', 'cancelled'].includes(job.status);
+    aiJobControls(job.status);
+    $('ai-status').textContent = `${job.completedQuestions} / ${job.totalQuestions} questions · ${job.status === 'running' ? 'generating…' : job.status}`;
+    if (job.completedQuestions && job.completedQuestions !== state.aiJobRenderedCount) {
+      state.aiProposal = job.proposal;
+      state.aiJobRenderedCount = job.completedQuestions;
+      renderAiPreview(job.proposal);
+    }
+    renderWorkflowState();
+    if (['running', 'paused'].includes(job.status))
+      for (const control of $('ai-preview').querySelectorAll('button,input,select,textarea')) control.disabled = true;
+    if (job.status !== 'running') {
+      state.aiProposal = job.proposal;
+      renderAiPreview(job.proposal);
+      if (job.status === 'paused')
+        for (const control of $('ai-preview').querySelectorAll('button,input,select,textarea')) control.disabled = true;
+      if (job.completedQuestions) {
+        queueAiWorkSave();
+        if (['done', 'cancelled'].includes(job.status)) {
+          await state.aiSaveQueue;
+          try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
+          state.aiJobId = null;
+        }
+      }
+      $('ai-recovery-status').textContent = 'Completed batches are saved.';
+      $('ai-status').textContent = job.status === 'done' ? `${job.completedQuestions} questions ready. Review answers before approving.`
+        : job.status === 'paused' ? `${job.completedQuestions} / ${job.totalQuestions} saved. ${job.error ? userErrorMessage(job.error, 'faculty') : 'Resume when ready.'}`
+        : 'Generation cancelled. Completed batches are saved.';
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    job = await request(`/api/instructor/ai/jobs/${id}`, { silent: true });
+  }
+  } finally {
+    if (state.aiJobWatch === watch) {
+      state.aiBusy = false;
+      renderWorkflowState();
+      if (state.aiJobReadOnly)
+        for (const control of $('ai-preview').querySelectorAll('button,input,select,textarea')) control.disabled = true;
+    }
+  }
+}
+
 function questionEditor(activity, saveEdited, settings = {}) {
+  const placeholder = node('details', 'ai-evidence');
+  placeholder.append(node('summary', '', 'Edit question'));
+  placeholder.addEventListener('toggle', () => {
+    if (!placeholder.open) return;
+    if (!settings.saved && state.aiJobReadOnly) { placeholder.open = false; return; }
+    const editor = buildQuestionEditor(activity, saveEdited, settings);
+    placeholder.replaceWith(editor);
+    editor.open = true;
+  });
+  return placeholder;
+}
+
+function buildQuestionEditor(activity, saveEdited, settings = {}) {
   const details = node('details', 'ai-evidence');
   details.append(node('summary', '', 'Edit question'));
   const form = node('form', 'stack ai-edit-form');
@@ -1248,7 +1394,7 @@ function updateAiApprovals() {
     let selected = 0;
     const available = editor.questions.filter((question) => question.ready);
     for (const question of editor.questions) {
-      question.checkbox.disabled = !question.eligible;
+      question.checkbox.disabled = state.aiJobReadOnly || !question.eligible;
       if (question.checkbox.checked) {
         selected++;
         if (question.sourceMatchPercent !== null) selectedScores.push(question.sourceMatchPercent);
@@ -1274,14 +1420,14 @@ function updateAiApprovals() {
     ? ''
     : overLimit
       ? `${count}. Limit: 4 questions per ${word}.`
-      : approvedMissions > 5
-        ? `${count}. Limit: 5 ${word}s.`
+      : approvedMissions > assessmentLimits.groups
+        ? `${count}. Limit: ${assessmentLimits.groups} ${word}s.`
         : count + average;
   const setupMatches = aiConfigMatches();
   if (state.aiProposal && !setupMatches)
     $('ai-selection').textContent =
       `Setup changed. Generate a new preview before saving. ${count}${average}.`;
-  $('ai-save').disabled = !approvedQuestions || overLimit || approvedMissions > 5 || !setupMatches;
+  $('ai-save').disabled = state.aiBusy || state.aiJobReadOnly || !approvedQuestions || overLimit || approvedMissions > assessmentLimits.groups || !setupMatches;
   $('ai-next-unreviewed').disabled = approvedQuestions === totalQuestions;
   for (const editor of state.aiEditors)
     for (const question of editor.questions)
@@ -1357,26 +1503,19 @@ async function regenerateQuestions(targets) {
   for (const [control] of controls) control.disabled = true;
   $('ai-status').textContent = `Regenerating ${targets.length === 1 ? 'question' : `${targets.length} invalid questions`}…`;
   try {
-    const results = [];
-    for (const [index, target] of targets.entries()) {
-      $('ai-status').textContent = `Regenerating question ${index + 1} of ${targets.length}…`;
-      try {
-        const proposal = await request('/api/instructor/ai/regenerate', {
-          method: 'POST', data: { ...state.aiInput, design: state.aiProposal.design, targets: [target] },
-        });
-        results.push(...proposal.regeneration);
-        state.aiProposal = { ...proposal, regeneration: results };
-        queueAiWorkSave();
-      } catch (error) {
-        results.push({ ...target, replaced: false, issue: error.message });
-      }
-    }
+    const proposal = await request('/api/instructor/ai/regenerate', {
+      method: 'POST', data: { ...state.aiInput, design: state.aiProposal.design, targets },
+    });
+    const results = proposal.regeneration ?? [];
+    state.aiProposal = proposal;
     for (const result of results) if (result.replaced) selected.delete(`${result.missionIndex}:${result.questionIndex}`);
     state.aiProposal = { ...state.aiProposal, regeneration: results };
     renderAiPreview(state.aiProposal, selected, targets[0].missionIndex);
     queueAiWorkSave();
     const count = results.filter(result => result.replaced).length;
-    $('ai-status').textContent = `${count} of ${targets.length} questions regenerated. Review replacements before approving.`;
+    $('ai-status').textContent = proposal.paused
+      ? `${count} replaced. Regeneration paused at its budget. Continue when ready.`
+      : `${count} of ${targets.length} replaced. Review before approving.`;
   } finally {
     for (const [control, disabled] of controls) if (control.isConnected) control.disabled = disabled;
     state.aiBusy = false;
@@ -1391,6 +1530,12 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
   state.aiEditors = [];
   state.aiReviewCursor = -1;
   target.append(node('h2', '', 'Review questions'));
+  if (proposal.paused && proposal.pendingTargets?.length) {
+    const resume = node('button', '', `Continue regeneration (${proposal.pendingTargets.length})`);
+    resume.type = 'button';
+    resume.addEventListener('click', () => perform(() => regenerateQuestions(proposal.pendingTargets)));
+    target.append(resume);
+  }
   const invalidTargets = proposal.missions.flatMap((mission, missionIndex) => mission.questions.flatMap((question, questionIndex) => question.ready ? [] : [{ missionIndex, questionIndex }]));
   if (invalidTargets.length) {
     const regenerateAll = node('button', '', `Regenerate invalid questions (${invalidTargets.length})`);
@@ -1512,6 +1657,7 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
         ),
       );
       card.append(renderPrompt(activity.prompt || 'No question prompt', 'ai-prompt'));
+      for (const warning of result.qualityWarnings ?? []) card.append(node('p', 'small ai-warning', warning));
       if (Array.isArray(activity.options) && activity.options.length) {
         const options = node('ol', 'ai-options');
         for (const option of activity.options) options.append(node('li', '', option));
@@ -1629,7 +1775,7 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
         }
         card.append(evidence);
       }
-      if (!eligible) card.append(node('p', 'small', 'You cannot approve this question yet. Edit it to fix the issue above, or select Regenerate question.'));
+      if (!eligible) card.append(node('p', 'small', 'Edit or regenerate this question before approving.'));
       card.append(
         questionEditor(activity, async (edited) => {
           await mutateAiDesign((design) => {
@@ -1639,7 +1785,7 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
         }),
       );
       const questionActions = node('div', 'button-row');
-      if (!result.ready) {
+      if (!result.ready || result.qualityWarnings?.length) {
         const regenerate = node('button', '', 'Regenerate question');
         regenerate.type = 'button';
         regenerate.addEventListener('click', () => perform(() => regenerateQuestions([{ missionIndex, questionIndex }])));
@@ -1711,7 +1857,7 @@ function renderAiPreview(proposal, selected = new Set(), openMissionIndex = 0) {
   }
   const addSection = node('button', '', `Add ${word}`);
   addSection.type = 'button';
-  addSection.disabled = (proposal.design?.missions?.length ?? 0) >= 5;
+  addSection.disabled = (proposal.design?.missions?.length ?? 0) >= assessmentLimits.groups;
   addSection.addEventListener('click', () =>
     perform(() =>
       mutateAiDesign((design) => {
@@ -1757,13 +1903,9 @@ $('ai-generate').addEventListener('click', () =>
         customPrompt: $('ai-custom-prompt').value.trim(),
         source,
       };
-      const proposal = await request('/api/instructor/ai/propose', { method: 'POST', data: input });
+      const job = await request('/api/instructor/ai/jobs', { method: 'POST', data: input });
       state.aiInput = input;
-      state.aiProposal = proposal;
-      renderAiPreview(proposal);
-      $('ai-recovery-status').textContent = `Preview saved for this faculty session · ${source.filename}`;
-      queueAiWorkSave();
-      $('ai-status').textContent = 'Questions are ready to review. Check the answers, then approve the questions you want to keep.';
+      await followAiJob(job);
     } catch (error) {
       $('ai-status').classList.add('ai-status-error');
       $('ai-status').textContent = userErrorMessage(error, 'faculty');
@@ -1806,6 +1948,8 @@ $('ai-save').addEventListener('click', () =>
       state.selectedExam = created;
       state.sources = [];
       state.aiProposal = null;
+      state.aiJobId = null;
+      try { sessionStorage.removeItem('gotit-ai-job'); } catch { /* Optional local hint. */ }
       state.aiInput = null;
       state.aiEditors = [];
       $('ai-save').disabled = true;
@@ -2763,26 +2907,38 @@ $('review-edit-rules').addEventListener('click', () => showStep('rules'));
 $('ai-check').addEventListener('click', () =>
   perform(async () => {
     const e = selected();
+    const epoch = state.validationEpoch;
+    const previous = state.aiSourceChecks ?? [];
+    const activityIds = previous.filter(check => check.checked === false).map(check => check.activityId);
     const target = $('ai-check-results');
-    target.textContent = 'Checking source support…';
+    state.aiSourceChecking = true;
+    $('ai-check').disabled = true;
     let checks;
     try {
       checks = await request(`/api/instructor/ai/check/${e.examId}/${e.version}`, {
         method: 'POST',
-        data: { aiProvider: $('ai-provider').value, aiModel: $('ai-model').value },
+        data: activityIds.length ? { activityIds } : {},
       });
-    } catch (error) {
-      target.textContent = 'Source check could not be completed.';
-      throw error;
+    } finally {
+      state.aiSourceChecking = false;
+      renderWorkflowState();
     }
+    if (state.validationEpoch !== epoch) return;
+    if (activityIds.length) {
+      const updated = new Map(checks.map(check => [check.activityId, check]));
+      checks = previous.map(check => updated.get(check.activityId) ?? check);
+    }
+    state.aiSourceChecks = checks;
     clear(target);
     const scores = checks.map((check) => check.matchPercent).filter((score) => score !== null);
+    const remaining = checks.length - scores.length;
+    $('ai-check').textContent = remaining ? `Continue source review (${remaining})` : 'Compare with teaching material';
     const average =
       scores.length === checks.length && scores.length
         ? `${Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)}%`
-        : 'unavailable';
+        : `${scores.length} of ${checks.length} checked`;
     target.append(
-      node('p', 'ai-score', `Based on the teaching material: ${average} (AI estimate). Check the questions and answers before publishing.`),
+      node('p', 'ai-score', `Source support · ${average} (AI estimate).`),
     );
     for (const check of checks) {
       const item = node('details', 'ai-question');

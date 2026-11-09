@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { codeLimit, outputMatches, validateCodeConfig } from '../public/code-task.js';
 
 const fail = (code, message, status = 503) => { throw Object.assign(new Error(message), { code, status }); };
@@ -16,6 +18,18 @@ export const runtimeCommands = Object.freeze({
   python: ['python', '-c', `import sys,json,subprocess\np=json.load(sys.stdin)\nopen('/tmp/main.py','w').write(p['code'])\ntry:\n r=subprocess.run([sys.executable,'-I','/tmp/main.py'],input=p['input'],text=True,timeout=2.5,capture_output=False)\n sys.exit(0 if r.returncode==0 else 100)\nexcept subprocess.TimeoutExpired:\n print('Execution exceeded the time limit.',file=sys.stderr)\n sys.exit(100)`],
   php: ['php', '-r', `$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);file_put_contents('/tmp/main.php',$p['code']);$pipes=[];$child=proc_open(['php','/tmp/main.php'],[['pipe','r'],STDOUT,STDERR],$pipes);fwrite($pipes[0],$p['input']);fclose($pipes[0]);exit(proc_close($child)===0?0:100);`],
   sql: ['python', '-c', `import sys,json,sqlite3\np=json.load(sys.stdin)\ndb=sqlite3.connect(':memory:')\ndb.enable_load_extension(False)\ndb.executescript(p['input'])\nallowed={sqlite3.SQLITE_SELECT,sqlite3.SQLITE_READ,sqlite3.SQLITE_FUNCTION,sqlite3.SQLITE_RECURSIVE}\ndb.set_authorizer(lambda action,*args: sqlite3.SQLITE_OK if action in allowed and not (action==sqlite3.SQLITE_FUNCTION and args[1]=='load_extension') else sqlite3.SQLITE_DENY)\ntry:\n for row in db.execute(p['code']):\n  print('\\t'.join('NULL' if v is None else str(v) for v in row))\nexcept sqlite3.Error as e:\n print(str(e),file=sys.stderr)\n sys.exit(100)`]
+});
+const consoleLifetimeSeconds = 5;
+const consoleOwner = () => createHash('sha256')
+  .update(process.env.EXECUTION_INSTANCE_ID || `${hostname()}:${fileURLToPath(new URL('..', import.meta.url))}`)
+  .digest('hex').slice(0, 24);
+// These trusted supervisors remain PID 1. Their children inherit stdin, so even
+// an interrupted upload cannot block the deadline. Exiting PID 1 stops every
+// descendant, including processes detached by the student's program.
+const runtimeSupervisors = Object.freeze({
+  javascript: ['node', '-e', `const cp=require('node:child_process');const end=setTimeout(()=>process.exit(137),${consoleLifetimeSeconds * 1000});const p=cp.spawn(process.argv[1],process.argv.slice(2),{stdio:'inherit'});p.once('error',()=>process.exit(125));p.once('exit',code=>{clearTimeout(end);process.exit(code===null?137:code)});`, '--'],
+  python: ['python', '-c', `import os,sys,subprocess\np=subprocess.Popen(sys.argv[1:])\ntry:\n code=p.wait(timeout=${consoleLifetimeSeconds})\nexcept subprocess.TimeoutExpired:\n code=137\nos._exit(code if code>=0 else 137)`],
+  php: ['php', '-r', `$end=hrtime(true)+${consoleLifetimeSeconds * 1000000000};$p=proc_open(array_slice($argv,1),[STDIN,STDOUT,STDERR],$pipes);if(!is_resource($p))exit(125);do{usleep(10000);$s=proc_get_status($p);if(!$s['running'])exit($s['exitcode']<0?137:$s['exitcode']);}while(hrtime(true)<$end);proc_terminate($p,9);proc_close($p);exit(137);`, '--']
 });
 const processRun = (args, input = '', timeoutMs = 6000) => new Promise((resolve, reject) => {
   const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
@@ -34,10 +48,50 @@ const processRun = (args, input = '', timeoutMs = 6000) => new Promise((resolve,
 });
 export function dockerArguments(language, name, jobId = null) {
   return ['run', '--rm', '--interactive', '--pull=never', '--name', name, '--network=none', '--read-only',
+    '--label', 'gotit.code=true', '--label', `gotit.owner=${consoleOwner()}`,
+    '--label', `gotit.expires=${Date.now() + consoleLifetimeSeconds * 1000}`,
     ...(jobId ? ['--label', `gotit.job=${jobId}`] : []),
     '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=32', '--memory=128m', '--memory-swap=128m',
     '--cpus=0.5', '--user=65534:65534', '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m', '--env=HOME=/tmp',
-    runtimeImages[language], ...runtimeCommands[language]];
+    runtimeImages[language], ...runtimeSupervisors[language === 'sql' ? 'python' : language], ...runtimeCommands[language]];
+}
+export async function reconcileCodeContainers(processRunner = processRun, now = Date.now()) {
+  const listed = await processRunner(['ps', '-a', '--filter', 'label=gotit.code=true', '--filter', `label=gotit.owner=${consoleOwner()}`,
+    '--format', '{{.Names}}|{{.Label "gotit.expires"}}'], '', 3000);
+  if (listed.exitCode !== 0 || listed.stopped) fail('CODE_RUNNER_UNAVAILABLE', 'Cannot recover interrupted coding containers. Restore Docker and retry.');
+  for (const line of listed.stdout.trim().split('\n').filter(Boolean)) {
+    const [name, expires] = line.trim().split('|');
+    if (!/^got-it-code-[a-f0-9-]{36}$/.test(name) || !/^\d{13}$/.test(expires || ''))
+      fail('CODE_RUNNER_UNAVAILABLE', 'Unexpected coding container metadata. Inspect the execution host.');
+    if (Number(expires) > now) continue;
+    const removed = await processRunner(['rm', '--force', name], '', 3000);
+    if (!removed.stopped && /no such container:/i.test(removed.stderr ?? '')) continue;
+    if (removed.exitCode !== 0 || removed.stopped) fail('CODE_RUNNER_UNAVAILABLE', 'Cannot remove an interrupted coding container. Restore Docker and retry.');
+  }
+}
+// Start without blocking non-coding activities when Docker is offline. A sweep
+// schedules its successor only after it settles; stop() drains any current work.
+export function startCodeReconciliation({ processRunner = processRun, intervalMs = 30000 } = {}) {
+  if (typeof processRunner !== 'function' || !Number.isInteger(intervalMs) || intervalMs < 1 || intervalMs > 2147483647)
+    throw new TypeError('Invalid coding reconciliation configuration.');
+  let stopped = false, running = false, timer, pending, attempts = 0, failures = 0, lastError = null;
+  const sweep = async () => {
+    running = true; attempts++;
+    try { await reconcileCodeContainers(processRunner); lastError = null; }
+    catch (error) { failures++; lastError = error?.code || 'CODE_RUNNER_UNAVAILABLE'; }
+    finally {
+      running = false;
+      if (!stopped) {
+        timer = setTimeout(() => { pending = sweep(); }, intervalMs);
+        timer.unref();
+      }
+    }
+  };
+  pending = sweep();
+  return {
+    async stop() { stopped = true; clearTimeout(timer); await pending; },
+    stats() { return { stopped, running, attempts, failures, lastError }; }
+  };
 }
 let active = 0;
 export async function executeCode(language, code, input, { processRunner = processRun, jobId = null } = {}) {
@@ -47,9 +101,10 @@ export async function executeCode(language, code, input, { processRunner = proce
   active++;
   const name = `got-it-code-${randomUUID()}`;
   try {
+    await reconcileCodeContainers(processRunner);
     const result = await processRunner(dockerArguments(language, name, jobId), JSON.stringify({ code, input }));
     if (!result.stopped && ![0, 100, 137].includes(result.exitCode)) fail('CODE_RUNNER_UNAVAILABLE', 'The coding runtime is unavailable. Start Docker and install the coding images. Your attempt was not charged.');
-    return { output: result.stdout, error: result.stopped ? 'Execution exceeded the time or output limit.' : result.stderr.slice(0, 16000),
+    return { output: result.stdout, error: result.stopped ? 'Execution exceeded the time or output limit.' : result.stderr.slice(0, 16000) || (result.exitCode === 137 ? 'Execution exceeded the time or resource limit.' : ''),
       succeeded: !result.stopped && result.exitCode === 0 };
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'EACCES') fail('CODE_RUNNER_UNAVAILABLE', 'The isolated code runner is unavailable. Your attempt was not charged.');
@@ -97,7 +152,7 @@ export async function codingStatus(processRunner = processRun) {
   const unavailable = (docker, message) => ({ available: false, docker, languages: [], message });
   try {
     const result = await processRunner(['info', '--format', '{{.OSType}}'], '', 3000);
-    if (result.exitCode !== 0 || result.stopped)
+    if (result.exitCode !== 0 || result.stopped || !result.stdout.trim())
       return unavailable('unreachable', 'Docker is not running or cannot be reached on the execution host.');
     if (result.stdout.trim() !== 'linux')
       return unavailable('wrong_mode', 'Docker is running in Windows container mode. Switch to Linux containers.');

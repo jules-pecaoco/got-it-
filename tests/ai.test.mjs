@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { aiAvailable, buildApprovedPackage, buildGeneratedPackage, checkSourceSupport, generateExam, proposeExam, inspectProposal, validateGeneratedDraft } from '../src/ai.mjs';
 import { validatePackage } from '../src/engine.mjs';
+import { createAiActionBudget } from '../src/ai-provider.mjs';
 
 const source = { filename: 'lesson.txt', content: 'Slide 1: A DataTable can order multiple columns. The first order column is the primary key; the second resolves ties.\nSlide 2: Search narrows matching rows before pagination.' };
 const request = { title: 'Table Challenge', subject: 'DataTables', durationMinutes: 40, missionCount: 1, mode: 'ctf', source };
@@ -14,6 +15,28 @@ const provider = data => async (_url, options) => {
   assert.equal(options.headers['x-goog-api-key'], 'test-key');
   return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(data) }] } }] }) };
 };
+
+test('source review shares a budget and resumes only unchecked questions', async () => {
+  const draft = buildGeneratedPackage(request, design);
+  const original = draft.public.missions[0].activities[0];
+  const activities = Array.from({ length: 200 }, (_, index) => ({ ...original, id: `question-${index + 1}` }));
+  const exam = { public: { missions: [{ activities }] }, private: draft.private };
+  const batches = [];
+  const fetcher = async (_url, options) => {
+    const prompt = JSON.parse(options.body).contents[0].parts[0].text;
+    const batch = JSON.parse(prompt.split('\nQUESTIONS\n')[1].split('\nSOURCES\n')[0]);
+    batches.push(batch.map(question => question.id));
+    return provider({ checks: batch.map(question => ({ activityId: question.id, matchPercent: 90 })) })(_url, options);
+  };
+  const first = await checkSourceSupport(exam, [source], { apiKey: 'test-key', fetcher, budget: createAiActionBudget({ maxCalls: 2 }) });
+  const pending = first.filter(check => !check.checked);
+  assert.equal(pending.length, 160);
+  assert.equal(pending[0].matchPercent, null);
+  const rest = await checkSourceSupport(exam, [source], { apiKey: 'test-key', fetcher, activityIds: pending.map(check => check.activityId) });
+  assert.ok(rest.every(check => check.checked));
+  assert.deepEqual(batches.flat(), activities.map(activity => activity.id));
+  await assert.rejects(checkSourceSupport(exam, [source], { activityIds: ['different-assessment'] }), { code: 'INVALID_AI_REQUEST' });
+});
 
 test('AI availability reads the configured Gemini key', () => {
   const previous = process.env.GEMINI_API_KEY;

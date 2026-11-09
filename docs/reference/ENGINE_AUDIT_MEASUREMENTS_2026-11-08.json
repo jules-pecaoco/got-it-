@@ -1,0 +1,138 @@
+{
+  "numericOptionIds": {
+    "validationErrors": [],
+    "browserResponse": {
+      "result": "incorrect",
+      "awarded": [],
+      "feedbackCode": "TRY_AGAIN"
+    }
+  },
+  "blankTextAnswer": {
+    "published": true,
+    "gradable": false,
+    "submissionError": "INVALID_ANSWER"
+  },
+  "nullMission": {
+    "name": "TypeError",
+    "message": "Cannot read properties of null (reading 'id')"
+  },
+  "nullCriterion": {
+    "name": "TypeError",
+    "message": "Cannot read properties of null (reading 'id')"
+  },
+  "propertyOrder": {
+    "validationErrors": [],
+    "awarded": 6,
+    "maxPoints": 8,
+    "result": "partially_correct"
+  },
+  "serverCrossColumnSearch": [],
+  "serverNaturalSort": [
+    "r3",
+    "r1",
+    "r5",
+    "r2",
+    "r6",
+    "r4"
+  ],
+  "nullSort": {
+    "server": [
+      "null",
+      "a",
+      "z"
+    ],
+    "studentUiAlgorithm": [
+      "a",
+      "null",
+      "z"
+    ]
+  },
+  "usageRetries": {
+    "actualRequests": 2,
+    "actualInputTokens": 200,
+    "actualOutputTokens": 40,
+    "reported": {
+      "provider": "gemini",
+      "requestedModel": "audit-model",
+      "returnedModel": "audit-served-model",
+      "requests": 1,
+      "inputTokens": 100,
+      "outputTokens": 20,
+      "reasoningTokens": 0
+    }
+  },
+  "consoleLifetime": {
+    "arguments": [
+      "run",
+      "--rm",
+      "--interactive",
+      "--pull=never",
+      "--name",
+      "audit-placeholder",
+      "--network=none",
+      "--read-only",
+      "--cap-drop=ALL",
+      "--security-opt=no-new-privileges",
+      "--pids-limit=32",
+      "--memory=128m",
+      "--memory-swap=128m",
+      "--cpus=0.5",
+      "--user=65534:65534",
+      "--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m",
+      "--env=HOME=/tmp",
+      "docker.io/library/php@sha256:d8784155c4d37986be9ddd7a8950df7e78998cc48e35472cd69e2b9371424a65",
+      "php",
+      "-r",
+      "$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);file_put_contents('/tmp/main.php',$p['code']);$pipes=[];$child=proc_open(['php','/tmp/main.php'],[['pipe','r'],STDOUT,STDERR],$pipes);fwrite($pipes[0],$p['input']);fclose($pipes[0]);exit(proc_close($child)===0?0:100);"
+    ],
+    "phpWrapper": [
+      "php",
+      "-r",
+      "$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);file_put_contents('/tmp/main.php',$p['code']);$pipes=[];$child=proc_open(['php','/tmp/main.php'],[['pipe','r'],STDOUT,STDERR],$pipes);fwrite($pipes[0],$p['input']);fclose($pipes[0]);exit(proc_close($child)===0?0:100);"
+    ],
+    "sqlWrapper": [
+      "python",
+      "-c",
+      "import sys,json,sqlite3\np=json.load(sys.stdin)\ndb=sqlite3.connect(':memory:')\ndb.enable_load_extension(False)\ndb.executescript(p['input'])\nallowed={sqlite3.SQLITE_SELECT,sqlite3.SQLITE_READ,sqlite3.SQLITE_FUNCTION,sqlite3.SQLITE_RECURSIVE}\ndb.set_authorizer(lambda action,*args: sqlite3.SQLITE_OK if action in allowed and not (action==sqlite3.SQLITE_FUNCTION and args[1]=='load_extension') else sqlite3.SQLITE_DENY)\ntry:\n for row in db.execute(p['code']):\n  print('\\t'.join('NULL' if v is None else str(v) for v in row))\nexcept sqlite3.Error as e:\n print(str(e),file=sys.stderr)\n sys.exit(100)"
+    ],
+    "note": "Static inspection only; no container was started or orphaned."
+  },
+  "batchRegeneration": {
+    "targets": 20,
+    "providerCalls": 80,
+    "replacements": 0,
+    "originalDesignPreserved": true
+  },
+  "browserProbe": {
+    "library": "public/vendor/datatables.min.js",
+    "environment": "isolated Playwright page",
+    "smartSearchRows": [
+      "r1"
+    ],
+    "markupWithApplicationCsp": {
+      "executed": false,
+      "imageCount": 1
+    },
+    "stringSort": {
+      "type": "string",
+      "rows": [
+        "r3",
+        "r2",
+        "r6",
+        "r1",
+        "r4",
+        "r5"
+      ]
+    }
+  },
+  "verification": {
+    "baseCommit": "f7956a59e692c20217d41cfb28e05366df9a0b23",
+    "node": "v22.14.0",
+    "fullCheck": {
+      "passed": 192,
+      "failed": 0
+    },
+    "liveAi": false,
+    "realDockerCrashTest": false
+  }
+}

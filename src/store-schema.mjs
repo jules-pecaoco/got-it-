@@ -42,6 +42,11 @@ export function initializeStoreSchema(db) {
         idempotency_key TEXT, request_hash TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id)
       );
+      CREATE TABLE IF NOT EXISTS session_choice_orders (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        activity_id TEXT NOT NULL, order_json TEXT NOT NULL,
+        PRIMARY KEY(session_id,activity_id)
+      );
       CREATE TABLE IF NOT EXISTS answer_drafts (
         session_id TEXT NOT NULL, activity_id TEXT NOT NULL, response_json TEXT NOT NULL,
         updated_at TEXT NOT NULL, PRIMARY KEY(session_id,activity_id),

@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
-import { codingStatus, executeCode } from './code-runner.mjs';
+import { codingStatus, executeCode, startCodeReconciliation } from './code-runner.mjs';
 import { PhpWorkspace } from './php-workspace.mts';
 import { randomUUID } from 'node:crypto';
 import type { Project } from '../web/contracts.js';
@@ -18,6 +18,7 @@ app.addHook('onRequest', async (request, reply) => {
 app.get('/status', () => codingStatus());
 let active = 0;
 const terminals = new TerminalManager();
+const codeCleanup = startCodeReconciliation();
 app.post<{
   Params: { action: string };
   Body: {
@@ -144,6 +145,7 @@ const timer = setInterval(() => {
 }, 30000);
 timer.unref();
 app.addHook('onClose', async () => {
+  await codeCleanup.stop();
   await terminals.close();
   clearInterval(timer);
   await Promise.all([...workspaces.values()].map((item) => item.workspace.close()));

@@ -1,3 +1,5 @@
+import { assessmentLimits } from './assessment-limits.js';
+
 export const questionTypes = Object.freeze([
   { id: 'single_choice', label: 'Single choice' },
   { id: 'multiple_choice', label: 'Multiple answers' },
@@ -18,8 +20,8 @@ export function positiveTypeCounts(counts = {}) {
 export const typeCountTotal = counts => Object.values(positiveTypeCounts(counts)).reduce((sum, count) => sum + count, 0);
 export function validateQuestionMix(counts, total) {
   if (!counts || typeof counts !== 'object' || Array.isArray(counts) ||
-    Object.entries(counts).some(([type, count]) => !questionTypeIds.has(type) || !Number.isInteger(count) || count < 0 || count > 20))
-    return ['Choose supported question types with whole-number counts from 0 to 20.'];
+    Object.entries(counts).some(([type, count]) => !questionTypeIds.has(type) || !Number.isInteger(count) || count < 0 || count > assessmentLimits.questions))
+    return [`Choose supported types and counts from 0 to ${assessmentLimits.questions}.`];
   const sum = typeCountTotal(counts);
-  return sum < 1 || sum > 20 || sum !== total ? ['The question mix must total 1–20 questions and match the question count.'] : [];
+  return sum < 1 || sum > assessmentLimits.questions || sum !== total ? [`The mix must total 1–${assessmentLimits.questions} questions and match the question count.`] : [];
 }

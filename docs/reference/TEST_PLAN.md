@@ -12,6 +12,7 @@ Use the commands below to verify the revision you plan to run. Historical pass c
 | `npm run verify:coding`                             | Real installed language runtimes, input/output and sandbox limits                                | Acceptable throughput for a full class                       |
 | `npm run verify:web`                                | Real frontend/PHP preview behavior, SQLite, assets and isolation                                 | Every possible student project or browser interaction        |
 | `npm run verify:recovery` | Independent workspace lifetime after its Node owner exits, normal close, and expired-workspace detection | Off-host database recovery or whole-host failure |
+| `npm run verify:console-recovery` | PHP and SQL console containers stop after their disposable Node owner is terminated | Recovery from a Docker engine or host failure |
 | `npm run test:load:mixed` | Current autosaves, interactive terminals, preview POSTs/checkpoints/replacement, rejoin and manual-review finalization | Docker capacity in its default simulated mode |
 | [Browser regression](../../tests/browser/README.md) | Maintained UI workflows against fictional in-memory records                                      | Live AI, real execution or deployment security               |
 | Restore drill                                       | Verified snapshot, selected target, records and recovery                                         | Protection against host loss without off-host copies         |

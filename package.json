@@ -28,6 +28,7 @@
     "verify:web": "node --import ./src/runtime-temp.mjs --import tsx scripts/verify-web.mts",
     "check": "npm run typecheck && npm run syntax:check && npm run format:check && npm test",
     "verify:recovery": "node --import ./src/runtime-temp.mjs --import tsx scripts/verify-workspace-recovery.mts",
+    "verify:console-recovery": "node --import ./src/runtime-temp.mjs scripts/verify-console-recovery.mjs",
     "test:load:mixed": "node --import ./src/runtime-temp.mjs --import tsx --experimental-sqlite scripts/load-test-mixed.mts"
   },
   "engines": {

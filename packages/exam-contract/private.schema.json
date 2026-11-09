@@ -70,36 +70,80 @@
               }
             },
             "then": {
-              "required": [
-                "referenceCode"
-              ],
-              "properties": {
-                "criteria": {
-                  "minItems": 2,
-                  "maxItems": 6,
-                  "items": {
-                    "properties": {
-                      "answer": {
-                        "type": "object",
-                        "required": [
-                          "input",
-                          "output"
-                        ],
+              "anyOf": [
+                {
+                  "properties": {
+                    "criteria": {
+                      "minItems": 1,
+                      "maxItems": 10,
+                      "items": {
                         "properties": {
-                          "input": {
-                            "type": "string",
-                            "maxLength": 16000
-                          },
-                          "output": {
-                            "type": "string",
-                            "maxLength": 16000
+                          "answer": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "description"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "const": "manual"
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 16000,
+                                "pattern": "\\S"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "referenceCode"
+                  ],
+                  "properties": {
+                    "criteria": {
+                      "minItems": 2,
+                      "maxItems": 6,
+                      "items": {
+                        "properties": {
+                          "answer": {
+                            "type": "object",
+                            "required": [
+                              "input",
+                              "output"
+                            ],
+                            "properties": {
+                              "input": {
+                                "type": "string",
+                                "maxLength": 16000
+                              },
+                              "output": {
+                                "type": "string",
+                                "maxLength": 16000
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "kind"
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "const": "manual"
+                                }
+                              }
+                            }
                           }
                         }
                       }
                     }
                   }
                 }
-              }
+              ]
             }
           }
         ]

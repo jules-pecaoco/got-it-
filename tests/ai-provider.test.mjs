@@ -1,7 +1,7 @@
 import { suggestGrade } from '../src/ai-grading.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aiProviderCatalog, resolveAiSelection, generateJson, groq, draftSchema } from '../src/ai-provider.mjs';
+import { aiProviderCatalog, resolveAiSelection, generateJson, groq, draftSchema, createAiActionBudget, withAiActionBudget, aiUsageSnapshot, aiAttemptSnapshot } from '../src/ai-provider.mjs';
 import { proposeExam, regenerateInvalidQuestions } from '../src/ai.mjs';
 
 const answer = { type: 'single_choice', prompt: 'Which operation narrows the matching rows?', options: ['Search', 'Ordering'], answer: 'Search', evidenceQuote: 'Search filters matching rows before pagination.', location: 'Source' };
@@ -147,4 +147,132 @@ test('explicit Gemini schema rejection retries JSON mode on the same model', asy
   assert.equal(requests[1].body.generationConfig.responseJsonSchema,undefined);
   assert.equal(requests[1].body.generationConfig.responseMimeType,'application/json');
   assert.match(requests[1].body.contents[0].parts[0].text,/Required JSON structure/);
+});
+
+
+test('AI action budget counts every retry and records metadata for unsuccessful responses', async () => {
+  for (const provider of ['gemini', 'groq']) {
+    const budget = createAiActionBudget();
+    let calls = 0;
+    const before = aiUsageSnapshot().filter(row => row.provider === provider).reduce((sum, row) => sum + row.requests, 0);
+    await generateJson('Return JSON', { provider, apiKey: 'synthetic', budget, fetcher: async () => {
+      calls++;
+      return { ok: true, json: async () => provider === 'gemini'
+        ? { modelVersion: 'reported-gemini', usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, thoughtsTokenCount: 5, totalTokenCount: 35 }, candidates: [{ finishReason: calls === 1 ? 'MAX_TOKENS' : 'STOP', content: { parts: [{ text: '{"ok":true}' }] } }] }
+        : { model: 'reported-groq', usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, completion_tokens_details: { reasoning_tokens: 5 } }, choices: [{ finish_reason: calls === 1 ? 'length' : 'stop', message: { content: '{"ok":true}' } }] } };
+    } });
+    const snapshot = budget.snapshot();
+    assert.equal(snapshot.calls, 2);
+    assert.equal(snapshot.inputTokens, 20);
+    assert.equal(snapshot.outputTokens, 40);
+    assert.equal(snapshot.reasoningTokens, 10);
+    assert.equal(snapshot.totalTokens, provider === 'gemini' ? 70 : 60);
+    assert.equal(snapshot.unknownTokenRequests, 0);
+    assert.deepEqual(snapshot.attempts.map(attempt => attempt.outcome), ['truncated', 'success']);
+    assert.ok(snapshot.attempts.every(attempt => attempt.operationId === snapshot.operationId && attempt.latencyMs >= 0));
+    const after = aiUsageSnapshot().filter(row => row.provider === provider).reduce((sum, row) => sum + row.requests, 0);
+    assert.equal(after - before, 2);
+  }
+});
+
+test('AI attempt observations include invalid JSON, blocking and HTTP failures with unknown tokens', async () => {
+  const budget = createAiActionBudget();
+  let calls = 0;
+  await assert.rejects(() => groq('Return JSON', { apiKey: 'synthetic', budget, fetcher: async () => ({ ok: true, json: async () => ({ model: 'reported', usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 }, choices: [{ finish_reason: ++calls === 1 ? 'stop' : 'content_filter', message: { content: 'invalid JSON' } }] }) }) }), error => error.code === 'AI_BLOCKED');
+  await assert.rejects(() => groq('Return JSON', { apiKey: 'synthetic', budget, fetcher: async () => ({ ok: false, status: 429 }) }), error => error.code === 'AI_RATE_LIMITED');
+  const snapshot = budget.snapshot();
+  assert.deepEqual(snapshot.attempts.map(attempt => attempt.outcome), ['invalid_json', 'blocked', 'http_error']);
+  assert.equal(snapshot.totalTokens, 10);
+  assert.equal(snapshot.unknownTokenRequests, 1);
+  assert.equal(snapshot.attempts[2].totalTokens, null);
+  assert.equal(snapshot.attempts[2].returnedModel, null);
+  assert.equal(aiAttemptSnapshot().filter(attempt => attempt.operationId === snapshot.operationId).length, 3);
+});
+
+test('one shared action budget stops provider retries before another actual fetch', async () => {
+  for (const provider of ['gemini', 'groq']) {
+    let calls = 0;
+    const budget = createAiActionBudget({ maxCalls: 1 });
+    await assert.rejects(() => withAiActionBudget(budget, () => generateJson('Return JSON', {
+      provider, apiKey: 'synthetic', fetcher: async () => {
+        calls++;
+        return { ok: true, json: async () => provider === 'gemini'
+          ? { candidates: [{ finishReason: 'MAX_TOKENS' }] }
+          : { choices: [{ finish_reason: 'length' }] } };
+      },
+    })), error => error.code === 'AI_BUDGET_EXHAUSTED' && error.status === 429 && error.budget.exhaustedReason === 'calls');
+    assert.equal(calls, 1);
+    assert.equal(budget.snapshot().calls, 1);
+  }
+});
+
+test('shared action budgets span provider invocations and stop at known actual token usage', async () => {
+  const budget = createAiActionBudget({ maxTokens: 5 });
+  let calls = 0;
+  const options = { apiKey: 'synthetic', fetcher: async () => {
+    calls++;
+    return { ok: true, json: async () => ({ usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 }, choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }] }) };
+  } };
+  await withAiActionBudget(budget, async () => {
+    assert.deepEqual(await groq('Return JSON', options), { ok: true });
+    await assert.rejects(() => groq('Return JSON', options), error => error.code === 'AI_BUDGET_EXHAUSTED' && error.budget.exhaustedReason === 'tokens');
+  });
+  assert.equal(calls, 1);
+  assert.equal(budget.snapshot().totalTokens, 5);
+});
+
+test('external cancellation aborts an active provider request and prevents further calls', async () => {
+  const controller = new AbortController();
+  const budget = createAiActionBudget();
+  let calls = 0;
+  await assert.rejects(() => groq('Return JSON', { apiKey: 'synthetic', budget, signal: controller.signal,
+    fetcher: async (_url, options) => {
+      calls++;
+      controller.abort();
+      assert.equal(options.signal.aborted, true);
+      return new Promise(() => {});
+    },
+  }), error => error.code === 'AI_ABORTED');
+  assert.equal(calls, 1);
+  assert.equal(budget.snapshot().attempts[0].outcome, 'aborted');
+  await assert.rejects(() => groq('Return JSON', { apiKey: 'synthetic', budget, signal: controller.signal, fetcher: () => assert.fail('must not fetch') }), error => error.code === 'AI_ABORTED');
+  assert.equal(budget.snapshot().calls, 1);
+});
+
+test('action deadline aborts a request and returns an actionable budget error', async () => {
+  const budget = createAiActionBudget({ maxDurationMs: 20 });
+  let requestSignal;
+  await assert.rejects(() => groq('Return JSON', { apiKey: 'synthetic', budget, fetcher: async (_url, options) => {
+    requestSignal = options.signal;
+    return new Promise(() => {});
+  } }), error => error.code === 'AI_BUDGET_EXHAUSTED' && error.status === 429 && error.budget.exhaustedReason === 'duration');
+  assert.equal(requestSignal.aborted, true);
+  assert.equal(budget.snapshot().calls, 1);
+  assert.equal(budget.snapshot().attempts[0].outcome, 'budget_exhausted');
+});
+
+
+test('known partial metadata consumes the token budget while absent totals remain unknown', async () => {
+  const budget = createAiActionBudget({ maxTokens: 5 });
+  await generateJson('Return JSON', { provider: 'gemini', apiKey: 'synthetic', budget, fetcher: async () => ({ ok: true, json: async () => ({ usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 }, candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"ok":true}' }] } }] }) }) });
+  const snapshot = budget.snapshot();
+  assert.equal(snapshot.totalTokens, 5);
+  assert.equal(snapshot.unknownTokenRequests, 1);
+  assert.equal(snapshot.attempts[0].totalTokens, null);
+  assert.equal(snapshot.attempts[0].reasoningTokens, null);
+  assert.equal(snapshot.attempts[0].knownTokens, 5);
+  await assert.rejects(() => generateJson('Return JSON', { apiKey: 'synthetic', budget, fetcher: () => assert.fail('must not fetch') }), error => error.code === 'AI_BUDGET_EXHAUSTED');
+});
+
+test('action deadline also bounds provider retry backoff and response body reads', async () => {
+  for (const phase of ['backoff', 'body']) {
+    const budget = createAiActionBudget({ maxDurationMs: 20 });
+    let calls = 0;
+    await assert.rejects(() => groq('Return JSON', { apiKey: 'synthetic', budget, retryDelayMs: 10000, fetcher: async () => {
+      calls++;
+      return phase === 'backoff' ? { ok: false, status: 503 } : { ok: false, status: 400, json: async () => new Promise(() => {}) };
+    } }), error => error.code === 'AI_BUDGET_EXHAUSTED' && error.status === 429);
+    assert.equal(calls, 1);
+    assert.equal(budget.snapshot().attempts.length, 1);
+  }
 });

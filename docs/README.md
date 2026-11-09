@@ -29,6 +29,7 @@ Reviewed against the working tree on **7 November 2026**. This describes the fil
 | [Question authoring](reference/QUESTION_AUTHORING.md) | Working on question formats, packages or validators             |
 | [Security](reference/SECURITY.md)                     | Reviewing access, records, code execution and deployment limits |
 | [Test plan](reference/TEST_PLAN.md)                   | Verifying a revision or preparing a deployment                  |
+| [Engine audit](reference/ENGINE_AUDIT_2026-11-08.md) | Reviewing scoring, validation, AI budgets, execution lifetimes and prioritized improvements |
 | [Application and student audit](reference/SYSTEM_STUDENT_AUDIT_2026-11-08.md) | Reviewing the 8 November student defects, UI/flow findings and verification results |
 | [Faculty desktop UI audit](reference/FACULTY_DESKTOP_UI_AUDIT_2026-11-08.md) | Reviewing laptop/desktop layouts, grading-flow defects, element moves and visual recommendations |
 | [Reliability resolution](reference/RELIABILITY_RESOLUTION_2026-11-08.md) | Reviewing the 8 November recovery, capacity, scheduling and performance fixes |

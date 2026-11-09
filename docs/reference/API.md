@@ -144,13 +144,20 @@ Run edits cannot shorten an active deadline. Run/version deletion rejects `ACTIV
 | POST               | `/api/instructor/materials/extract`     | Extract `{filename,base64}` for `.txt`, `.md`, `.pdf`, `.pptx`          |
 | POST               | `/api/instructor/ai/generate`           | Generate a package from source/design inputs                            |
 | POST               | `/api/instructor/ai/propose`            | Preview questions and advisory source-match information                 |
+| GET / POST         | `/api/instructor/ai/jobs`               | List your active and paused jobs or start a generation job               |
+| GET                | `/api/instructor/ai/jobs/:id`           | Read your job status, completed question count and proposal               |
+| POST               | `/api/instructor/ai/jobs/:id/{resume,pause,cancel}` | Control your generation job                                     |
 | POST               | `/api/instructor/ai/draft`              | Validate and save `{public,private,evidence,source}`                    |
 | POST               | `/api/instructor/ai/approved-draft`     | Save faculty-selected reviewed questions                                |
 | GET / PUT / DELETE | `/api/instructor/ai/proposal`           | Recover / save `{input,proposal,selected}` / discard unfinished preview |
 | POST               | `/api/instructor/ai/inspect`            | Locally validate edited `{source,design,...setup}`; no provider call    |
 | POST               | `/api/instructor/ai/check/:id/:version` | Ask for advisory source-support assessment                              |
 
-Generation/proposal input includes `{title,subject,kind,difficulty,durationMinutes,questionCount,missionCount?,questionMode?,questionTypeCounts?,programmingLanguage?,customPrompt?,source:{filename,content}}`. `questionMode` is `auto`, `mixed`, `coding` or `objective`. Custom mix counts must total `questionCount`. Console languages are `php`, `python`, `sql`, `javascript`; `frontend` and `php-web` select web projects. Custom instructions are limited to 2,000 characters and cannot override supported formats or grounding requirements.
+Generation/proposal input includes `{title,subject,kind,difficulty,durationMinutes,questionCount,missionCount?,questionMode?,questionTypeCounts?,programmingLanguage?,customPrompt?,source:{filename,content}}`. `questionMode` is `auto`, `mixed`, `coding` or `objective`. Custom mix counts must total `questionCount`. Console languages are `php`, `python`, `sql`, `javascript`. `frontend` and `php-web` select web projects. Custom instructions are limited to 2,000 characters.
+
+Generation supports 1–200 questions in batches of up to 20. `/generate` and `/propose` return `202` with a job for larger requests. Clients can start a job for any supported count through `/jobs`. Poll its status and use `/resume` after a pause. The job keeps its original provider and model. Completed batches are saved across process restarts. A completed `/generate` job also returns the built package in `result`.
+
+Source review returns a list with `checked` on each result. If some questions remain unchecked, pass their IDs in `{activityIds}` on the next request to continue from those questions.
 
 Material binaries are limited to 10 MB, extracted text to 250,000 characters and AI source text to 60,000. Original binaries are not stored. Image-only documents need OCR; `.ppt` needs conversion. Source-match percentages and coverage notes are advisory; structure and referenced-source existence remain validated. Faculty can change the mix during review while meeting package limits.
 
