@@ -1,4 +1,5 @@
 export const referenceTopics = Object.freeze([
+  { id: 'datatables', label: 'DataTables' },
   { id: 'bootstrap5', label: 'Bootstrap 5' },
   { id: 'sql', label: 'SQL (SQLite)' },
   { id: 'python', label: 'Python' },

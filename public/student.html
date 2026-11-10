@@ -19,7 +19,6 @@
     <div class="masthead-branding">
       <div class="brand-lockup"><div class="brand" id="platform-label">Got It!</div><small class="brand-tagline" id="platform-tagline">Gotta Catch Ed All</small></div>
     </div>
-    <div class="masthead-actions"><span class="workspace-badge">Student</span></div>
   </header>
   <div id="request-status" class="request-status hidden" role="status" aria-live="polite" aria-atomic="true" aria-busy="false">
     <span class="request-spinner" aria-hidden="true"></span><span id="request-status-text">Loading student activity settings…</span>
@@ -41,7 +40,6 @@
 
     <section id="readiness-panel" class="page-width hidden" aria-labelledby="readiness-title">
       <div class="card stack readiness-card">
-        <p class="eyebrow">Before you begin</p>
         <h1 id="readiness-title" tabindex="-1"></h1>
         <p id="readiness-candidate" class="small"></p>
         <div id="readiness-summary" class="selection-summary"></div>
@@ -86,7 +84,13 @@
         <button type="button" id="candidate-exit" class="text-button">Leave activity</button>
       </div>
       <dialog id="reference-dictionary" class="reference-drawer" aria-labelledby="reference-dictionary-title">
-        <div class="review-header"><h2 id="reference-dictionary-title">Programming reference</h2><button type="button" data-reference-close>Close</button></div>
+        <div class="review-header">
+          <h2 id="reference-dictionary-title">Programming reference</h2>
+          <div class="button-row">
+            <button type="button" class="btn" data-reference-print disabled>Print guides</button>
+            <button type="button" data-reference-close>Close</button>
+          </div>
+        </div>
         <div class="reference-search-fields">
           <label>Search reference<input type="search" data-reference-search placeholder="e.g. input, JOIN, flex, form-control" autocomplete="off"></label>
           <label>Guide<select data-reference-topic></select></label>

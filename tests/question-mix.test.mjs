@@ -109,6 +109,19 @@ test('saved questions of every type round-trip through the form model without lo
   try {
     const value=buildGeneratedPackage(input,design(Object.values(questions)));
     store.importDraft(value.public,value.private);
+    const original=store.getExam(value.public.examId,1);
+    const first=original.public.missions[0].activities[0];
+    store.editDraftQuestion(value.public.examId,1,first.id,{
+      points:21,revision:hash(original.public_json+'\n'+original.private_json)
+    });
+    const reweighted=store.getExam(value.public.examId,1);
+    assert.deepEqual(reweighted.public.missions[0].activities[0],{...first,maxPoints:21});
+    assert.equal(reweighted.public.settings.coreMaxPoints,original.public.settings.coreMaxPoints+21-first.maxPoints);
+    assert.deepEqual(reweighted.private.evidence,original.private.evidence);
+    const withoutPoints=({points,...criterion})=>criterion;
+    assert.deepEqual(reweighted.private.rules[first.gradingRuleId].criteria.map(withoutPoints),
+      original.private.rules[first.gradingRuleId].criteria.map(withoutPoints));
+    assert.deepEqual(validatePackage(reweighted.public,reweighted.private),[]);
     for(const activity of value.public.missions.flatMap(m=>m.activities)){
       const before=store.getExam(value.public.examId,1);
       const current=before.public.missions.flatMap(m=>m.activities).find(a=>a.id===activity.id);

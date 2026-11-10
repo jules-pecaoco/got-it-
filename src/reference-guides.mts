@@ -12,6 +12,51 @@ export interface ReferenceGuide {
 }
 const entry = (title: string, text: string, code: string): ReferenceEntry => ({ title, text, code });
 const content: Record<string, { note: string; entries: ReferenceEntry[] }> = {
+  datatables: {
+    note: 'Use this walkthrough for DataTables coding questions. The assessment supplies the table and supports the options and methods shown here. These examples use a fictional library table. Use the selector, columns and values in your question.',
+    entries: [
+      entry(
+        '1. Find the selector and column numbers',
+        'Open Table reference before writing code. Copy the table selector and note the column numbers. Counting starts at 0. In this example, Title is 0, Category is 1 and Year is 2.',
+        '// Example selector: #libraryTable\n// 0 Title | 1 Category | 2 Year',
+      ),
+      entry(
+        '2. Initialize the table once',
+        'Create a DataTable with the selector and one options object. Keep the variable name consistent in the lines that follow.',
+        "const table = new DataTable('#libraryTable', {\n  paging: true,\n  searching: true,\n  ordering: true\n});",
+      ),
+      entry(
+        '3. Set pagination',
+        'Add these options inside the same object. pageLength sets the starting number of rows per page. lengthMenu lists the available page sizes. Include the starting size in that list.',
+        'pageLength: 5,\nlengthMenu: [5, 10, 20]',
+      ),
+      entry(
+        '4. Set the sort order',
+        'Add order inside the options object. Each pair gives a column number and a direction. Here Year sorts newest first, then Title breaks ties alphabetically.',
+        "order: [[2, 'desc'], [0, 'asc']]",
+      ),
+      entry(
+        '5. Search across the table',
+        'Add this line after the table declaration. search applies across searchable columns. draw updates the preview. Pass an empty string to clear the global search.',
+        "table.search('ocean').draw();",
+      ),
+      entry(
+        '6. Filter one column',
+        'Use column with a zero-based column number to narrow the search to that column. The column search and global search can apply together.',
+        "table.column(1).search('Science').draw();",
+      ),
+      entry(
+        '7. Put the pieces together',
+        'This example starts with five rows per page, sorts by year then title, and shows rows matching both search terms. Substitute the values required by your question.',
+        "const table = new DataTable('#libraryTable', {\n  paging: true,\n  searching: true,\n  ordering: true,\n  pageLength: 5,\n  lengthMenu: [5, 10, 20],\n  order: [[2, 'desc'], [0, 'asc']]\n});\ntable.search('ocean').draw();\ntable.column(1).search('Science').draw();",
+      ),
+      entry(
+        '8. Run, check and submit',
+        'Select Run code in preview. If it reports an error, check the selector, commas between options, brackets and semicolons. If the preview runs, check the visible rows, sort order and page size against the task. Select Submit answer when ready.',
+        '// Preview checklist\n// Are the matching rows visible?\n// Is the first row the one you expect?\n// Does the page show the requested number of rows?',
+      ),
+    ],
+  },
   bootstrap5: {
     note: 'Bootstrap 5.3 classes require its stylesheet. Components such as modals also need the Bootstrap JavaScript bundle; this guide does not install those assets.',
     entries: [

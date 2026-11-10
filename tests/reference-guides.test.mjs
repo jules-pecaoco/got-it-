@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {referenceGuides} from '../src/reference-guides.mts';
 import {referenceTopics,validateReferenceSelection} from '../public/reference-topics.js';
 import {searchReferences} from '../public/reference-dictionary.js';
-test('reference catalog covers seven topics with original text and inert code examples',()=>{
+import {parseTableCode} from '../public/table-code.js';
+test('reference catalog includes every supported topic with original text and inert code examples',()=>{
  const guides=referenceGuides(referenceTopics.map(topic=>topic.id));
- assert.equal(guides.length,7);
+ assert.equal(guides.length,referenceTopics.length);
  for(const guide of guides){
   assert.ok(guide.note);assert.ok(guide.entries.length>=8);
   assert.equal(new Set(guide.entries.map(entry=>entry.title)).size,guide.entries.length);
@@ -14,6 +15,15 @@ test('reference catalog covers seven topics with original text and inert code ex
  assert.equal(referenceGuides([]).length,0);
  assert.deepEqual(referenceGuides(['python','sql']).map(g=>g.id),['sql','python']);
  assert.deepEqual(referenceGuides(['unknown']),[]);
+});
+test('DataTables walkthrough uses syntax accepted by the student preview',()=>{
+ const [guide]=referenceGuides(['datatables']);
+ const example=guide.entries.find(entry=>entry.title.includes('Put the pieces together'));
+ const state=parseTableCode(example.code,{selector:'#libraryTable',columns:['title','category','year'].map(id=>({id}))});
+ assert.equal(state.pageLength,5);
+ assert.equal(state.globalSearch,'ocean');
+ assert.deepEqual(state.columnSearch,{category:'Science'});
+ assert.deepEqual(state.order,[{column:'year',direction:'desc'},{column:'title',direction:'asc'}]);
 });
 test('reference selection rejects unsupported, duplicate and malformed guide choices',()=>{
  for(const value of [undefined,[],['python','html']])assert.deepEqual(validateReferenceSelection(value),[]);

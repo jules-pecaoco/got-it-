@@ -146,11 +146,12 @@ export class Store {
       const index = mission?.activities.findIndex(a => a.id === activityId);
       invariant(mission && index >= 0, 'ACTIVITY_NOT_FOUND', 'Question not found.', 404);
       const previous = mission.activities[index], oldRule = priv.rules[previous.gradingRuleId];
-      const points = input.question?.points;
+      const pointsOnly = Object.hasOwn(input, 'points');
+      const points = pointsOnly ? input.points : input.question?.points;
       invariant(Number.isInteger(points) && points >= 1 && points <= 10000, 'INVALID_POINTS', 'Use a whole-number question score from 1 to 10,000.');
-      const built = buildFacultyQuestion(input.question);
+      const built = pointsOnly ? { activity: previous, rule: oldRule } : buildFacultyQuestion(input.question);
       // Retain existing HTTP checks when editing older web projects.
-      if (previous.type === 'web_project' && built.activity.type === 'web_project') {
+      if (!pointsOnly && previous.type === 'web_project' && built.activity.type === 'web_project') {
         built.rule.criteria = [...oldRule.criteria.filter(c => c.answer.kind === 'http'), ...built.rule.criteria];
       }
       const criteria = built.rule.criteria;
@@ -161,18 +162,25 @@ export class Store {
       let remainder = points - allocated.reduce((sum, value) => sum + value, 0);
       const order = weights.map((weight, i) => ({ i, fraction: points * weight / total - allocated[i] })).sort((a, b) => b.fraction - a.fraction);
       for (const { i } of order) if (remainder-- > 0) allocated[i]++;
-      invariant(allocated.every(value => value > 0), 'INVALID_POINTS', 'Increase the question score so each grading criterion receives at least one point.');
-      built.rule.criteria = criteria.map((criterion, i) => ({ ...criterion, id: `edited-${activityId}-${i + 1}`, points: allocated[i] }));
+      for (const { i } of order) {
+        if (allocated[i] > 0) continue;
+        const donor = allocated.indexOf(Math.max(...allocated));
+        allocated[donor]--;
+        allocated[i] = 1;
+      }
+      built.rule.criteria = criteria.map((criterion, i) => ({
+        ...criterion, id: pointsOnly ? criterion.id : `edited-${activityId}-${i + 1}`, points: allocated[i],
+      }));
       mission.activities[index] = { ...previous, ...built.activity, id: activityId, gradingRuleId: previous.gradingRuleId, maxPoints: points };
-      delete mission.activities[index].sourceRefs;
+      if (!pointsOnly) delete mission.activities[index].sourceRefs;
       priv.rules[previous.gradingRuleId] = built.rule;
-      if (priv.evidence) priv.evidence = priv.evidence.filter(item => item.activityId !== activityId);
+      if (!pointsOnly && priv.evidence) priv.evidence = priv.evidence.filter(item => item.activityId !== activityId);
       mission.maxPoints = mission.activities.reduce((sum, activity) => sum + activity.maxPoints, 0);
       pub.settings.coreMaxPoints = pub.missions.reduce((sum, item) => sum + item.maxPoints, 0);
       const errors = validatePackage(pub, priv);
       invariant(!errors.length, 'INVALID_QUESTION', errors.join(' '), 422);
       this.updateDraft(examId, version, pub, priv);
-      this.audit('instructor', 'edit_question', `${examId}@${version}`, { activityId });
+      this.audit('instructor', 'edit_question', `${examId}@${version}`, { activityId, ...(pointsOnly ? { points } : {}) });
       return { saved: true };
     });
   }
@@ -955,7 +963,10 @@ export class Store {
   async submitAnswer(sessionId, activityId, submission, idempotencyKey = null, expectedRevision) {
     const { exam } = this.context(sessionId);
     const activity = exam.public.missions.flatMap(m => m.activities).find(a => a.id === activityId);
-    if (!['code_writing', 'web_project'].includes(activity?.type)) return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, null, null, expectedRevision);
+    const blankCode = ['code_writing', 'datatable_code'].includes(activity?.type) && typeof submission?.value === 'string'
+      && submission.value.length <= 16000 && !submission.value.trim();
+    const blankEvaluation = blankCode ? { result: 'incorrect', feedbackCode: 'BLANK_CODE', awarded: [] } : null;
+    if (!['code_writing', 'web_project'].includes(activity?.type)) return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, blankEvaluation, null, expectedRevision);
     const { mission, rule } = this.codingContext(sessionId, activityId);
     invariant(!this.db.prepare("SELECT 1 FROM coding_jobs WHERE session_id=? AND activity_id=? AND kind='submit' AND status IN ('queued','running')").get(sessionId, activityId),
       'CODING_JOB_PENDING', 'Wait for your queued submission for this question to finish.', 409);
@@ -968,7 +979,8 @@ export class Store {
     const count = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).count;
     const policy = resolveRetryPolicy(mission, activity);
     invariant(policy.maxRetries === null || count <= policy.maxRetries, 'ATTEMPT_LIMIT', 'No attempts remain for this question.', 403);
-    const result = activity.type === 'web_project' ? await evaluateWeb(activity.publicConfig, rule, submission) : evaluate(activity, rule, submission);
+    const result = blankEvaluation ?? (activity.type === 'web_project'
+      ? await evaluateWeb(activity.publicConfig, rule, submission) : evaluate(activity, rule, submission));
     return this.#submitEvaluated(sessionId, activityId, submission, idempotencyKey, result, null, expectedRevision);
   }
   #submitEvaluated(sessionId, activityId, submission, idempotencyKey = null, executionResult = null, acceptedAt = null, expectedRevision) {
@@ -1002,7 +1014,8 @@ export class Store {
       }
       const live = this.db.prepare('SELECT status,deadline_at FROM sessions WHERE id=?').get(sessionId);
       this.checkDraftRevision(sessionId, activityId, expectedRevision);
-      invariant(gradableDraft(activity, submission), 'INVALID_ANSWER', 'Enter a valid answer before submitting.');
+      invariant(gradableDraft(activity, submission) || evaluation.feedbackCode === 'BLANK_CODE',
+        'INVALID_ANSWER', 'Enter a valid answer before submitting.');
       // Persisted drafts and jobs were admitted before the deadline in effect at receipt.
       invariant(acceptedAt || (live.status === 'in_progress' && Date.now() < Date.parse(live.deadline_at)), 'SESSION_CLOSED', 'The session is closed.', 403);
       const previous = this.db.prepare('SELECT COUNT(*) AS count FROM submissions WHERE session_id=? AND activity_id=?').get(sessionId, activityId).count;

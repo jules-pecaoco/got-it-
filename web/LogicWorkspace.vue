@@ -160,12 +160,11 @@ defineExpose({ value: () => value.value });
 </script>
 <template>
   <section class="coding-workspace">
-    <details class="sample-runs" aria-label="Sample runs">
-      <summary>Sample inputs and expected outputs</summary>
+    <details class="sample-runs">
+      <summary>Sample runs</summary>
       <section v-for="(sample, i) in activity.publicConfig.samples" :key="i" class="coding-sample">
         <h4>Sample {{ i + 1 }}</h4>
         <div v-if="sample.transcript">
-          <p>Sample run · includes typed input</p>
           <pre>{{ sample.transcript }}</pre>
         </div>
         <div v-else class="sample-run-values">
@@ -188,15 +187,14 @@ defineExpose({ value: () => value.value });
       :max-length="16000"
       @change="actions.changed?.()"
     />
+    <details v-if="activity.publicConfig.starterCode" class="sample-runs">
+      <summary>Starter code</summary>
+      <pre class="starter-source"><code>{{ activity.publicConfig.starterCode }}</code></pre>
+    </details>
     <div class="button-row">
-      <strong>{{ activity.publicConfig.language }}</strong
-      ><button type="button" @click="download">Download code</button
-      ><label>Import solution<input type="file" :accept="`.${extension}`" @change="upload" /></label>
+      <button type="button" @click="download">Download code</button>
+      <label>Import code<input type="file" :accept="`.${extension}`" @change="upload" /></label>
     </div>
-    <p>
-      Write your solution in the editor above. Select Run code to test it, then Submit answer when you are
-      ready.
-    </p>
 
     <label v-if="!interactive"
       >Input for your run<textarea
@@ -277,10 +275,6 @@ defineExpose({ value: () => value.value });
         <pre v-if="sample.error">{{ sample.error }}</pre>
       </section>
     </div>
-    <p>
-      Run code lets you test your work. It does not submit your answer or change your score. Select Submit
-      answer when you are ready.
-    </p>
     <p v-if="error" role="status">{{ error }}</p>
   </section>
 </template>

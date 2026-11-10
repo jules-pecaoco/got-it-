@@ -23,7 +23,7 @@ async (page) => {
   check('Smart search matches words across columns', JSON.stringify(names) === JSON.stringify(['<b>Alex</b>', 'Alex Quinn']));
   check('Table cells render as text', await page.locator('.code-preview tbody b').count() === 0);
   const submitted = page.waitForResponse(response => /\/api\/me\/activities\/[^/]+\/submit$/.test(response.url()) && response.request().method() === 'POST');
-  await page.getByRole('button', { name: /^Submit ·/ }).click();
+  await page.getByRole('button', { name: 'Submit answer', exact: true }).click();
   const data = (await (await submitted).json()).data;
   check('Browser script earns all grading criteria', data.result === 'correct' && data.score === 10);
   await page.screenshot({ path: 'output/playwright/engine-table-agreement.png' });

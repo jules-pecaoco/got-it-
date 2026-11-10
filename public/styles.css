@@ -712,7 +712,7 @@ th {
 #exam-panel .activity-area { user-select: none; -webkit-user-select: none; }
 #exam-panel .activity-area input,
 #exam-panel .activity-area textarea,
-#exam-panel .activity-area [contenteditable] { user-select: text; -webkit-user-select: text; }
+#exam-panel .activity-area :is([contenteditable], pre, .prompt-render code) { user-select: text; -webkit-user-select: text; }
 .exam-head {
   padding: 1.5rem;
   display: flex;

@@ -546,8 +546,7 @@ function renderWorkflowState() {
     const summary = $('published-activity-summary');
     clear(summary);
     summary.append(
-      node('strong', '', exam.title),
-      node('span', 'status-badge status-published', `Published · v${exam.version}`),
+      node('strong', '', `Published version ${exam.version}`),
       node('p', 'small', 'This version is ready to run. Create an editable copy to make changes.'),
     );
   }
@@ -3047,23 +3046,67 @@ function renderReview() {
         node('pre', 'answer-value', rule ? answerText(activity, rule) : 'No grading rule.'),
       );
       if (state.selectedExam?.status === 'draft' && rule) {
+        const saveDraftQuestion = async (changes) => {
+          const e = selected();
+          await request(
+            '/api/instructor/assessments/' + e.examId + '/' + e.version + '/questions/' + activity.id,
+            {
+              method: 'PUT',
+              data: { ...changes, revision: state.examDetail.revision },
+            },
+          );
+          state.questionDirty = '';
+          invalidateValidation();
+          await refreshLibrary();
+          await loadSources();
+          showStep('review');
+        };
+        const pointsForm = node('form', 'button-row');
+        const pointsLabel = node('label', '', 'Question points');
+        const pointsInput = node('input');
+        pointsInput.type = 'number';
+        pointsInput.min = String(rule.criteria.length);
+        pointsInput.max = '10000';
+        pointsInput.required = true;
+        pointsInput.value = activity.maxPoints;
+        pointsLabel.append(pointsInput);
+        const savePoints = node('button', '', 'Save points');
+        savePoints.type = 'submit';
+        savePoints.disabled = true;
+        pointsInput.addEventListener('input', () => {
+          savePoints.disabled = pointsInput.valueAsNumber === activity.maxPoints;
+        });
+        pointsForm.addEventListener('submit', (event) => {
+          event.preventDefault();
+          perform(async () => {
+            if (state.questionDirty) throw new Error('Save or cancel the current question changes first.');
+            const points = pointsInput.valueAsNumber;
+            state.questionDirty = activity.id;
+            pointsInput.disabled = savePoints.disabled = true;
+            savePoints.textContent = 'Saving points…';
+            target.inert = true;
+            renderWorkflowState();
+            try {
+              await saveDraftQuestion({ points });
+              message(`Question points saved. This question is worth ${points} ${points === 1 ? 'point' : 'points'}.`);
+            } finally {
+              target.inert = false;
+              pointsInput.disabled = savePoints.disabled = false;
+              savePoints.textContent = 'Save points';
+              if (state.questionDirty === activity.id) {
+                state.questionDirty = '';
+                renderWorkflowState();
+              }
+            }
+          });
+        });
+        pointsForm.append(pointsLabel, savePoints);
+        card.append(pointsForm);
         const model = editableQuestion(activity, rule);
         const editor = questionEditor(
           model,
           async (question) => {
-            const e = selected();
-            await request(
-              '/api/instructor/assessments/' + e.examId + '/' + e.version + '/questions/' + activity.id,
-              {
-                method: 'PUT',
-                data: { question, revision: state.examDetail.revision },
-              },
-            );
-            state.questionDirty = '';
-            invalidateValidation();
-            await refreshLibrary();
-            await loadSources();
-            showStep('review');
+            await saveDraftQuestion({ question });
             message('Question saved. Review the updated problem and grading reference.');
           },
           {
@@ -3084,7 +3127,7 @@ function renderReview() {
           },
         );
         card.append(editor);
-      }
+      } else card.append(node('p', 'small', `${activity.maxPoints} ${activity.maxPoints === 1 ? 'point' : 'points'}`));
       const proof = evidence.find((item) => item.activityId === activity.id);
       const refs = activity.sourceRefs || [];
       if (proof?.quote || refs.length || activity.manualRationale) {

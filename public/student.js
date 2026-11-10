@@ -1,7 +1,6 @@
 import { apiError, userErrorMessage, savedAnswerRule, finishReviewMessage, completionMessage, codeServiceMessage } from './user-messages.js';
 import { parseTableCode } from './table-code.js';
 import { inspectRows, filterTableRows, datatableColumnTypes, compareTableCells } from './table-state.js';
-import { normalizeSyntax, syntaxLanguages, tokenizeCode } from './code-highlight.js';
 import { renderPrompt } from './prompt-code.js';
 import { renderCodingQuestion } from './code-task-ui.js';
 import { beginRequestStatus } from './request-status.js';
@@ -11,7 +10,7 @@ import { installPasswordToggles } from './password-toggle.js';
 import { retryPolicyText, localDateTime } from './ui-model.js';
 import { browserSessionHeaders, randomId } from './browser-session.js';
 import { localDraft, clearLocalDrafts } from './local-drafts.js';
-import { mountWeb } from '/assets/workspaces.js';
+import { mountTableEditor, mountWeb } from '/assets/workspaces.js';
 import { createReferenceDictionary } from './reference-dictionary.js';
 import { referenceTopics } from './reference-topics.js';
 
@@ -81,6 +80,14 @@ function statusNotice(id, text = '') {
   box.classList.toggle('hidden', !text);
 }
 let checkingRuntime = false;
+let runtimeStatus;
+function showRuntimeStatus() {
+  const activity = state.mission?.activities.find(item => item.id === state.ibt?.current);
+  const languages = activity?.type === 'code_writing' ? [activity.publicConfig.language] : [];
+  const webProject = activity?.type === 'web_project';
+  statusNotice('student-runtime-status', runtimeStatus?.sessionId === state.session?.id && (languages.length || webProject)
+    ? codeServiceMessage(runtimeStatus.status, { languages, webProject }) : '');
+}
 async function refreshRuntimeStatus() {
   const session = state.session;
   if (checkingRuntime || !session || (session.status !== 'in_progress' && !session.pendingCodingCount)) return;
@@ -90,9 +97,11 @@ async function refreshRuntimeStatus() {
   try {
     const status = await request('/api/me/code/status', { silent: true });
     if (state.session?.id !== session.id) return;
-    statusNotice('student-runtime-status', codeServiceMessage(status, { languages, webProject: session.webProject }));
+    runtimeStatus = { sessionId: session.id, status };
+    showRuntimeStatus();
   } catch {
-    if (state.session?.id === session.id)
+    if (state.session?.id === session.id && state.mission?.activities.some(item =>
+      item.id === state.ibt?.current && ['code_writing', 'web_project'].includes(item.type)))
       statusNotice('student-runtime-status', 'We could not check whether code running is available. Try again shortly, or tell your instructor.');
   } finally { checkingRuntime = false; }
 }
@@ -608,10 +617,7 @@ function renderQuestionMatrix() {
     button.replaceChildren(icon(q.answered ? 'complete' : 'question'), node('span', 'ibt-question-label', `Question ${q.number}`));
     if (ibt.flagged.has(q.id)) button.append(icon('flag'));
     if (q.pending) button.append(node('span', 'ibt-question-state', 'Saving…'));
-    if (q.id === ibt.current) {
-      button.setAttribute('aria-current', 'step');
-      button.append(node('span', 'ibt-current-badge', 'Current'));
-    }
+    if (q.id === ibt.current) button.setAttribute('aria-current', 'step');
     button.addEventListener('click', () => perform(() => openQuestion(q.id)));
     return button;
   }));
@@ -689,8 +695,11 @@ async function openQuestion(id) {
     if (mission.story) context.append(node('p', '', mission.story));
     context.append(renderPrompt(activity.prompt, 'activity-prompt'), reference);
     renderActivityReference(activity);
-    const workspaceLabel = ['code_writing', 'web_project', 'datatable_code'].includes(activity.type) ? 'Your code' : 'Your answer';
+    const workspaceLabel = activity.type === 'code_writing'
+      ? `${{ javascript: 'JavaScript', python: 'Python', php: 'PHP', sql: 'SQL' }[activity.publicConfig.language] || 'Code'} editor`
+      : activity.type === 'web_project' ? 'Project files' : activity.type === 'datatable_code' ? 'Table query' : 'Your answer';
     $('mission-content').replaceChildren(node('h2', 'ibt-workspace-heading', workspaceLabel), renderActivity(activity, false, true));
+    showRuntimeStatus();
     context.scrollTop = 0;
     $('mission-content').closest('.activity-area').scrollTop = 0;
     updateSaveStatus();
@@ -973,47 +982,19 @@ function renderInspection(form, activity) {
 
 function renderCode(form, activity) {
   const config = activity.publicConfig;
-  const syntaxLabel = node('label', 'code-syntax-label', 'Syntax colors (display only)');
-  const syntax = node('select');
-  for (const [value, label] of syntaxLanguages) {
-    const option = node('option', '', label);
-    option.value = value;
-    syntax.append(option);
+  const target = node('div');
+  form.append(target);
+  const editor = mountTableEditor(target,
+    activity.lastDraft?.value ?? activity.lastSubmission?.value ?? config.scaffold ?? '',
+    activity.id, () => form.dispatchEvent(new Event('input')));
+  form._disposeWorkspace = editor.unmount;
+  if (config.scaffold) {
+    const starter = node('details', 'sample-runs');
+    const source = node('pre', 'starter-source');
+    source.append(node('code', '', config.scaffold));
+    starter.append(node('summary', '', 'Starter code'), source);
+    form.append(starter);
   }
-  syntax.value = normalizeSyntax(config.language);
-  syntaxLabel.append(syntax);
-  form.append(syntaxLabel);
-  const editorShell = node('div', 'code-editor');
-  const highlight = node('pre', 'code-highlight');
-  highlight.setAttribute('aria-hidden', 'true');
-  const editor = node('textarea');
-  editor.rows = 16;
-  editor.wrap = 'off';
-  editor.spellcheck = false;
-  editor.setAttribute('aria-label', 'DataTables JavaScript');
-  editor.placeholder = 'Write DataTables JavaScript code here.';
-  editor.value = activity.lastDraft?.value ?? activity.lastSubmission?.value ?? config.scaffold ?? '';
-  const paintCode = () => {
-    const value = editor.value;
-    const fragment = document.createDocumentFragment();
-    for (const part of tokenizeCode(value, syntax.value)) {
-      fragment.append(part.type ? node('span', `code-${part.type}`, part.text)
-        : document.createTextNode(part.text));
-    }
-    if (value.endsWith('\n')) fragment.append(document.createTextNode(' '));
-    highlight.replaceChildren(fragment);
-    highlight.scrollTop = editor.scrollTop;
-    highlight.scrollLeft = editor.scrollLeft;
-  };
-  editor.addEventListener('input', paintCode);
-  syntax.addEventListener('change', paintCode);
-  editor.addEventListener('scroll', () => {
-    highlight.scrollTop = editor.scrollTop;
-    highlight.scrollLeft = editor.scrollLeft;
-  });
-  editorShell.append(highlight, editor);
-  form.append(editorShell);
-  paintCode();
 
   const run = node('button', '', 'Run code in preview');
   run.type = 'button';
@@ -1059,7 +1040,7 @@ function renderCode(form, activity) {
 
   run.addEventListener('click', () => {
     try {
-      render(parseTableCode(editor.value, config));
+      render(parseTableCode(editor.value(), config));
       messageEl.textContent = 'Code applied to DataTables preview.';
     } catch (error) {
       messageEl.textContent = userErrorMessage(error, 'student');
@@ -1070,10 +1051,7 @@ function renderCode(form, activity) {
   } catch (error) {
     messageEl.textContent = userErrorMessage(error, 'student');
   }
-  return () => {
-    parseTableCode(editor.value, config);
-    return editor.value;
-  };
+  return editor.value;
 }
 
 function renderActivity(a, preview = false, separatePrompt = false) {
@@ -1223,17 +1201,16 @@ function renderActivity(a, preview = false, separatePrompt = false) {
     readValue = renderCode(form, a);
   }
 
-  const submit = node('button', 'primary', preview ? 'Test interaction'
-    : state.session.feedbackMode === 'graded' ? 'Submit answer' : `Submit · ${a.maxPoints} pts`);
+  const submit = node('button', 'primary', preview ? 'Test interaction' : 'Submit answer');
   submit.type = 'submit';
   submit.disabled = !preview && (state.session.status !== 'in_progress' || a.attemptsRemaining === 0);
-  form.append(submit);
-
   const feedback = node('div', 'activity-feedback');
   feedback.setAttribute('role', 'status');
   const answerState = node('p', 'answer-state');
   answerState.setAttribute('role', 'status');
   const retrySave = node('button', 'text-button hidden', 'Try saving again'); retrySave.type = 'button';
+  const submissionPanel = node('div', 'answer-actions');
+  submissionPanel.append(submit, feedback, answerState, retrySave);
 
   let draftTimer;
   let localTimer;
@@ -1287,8 +1264,7 @@ function renderActivity(a, preview = false, separatePrompt = false) {
       flush: saveDraft
     });
     const answerChanged = event => {
-      if (['code_writing', 'web_project'].includes(a.type) && event.target !== form) return;
-      if (a.type === 'datatable_code' && event.target.tagName !== 'TEXTAREA') return;
+      if (['code_writing', 'web_project', 'datatable_code'].includes(a.type) && event.target !== form) return;
       scheduleDraft();
     };
     form.addEventListener('input', answerChanged);
@@ -1366,7 +1342,8 @@ function renderActivity(a, preview = false, separatePrompt = false) {
       let read;
       try { read = readValue(); }
       catch (error) { feedback.textContent = userErrorMessage(error, 'student'); return; }
-      if (typeof read === 'string' && !read.trim()) { feedback.textContent = 'Enter an answer before submitting.'; return; }
+      const blankCode = ['code_writing', 'datatable_code'].includes(a.type) && !read.trim();
+      if (!blankCode && typeof read === 'string' && !read.trim()) { feedback.textContent = 'Enter an answer before submitting.'; return; }
       const submittedRevision = draftRevision;
       if (preview) {
         feedback.textContent = 'This is a preview. Your answer has not been submitted for grading.';
@@ -1375,6 +1352,7 @@ function renderActivity(a, preview = false, separatePrompt = false) {
       submit.disabled = true;
       submitting = true;
       form.inert = true;
+      feedback.textContent = 'Submitting answer…';
       clearTimeout(draftTimer);
       await draftRequest;
       const value = a.type === 'numeric_entry' ? read.number : read;
@@ -1412,6 +1390,7 @@ function renderActivity(a, preview = false, separatePrompt = false) {
         a.attemptsRemaining = result.attemptsRemaining;
         updateAttemptInfo();
         const outcome = result.duplicate ? 'This answer has already been submitted. It was not submitted a second time.'
+          : blankCode ? 'Blank answer submitted.'
           : state.session.feedbackMode === 'graded' ? 'Answer submitted.'
           : result.result === 'pending_review' ? 'Your code has been submitted. Your instructor will grade it.' : result.result === 'correct' ? 'Correct.' : result.result === 'partially_correct' ? 'Partially correct.' : 'Incorrect.';
         const deductions = [];
@@ -1453,7 +1432,9 @@ function renderActivity(a, preview = false, separatePrompt = false) {
     });
   });
 
-  card.append(form, answerState, retrySave, feedback);
+  form.id = `answer-${a.id}`;
+  submit.setAttribute('form', form.id);
+  card.append(form, submissionPanel);
   return card;
 }
 

@@ -3,6 +3,46 @@ body.ibt-active {
   overflow: hidden;
 }
 
+#reference-print-sheet {
+  display: none;
+}
+@media print {
+  body:has(> #reference-print-sheet) {
+    margin: 0;
+    overflow: visible;
+    background: #fff;
+    color: #111;
+  }
+  body:has(> #reference-print-sheet) > :not(#reference-print-sheet) {
+    display: none !important;
+  }
+  body:has(> #reference-print-sheet) .reference-drawer::backdrop {
+    display: none;
+  }
+  #reference-print-sheet {
+    display: block;
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+  #reference-print-sheet :is(h1, h3, summary) {
+    break-after: avoid;
+  }
+  #reference-print-sheet .reference-entry {
+    break-inside: avoid;
+  }
+  #reference-print-sheet summary {
+    list-style: none;
+  }
+  #reference-print-sheet pre {
+    overflow: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #fff;
+    color: #111;
+    border: 1px solid #bbb;
+  }
+}
+
 .ibt-active .masthead {
   display: none;
 }
@@ -28,7 +68,7 @@ body.ibt-active {
   -webkit-user-select: none;
   user-select: none;
 }
-.ibt-active #exam-panel :is(input, textarea, [contenteditable='true']) {
+.ibt-active #exam-panel :is(input, textarea, [contenteditable='true'], .prompt-render code, pre) {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -138,9 +178,45 @@ body.ibt-active {
   margin: 0 0 0.45rem;
   font-size: 1.05rem;
 }
-.ibt-active #exam-panel .coding-sample pre {
-  -webkit-user-select: none;
-  user-select: none;
+.ibt-active .answer-actions {
+  display: grid;
+  justify-items: start;
+  gap: 0.4rem;
+  position: sticky;
+  bottom: 0;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border-muted);
+  background: var(--surface);
+  z-index: 2;
+}
+.ibt-active .answer-actions :is(.answer-state, .activity-feedback) {
+  margin: 0;
+  color: var(--dark-ink);
+}
+.ibt-active .answer-actions :is(.answer-state, .activity-feedback):empty {
+  display: none;
+}
+.ibt-active .activity-form[inert] + .answer-actions button[type='submit']::before {
+  content: '';
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-inline-end: 0.5em;
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ibt-active .activity-form[inert] + .answer-actions button[type='submit']::before {
+    animation: answer-submitting 0.75s linear infinite;
+  }
+}
+@keyframes answer-submitting {
+  to { transform: rotate(1turn); }
+}
+.ibt-active .progress-strip {
+  font-variant-numeric: tabular-nums;
 }
 #ibt-context {
   padding: 0.65rem 0.75rem;

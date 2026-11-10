@@ -54,7 +54,7 @@ test('finishing while code is queued grades its saved draft only once', async ()
   } finally { release(); store.close(); }
 });
 
-test('blank code drafts stay unanswered at finish and expiry', () => {
+test('blank code can be submitted explicitly but blank drafts stay unanswered at finish and expiry', async () => {
   const store = new Store(':memory:');
   try {
     const { public: pub, private: grading } = draft('python', 'quiz');
@@ -63,7 +63,8 @@ test('blank code drafts stay unanswered at finish and expiry', () => {
     store.publish(pub.examId, 1);
     const run = store.createRun({ examId: pub.examId, version: 1, pin: '4242',
       opensAt: new Date(Date.now() - 1000).toISOString(), closesAt: new Date(Date.now() + 600000).toISOString(),
-      roster: [{ candidateId: 'A', displayName: 'Alex', section: 'S' }, { candidateId: 'B', displayName: 'Blair', section: 'S' }] });
+      roster: [{ candidateId: 'A', displayName: 'Alex', section: 'S' }, { candidateId: 'B', displayName: 'Blair', section: 'S' },
+        { candidateId: 'C', displayName: 'Casey', section: 'S' }] });
     const join = candidateId => store.join({ runId: run.id, candidateId, pin: '4242' }).session.id;
     const finished = join('A');
     const blank = store.saveDraft(finished, 'm1-q1', { value: '' });
@@ -81,6 +82,16 @@ test('blank code drafts stay unanswered at finish and expiry', () => {
     store.settleExpired();
     assert.equal(store.sessionView(expired).status, 'expired');
     assert.equal(store.sessionView(expired).submittedCount, 0);
+
+    const explicit = join('C');
+    const response = { value: ' \n ' };
+    const saved = store.saveDraft(explicit, 'm1-q1', response);
+    const key = 'blank-code-retry-key';
+    const submitted = await store.submitAnswer(explicit, 'm1-q1', response, key, saved.updatedAt);
+    assert.equal(submitted.attemptNumber, 1);
+    assert.equal(store.db.prepare('SELECT result FROM submissions WHERE session_id=?').get(explicit).result, 'incorrect');
+    assert.equal((await store.submitAnswer(explicit, 'm1-q1', response, key, saved.updatedAt)).duplicate, true);
+    assert.equal(store.sessionView(explicit).submittedCount, 1);
   } finally { store.close(); }
 });
 

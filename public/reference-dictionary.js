@@ -47,13 +47,31 @@ export function createReferenceDictionary(trigger, dialog, request) {
   const topic = dialog.querySelector('[data-reference-topic]');
   const status = dialog.querySelector('[data-reference-status]');
   const results = dialog.querySelector('[data-reference-results]');
+  const print = dialog.querySelector('[data-reference-print]');
   let guides = null,
     key = '',
     generation = 0;
   const render = () => {
     const count = renderReferenceResults(results, guides || [], search.value, topic.value);
     status.textContent = count ? `${count} reference entries` : 'No matching entries. Try another term.';
+    print.disabled = !guides?.length;
+    print.textContent = topic.value ? 'Print guide' : 'Print guides';
   };
+  print.addEventListener('click', () => {
+    if (!guides?.length || document.getElementById('reference-print-sheet')) return;
+    const sheet = document.createElement('section');
+    sheet.id = 'reference-print-sheet';
+    const title = document.createElement('h1');
+    title.textContent = 'Programming reference';
+    sheet.append(title);
+    const content = document.createElement('div');
+    sheet.append(content);
+    renderReferenceResults(content, guides, '', topic.value);
+    for (const details of content.querySelectorAll('details')) details.open = true;
+    document.body.append(sheet);
+    window.addEventListener('afterprint', () => sheet.remove(), { once: true });
+    window.print();
+  });
   trigger.addEventListener('click', async () => {
     const current = generation;
     dialog.showModal();
@@ -97,6 +115,7 @@ export function createReferenceDictionary(trigger, dialog, request) {
       key = next;
       generation++;
       guides = null;
+      print.disabled = true;
       search.value = '';
       topic.replaceChildren();
       results.replaceChildren();

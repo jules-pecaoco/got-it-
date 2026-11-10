@@ -1,6 +1,6 @@
 .coding-workspace {
   display: grid;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 .web-workspace > section {
   order: -1;
@@ -13,7 +13,7 @@
 }
 .coding-workspace textarea {
   width: 100%;
-  min-height: 20rem;
+  min-height: clamp(20rem, 46vh, 34rem);
   font-family: Consolas, monospace;
   tab-size: 2;
   resize: vertical;
@@ -21,6 +21,7 @@
 .coding-workspace pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  user-select: text;
 }
 .sample-runs {
   display: grid;
@@ -95,9 +96,20 @@
   cursor: pointer;
   font-weight: 600;
 }
+.starter-source {
+  max-width: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--surface, #f1f0e9);
+  border: 1px solid var(--border-muted, #d7d4cc);
+}
 
 .source-editor {
   min-width: 0;
+}
+.source-editor > textarea {
+  width: 100%;
+  font-family: Consolas, monospace;
 }
 .code-editor-host .cm-editor {
   border: 1px solid #777e72;
@@ -109,7 +121,7 @@
   outline-offset: 2px;
 }
 .code-editor-host .cm-scroller {
-  min-height: 20rem;
+  min-height: clamp(20rem, 46vh, 34rem);
   max-height: 36rem;
   overflow: auto;
   font:
@@ -119,6 +131,9 @@
 .code-editor-host .cm-content {
   padding: 0.75rem 0;
   min-width: 0;
+}
+.code-editor-host .cm-content span {
+  font-style: normal;
 }
 .code-editor-host .cm-line {
   padding: 0 0.75rem;
